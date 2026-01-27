@@ -18,6 +18,7 @@ git clone git@github.com:Dinghye/rs-embed.git
 cd rs-embed
 conda env create -f environment.yml
 pip install -e .
+python -m pip install git+https://github.com/torchgeo/torchgeo.git
 ```
 
 ## **✨ Motivation**

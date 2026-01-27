@@ -286,11 +286,11 @@ dependencies:
       - tinycss2==1.4.0
       - tokenizers==0.22.2
       - toolz==1.1.0
-      - torch==2.10.0+cu128
-      - torchaudio==2.10.0+cu128
-      - torchgeo==0.9.0.dev0
+      - torch==2.10.0
+      - torchaudio==2.10.0
+      - torchgeo @git+https://github.com/torchgeo/torchgeo.git
       - torchmetrics==1.8.2
-      - torchvision==0.25.0+cu128
+      - torchvision==0.25.0
       - tqdm==4.67.1
       - traittypes==0.2.3
       - transformers==5.0.0
