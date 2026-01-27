@@ -169,21 +169,6 @@ rs_embed/
     └── plot_utils.py
 ```
 
-
----
-## **📊 Embedding Visualization**
-Built-in utilities include:
-- Embedding norm heatmaps
-- Single-channel visualization
-- PCA pseudo-color (RGB)
-- Pixel-wise cosine similarity maps
-
-```
-plot_embedding_grid(emb, agg="norm")
-plot_embedding_pseudocolor(emb)
-plot_cosine_similarity_map(emb1, emb2)
-```
-
 ---
 
 ## **🔌 Extending the Toolkit**
@@ -211,7 +196,6 @@ class MyEmbedder(EmbedderBase):
 
 ---
 ## **🗺️ Roadmap**
-- Full Copernicus Embed support
 - Multi-temporal embeddings (T × D × H × W)
 - Strict CRS-aware grid alignment
 - Deeper integration with TorchGeo / xarray / rasterio
