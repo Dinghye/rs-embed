@@ -12,7 +12,13 @@
 
 ---
 
-(Current usage: Download file and `pip install -e .`)
+Current usage: 
+```
+git clone git@github.com:Dinghye/rs-embed.git
+cd rs-embed
+conda env create -f environment.yml
+pip install -e .
+```
 
 ## **✨ Motivation**
 
