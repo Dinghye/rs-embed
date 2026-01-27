@@ -253,7 +253,6 @@ dependencies:
       - rioxarray==0.20.0
       - roman-numerals==4.1.0
       - rpds-py==0.30.0
-      - rs-embed==0.1.0
       - rsa==4.9.1
       - rshf==0.1.12
       - safetensors==0.7.0
