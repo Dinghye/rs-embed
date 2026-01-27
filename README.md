@@ -123,7 +123,7 @@ temporal = TemporalSpec.year(2024)
 emb_tes_g = get_embedding(
     "tessera",
     spatial=spatial,
-    temporal=temporal,#TemporalSpec.range("2021-06-01", "2021-08-31"),  # 用 start 年份当 preferred_year
+    temporal=temporal,
     output=OutputSpec.grid(),
     backend="local",
 )
@@ -192,8 +192,8 @@ $$
 * Native output: embedding grid
 grid: (D, H, W)
 
-* Processing:
-	•	Pool over spatial dimensions (H, W):
+* Processing: Pool over spatial dimensions (H, W):
+
 $$
 v_d = \frac{1}{HW} \sum_{y,x} g_{d,y,x}
 $$
