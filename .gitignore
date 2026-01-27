@@ -1,0 +1,6 @@
+src/rs_embed/__pycache__/
+src/rs_embed/examples/__pycache__/
+src/rs_embed/core/__pycache__/
+src/rs_embed/embedders/__pycache__/
+src/rs_embed/ops/__pycache__/
+src/rs_embed/providers/__pycache__/

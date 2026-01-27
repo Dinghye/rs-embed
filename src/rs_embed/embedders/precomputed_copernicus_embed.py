@@ -1,0 +1,168 @@
+from __future__ import annotations
+
+import os
+from typing import Any, Dict, Optional, Tuple
+
+import numpy as np
+
+from ..core.registry import register
+from ..core.embedding import Embedding
+from ..core.errors import ModelError
+from ..core.specs import BBox, PointBuffer, SpatialSpec, TemporalSpec, SensorSpec, OutputSpec
+from .base import EmbedderBase
+
+
+def _buffer_m_to_deg(lat: float, buffer_m: float) -> Tuple[float, float]:
+    """
+    Approximate meters to degrees at given latitude.
+    Good enough for precomputed tile selection / dataset slicing (v0.1).
+    """
+    # ~ meters per degree latitude
+    m_per_deg_lat = 111_320.0
+    dlat = buffer_m / m_per_deg_lat
+
+    # longitude shrinks with cos(lat)
+    import math
+    cos_lat = max(1e-6, math.cos(math.radians(lat)))
+    m_per_deg_lon = m_per_deg_lat * cos_lat
+    dlon = buffer_m / m_per_deg_lon
+    return dlon, dlat
+
+
+def _spatial_to_bbox_4326(spatial: SpatialSpec) -> BBox:
+    if isinstance(spatial, BBox):
+        spatial.validate()
+        return spatial
+    if isinstance(spatial, PointBuffer):
+        spatial.validate()
+        dlon, dlat = _buffer_m_to_deg(spatial.lat, spatial.buffer_m)
+        return BBox(
+            minlon=spatial.lon - dlon,
+            minlat=spatial.lat - dlat,
+            maxlon=spatial.lon + dlon,
+            maxlat=spatial.lat + dlat,
+            crs="EPSG:4326",
+        )
+    raise ModelError(f"Unsupported SpatialSpec type: {type(spatial)}")
+
+
+def _pool_chw(chw: np.ndarray, pooling: str) -> np.ndarray:
+    if pooling == "mean":
+        return chw.mean(axis=(1, 2)).astype(np.float32)
+    if pooling == "max":
+        return chw.max(axis=(1, 2)).astype(np.float32)
+    raise ModelError(f"Unknown pooling='{pooling}' (expected 'mean' or 'max').")
+
+
+@register("copernicus_embed")
+class CopernicusEmbedder(EmbedderBase):
+    """
+    Precomputed embeddings via TorchGeo CopernicusEmbed dataset.
+
+    Output:
+      - OutputSpec.pooled(): (D,)
+      - OutputSpec.grid():   xarray.DataArray (d,y,x) from CHW
+    """
+
+    def describe(self) -> Dict[str, Any]:
+        return {
+            "type": "precomputed",
+            "backend": ["local", "auto"],
+            "inputs": {"spatial": "BBox or PointBuffer (EPSG:4326)"},
+            "temporal": {"mode": "ignored"},
+            "output": ["pooled", "grid"],
+            "defaults": {
+                "data_dir_env": "RS_EMBED_COP_DIR",
+                "data_dir_default": "data/copernicus_embed",
+                "download": True,
+                "expand_deg": 1.0,  # NOTE: helps hit a tile for small ROIs
+            },
+            "notes": [
+                "Uses torchgeo.datasets.CopernicusEmbed bbox slicing ds[minlon:maxlon, minlat:maxlat].",
+                "If ROI is small, expand_deg expands around bbox center to increase overlap.",
+            ],
+        }
+
+    def get_embedding(
+        self,
+        *,
+        spatial: SpatialSpec,
+        temporal: Optional[TemporalSpec],
+        sensor: Optional[SensorSpec],
+        output: OutputSpec,
+        backend: str,
+        device: str = "auto",
+    ) -> Embedding:
+        if backend.lower() not in ("local", "auto"):
+            raise ModelError("copernicus_embed is precomputed/local; use backend='local' or 'auto'.")
+
+        try:
+            from torchgeo.datasets import CopernicusEmbed
+        except Exception as e:
+            raise ModelError("CopernicusEmbed requires torchgeo. Install: pip install torchgeo") from e
+
+        bbox = _spatial_to_bbox_4326(spatial)
+
+        # data_dir: env var override OR (optional) sensor.collection override
+        data_dir = os.environ.get("RS_EMBED_COP_DIR", "data/copernicus_embed")
+        if sensor and isinstance(sensor.collection, str):
+            # convention: collection="dir:/path/to/cop"
+            if sensor.collection.startswith("dir:"):
+                data_dir = sensor.collection.replace("dir:", "", 1).strip()
+
+        download = True  # v0.1 default
+        expand_deg = 1.0  # v0.1 default
+
+        os.makedirs(data_dir, exist_ok=True)
+        ds = CopernicusEmbed(paths=data_dir, download=download)
+
+        # Expand bbox to hit a tile (centered)
+        minlon, minlat, maxlon, maxlat = bbox.minlon, bbox.minlat, bbox.maxlon, bbox.maxlat
+        if expand_deg and expand_deg > 0:
+            clon = (minlon + maxlon) / 2
+            clat = (minlat + maxlat) / 2
+            half = expand_deg / 2
+            minlon, minlat, maxlon, maxlat = clon - half, clat - half, clon + half, clat + half
+
+        # TorchGeo bbox slicing
+        sample = ds[minlon:maxlon, minlat:maxlat]
+        img = sample["image"]  # torch Tensor [C,H,W]
+
+        chw = img.detach().cpu().numpy().astype(np.float32)
+
+        meta = {
+            "model": self.model_name,
+            "type": "precomputed",
+            "source": "torchgeo.CopernicusEmbed",
+            "data_dir": data_dir,
+            "download": download,
+            "expand_deg": expand_deg,
+            "bbox_4326": (minlon, minlat, maxlon, maxlat),
+            "chw_shape": tuple(chw.shape),
+        }
+
+        if output.mode == "pooled":
+            vec = _pool_chw(chw, output.pooling)
+            meta["pooling"] = f"{output.pooling}_hw"
+            return Embedding(data=vec, meta=meta)
+
+        if output.mode == "grid":
+            try:
+                import xarray as xr
+            except Exception as e:
+                raise ModelError("grid output requires xarray. Install: pip install xarray") from e
+
+            da = xr.DataArray(
+                chw,
+                dims=("d", "y", "x"),
+                coords={
+                    "d": np.arange(chw.shape[0]),
+                    "y": np.arange(chw.shape[1]),
+                    "x": np.arange(chw.shape[2]),
+                },
+                name="embedding",
+                attrs=meta,
+            )
+            return Embedding(data=da, meta=meta)
+
+        raise ModelError(f"Unknown output mode: {output.mode}")
