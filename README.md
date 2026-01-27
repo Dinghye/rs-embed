@@ -12,6 +12,8 @@
 
 ---
 
+(Current usage: Download file and `pip install -e .`)
+
 ## **✨ Motivation**
 
 

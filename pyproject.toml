@@ -21,7 +21,7 @@ torch = ["torch>=2.1"]
 models = ["rshf>= 0.1.12"] 
 
 [project.urls]
-Homepage = "https://github.com/Dinghye/rs-foundation-kit"
+Homepage = "https://github.com/Dinghye/rs-embed"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/rs_embed"]

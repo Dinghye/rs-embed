@@ -1,17 +1,19 @@
 from rs_embed import BBox, PointBuffer, TemporalSpec, OutputSpec, get_embedding
 from plot_utils import *
-spatial = PointBuffer(lon=121.5, lat=31.2, buffer_m=2048)
-temporal = TemporalSpec.year(2022)
 
-# # # Tessera: grid（需要 geotessera）
-# emb_tes_g = get_embedding(
-#     "tessera",
-#     spatial=spatial,
-#     temporal=temporal,#TemporalSpec.range("2021-06-01", "2021-08-31"),  # 用 start 年份当 preferred_year
-#     output=OutputSpec.grid(),
-#     backend="local",
-# )
-# pca_tes = plot_embedding_pseudocolor(emb_tes_g, title="Tessera PCA pseudocolor")
+spatial = PointBuffer(lon=121.5, lat=31.2, buffer_m=2048)
+temporal = TemporalSpec.year(2021)
+
+# # # Tessera: grid
+emb_tes_g = get_embedding(
+    "tessera",
+    spatial=spatial,
+    temporal=temporal,#TemporalSpec.range("2021-06-01", "2021-08-31"),  # 用 start 年份当 preferred_year
+    output=OutputSpec.grid(),
+    backend="local",
+)
+pca_tes = plot_embedding_pseudocolor(emb_tes_g, title="Tessera PCA pseudocolor")
+print("tessera grid meta:", emb_tes_g.meta)
 
 # # print("tessera grid:", emb_tes_g.data.shape)
 
@@ -28,15 +30,9 @@ temporal = TemporalSpec.year(2022)
 # Precomputed: GEE annual embedding
 # emb = get_embedding("gse_annual", spatial=spatial, temporal=temporal, output=OutputSpec.grid(scale_m=10))
 # print(emb.data.shape, emb.meta["source"])
-# # 1) 单独看 tessera 的伪彩色
 # pca_tes = plot_embedding_pseudocolor(emb, title="Alpha Earth PCA pseudocolor")
 
-# 2) 用同一个 PCA 去画同模型不同时间/区域（可比较）
-# plot_embedding_pseudocolor(emb_tes_g2, title="Tessera (same PCA)", pca=pca_tes)
 
-# 3) 如果想“跨模型对齐”可视化：用 tessera 的 PCA 去画 gse（需要 D 一样，否则不行）
-# 如果 D 不一样（很常见），建议各自 fit，再并排比较
-# pca_gse = plot_embedding_pseudocolor(emb_gse_g, title="GSE PCA pseudocolor")
 # On-the-fly: RemoteCLIP from S2 RGB
 # emb2 = get_embedding("remoteclip_s2rgb", spatial=spatial, temporal=TemporalSpec.range("2022-06-01","2022-09-01"),
 #                      output=OutputSpec.pooled(pooling="mean"))
@@ -48,19 +44,21 @@ temporal = TemporalSpec.year(2022)
 #   temporal=TemporalSpec.range("2022-06-01","2022-09-01"),
 #   output=OutputSpec.grid()
 # )
-# print(embg.data.shape)  # (512, 7, 7)  (通常)
+# print(embg.data.shape)  # (512, 7, 7) 
 # print(embg.meta["grid_hw"], embg.meta["cls_removed"])
 
 
 # CopernicusEmbed: grid
-emb_cop_g = get_embedding(
-    "copernicus_embed",
-    spatial=spatial,                      # 你的 SpatialSpec（bbox/pointbuffer都行，只要能变 bbox_4326）
-    output=OutputSpec.grid(),
-    backend="local",
-)
-print("cop grid:", emb_cop_g.data.shape)
-plot_embedding_pseudocolor(emb_cop_g, title="CopernicusEmbed PCA pseudocolor")
+# emb_cop_g = get_embedding(
+#     "copernicus_embed",
+#     spatial=spatial,
+#     temporal = temporal,                     
+#     output=OutputSpec.grid(),
+#     backend="local",
+# )
+# print("cop grid:", emb_cop_g.data.shape)
+# print("cop meta:", emb_cop_g.meta)
+# plot_embedding_pseudocolor(emb_cop_g, title="CopernicusEmbed PCA pseudocolor")
 
 # # CopernicusEmbed: pooled
 # emb_cop = get_embedding(

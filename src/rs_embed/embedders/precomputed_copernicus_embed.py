@@ -93,6 +93,9 @@ class CopernicusEmbedder(EmbedderBase):
         backend: str,
         device: str = "auto",
     ) -> Embedding:
+        if temporal.year != 2021:
+            raise ModelError("copernicus_embed ignores TemporalSpec; Current only support year '2021'.")
+        
         if backend.lower() not in ("local", "auto"):
             raise ModelError("copernicus_embed is precomputed/local; use backend='local' or 'auto'.")
 
