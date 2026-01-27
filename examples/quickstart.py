@@ -4,16 +4,21 @@ from plot_utils import *
 spatial = PointBuffer(lon=121.5, lat=31.2, buffer_m=2048)
 temporal = TemporalSpec.year(2024)
 
-# # # Tessera: grid
-emb_tes_g = get_embedding(
-    "tessera",
-    spatial=spatial,
-    temporal=temporal,#TemporalSpec.range("2021-06-01", "2021-08-31"),  # 用 start 年份当 preferred_year
-    output=OutputSpec.grid(),
-    backend="local",
+
+bbox = BBox(
+    minlon=121.45, minlat=31.15,
+    maxlon=121.55, maxlat=31.25,
 )
-pca_tes = plot_embedding_pseudocolor(emb_tes_g, title="Tessera PCA pseudocolor")
-print("tessera grid meta:", emb_tes_g.meta)
+# # # # Tessera: grid
+# emb_tes_g = get_embedding(
+#     "tessera",
+#     spatial=bbox,
+#     temporal=temporal,#TemporalSpec.range("2021-06-01", "2021-08-31"),
+#     output=OutputSpec.grid(),
+#     backend="local",
+# )
+# pca_tes = plot_embedding_pseudocolor(emb_tes_g, title="Tessera PCA pseudocolor")
+# print("tessera grid meta:", emb_tes_g.meta)
 
 # # print("tessera grid:", emb_tes_g.data.shape)
 
@@ -28,15 +33,16 @@ print("tessera grid meta:", emb_tes_g.meta)
 # print("tessera pooled:", emb_tes.data.shape)
 
 # Precomputed: GEE annual embedding
-# emb = get_embedding("gse_annual", spatial=spatial, temporal=temporal, output=OutputSpec.grid(scale_m=10))
-# print(emb.data.shape, emb.meta["source"])
-# pca_tes = plot_embedding_pseudocolor(emb, title="Alpha Earth PCA pseudocolor")
+emb = get_embedding("gse_annual", spatial=bbox, temporal=temporal, output=OutputSpec.grid(scale_m=100))
+print(emb.data.shape, emb.meta["source"])
+pca_tes = plot_embedding_pseudocolor(emb, title="Alpha Earth PCA pseudocolor")
 
 
 # On-the-fly: RemoteCLIP from S2 RGB
 # emb2 = get_embedding("remoteclip_s2rgb", spatial=spatial, temporal=TemporalSpec.range("2022-06-01","2022-09-01"),
 #                      output=OutputSpec.pooled(pooling="mean"))
 # print(emb2.data.shape, emb2.meta["model"])
+# print(emb2.meta)
 
 # embg = get_embedding(
 #   "remoteclip_s2rgb",
@@ -45,7 +51,7 @@ print("tessera grid meta:", emb_tes_g.meta)
 #   output=OutputSpec.grid()
 # )
 # print(embg.data.shape)  # (512, 7, 7) 
-# print(embg.meta["grid_hw"], embg.meta["cls_removed"])
+# print(embg.meta)
 
 
 # CopernicusEmbed: grid
@@ -97,7 +103,8 @@ print("tessera grid meta:", emb_tes_g.meta)
 #     output=OutputSpec.pooled("mean"),
 #     backend="gee",
 # )
-# print(emb.data.shape, emb.meta["tokens_shape"])
+# print(emb.data.shape)
+# print(emb.meta)
 
 # emb = get_embedding(
 #     "presto",

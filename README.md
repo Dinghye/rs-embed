@@ -118,16 +118,17 @@ from rs_embed import (
 
 ```
 spatial = PointBuffer(lon=121.5, lat=31.2, buffer_m=2048)
+temporal = TemporalSpec.year(2024)
 
-emb = get_embedding(
+emb_tes_g = get_embedding(
     "tessera",
     spatial=spatial,
-    temporal=TemporalSpec.range("2021-06-01", "2021-08-31"),
-    output=OutputSpec.pooled(),
+    temporal=temporal,#TemporalSpec.range("2021-06-01", "2021-08-31"),  # 用 start 年份当 preferred_year
+    output=OutputSpec.grid(),
     backend="local",
 )
-
-print(emb.data.shape)  # (D,)
+pca_tes = plot_embedding_pseudocolor(emb_tes_g, title="Tessera PCA pseudocolor")
+print("tessera grid meta:", emb_tes_g.meta)
 ```
 
 ### **Example 2 — RemoteCLIP (On-the-fly)**
