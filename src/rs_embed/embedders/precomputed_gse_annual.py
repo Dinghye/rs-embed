@@ -50,6 +50,7 @@ class GSEAnnualEmbedder(EmbedderBase):
         import ee
         provider = GEEProvider(auto_auth=True)
         region = provider.get_region_3857(spatial)
+        print(region.getInfo())
 
         col = ee.ImageCollection("GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL")
         img = col.filterDate(f"{temporal.year}-01-01", f"{temporal.year+1}-01-01").mosaic()

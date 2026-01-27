@@ -23,10 +23,9 @@ Yet, using them in practice remains surprisingly painful:
 - Ambiguous input semantics (patch / tile / grid / pooled)
 - Large differences in temporal, spectral, and spatial requirements
 - No easy way to **fairly compare multiple models** in a single experiment
-- 
-**RS-Foundation-Kit** aims to fix this.
 
-  
+
+**RS-Embed** aims to fix this.
 
 > 🎯 **Goal**
 
@@ -50,9 +49,7 @@ emb = get_embedding("tessera", spatial=..., temporal=..., output=...)
 - ✅ **Two classes of supported models**
     - 🧊 **Precomputed embeddings** (no deep learning environment required)
     - 🔥 **On-the-fly models** (imagery fetched automatically from Google Earth Engine)
-- ✅ **Research-friendly design**
-    - Explicit metadata (CRS, time range, crop window, tokens, etc.)
-    - Built-in embedding visualization (norm, PCA pseudo-color, similarity maps)
+
     
 
 ---
@@ -62,7 +59,7 @@ emb = get_embedding("tessera", spatial=..., temporal=..., output=...)
 
 |**Model**|**ID**|**Output**|**Resolution**|**Dim**|**Time Coverage**|**Notes**|
 |---|---|---|---|---|---|---|
-|**Tessera**|tessera|pooled / grid|–|128|2017–2025|GeoTessera global tile embeddings|
+|**Tessera**|tessera|pooled / grid|0.1°|128|2017–2025|GeoTessera global tile embeddings|
 |**Google Satellite Embedding (Alpha Earth)**|gse_annual|pooled / grid|10 m|64|2017–2024|Annual embeddings via GEE|
 |**Copernicus Embed**|copernicus_embed|pooled / grid|0.25°|768|2021|Official Copernicus embeddings|
 
@@ -149,6 +146,99 @@ print(emb.data.shape)  # (D, H, W)
 
 ---
 
+
+
+## 📤 Output Semantics
+
+This project introduces OutputSpec to provide a unified abstraction over the outputs of different Remote Sensing Foundation Models (RS FMs).
+
+
+### OutputSpec.pooled(): ROI-level Vector Embedding
+
+**Semantic Meaning**
+
+> pooled represents an entire ROI (Region of Interest) with a single vector (D,).
+
+This is the most stable and comparable representation, suitable for:
+* Classification / regression
+* Retrieval / similarity search
+* Clustering
+* Cross-model comparison (recommended)
+
+Unified Output Format
+```
+Embedding.data.shape == (D,)
+```
+
+**(a) ViT / MAE-style models**
+(RemoteCLIP / Prithvi / SatMAE / ScaleMAE)
+* Native output: patch tokens
+* tokens: (N, D)   # N = patch tokens (+ optional CLS)
+
+Processing steps:
+	1.	Remove CLS token if present
+	2.	Aggregate tokens along the token dimension (default: mean, optional: max)
+
+Mean pooling:
+
+$$
+v_d = \frac{1}{N'} \sum_{i=1}^{N'} t_{i,d}
+$$
+
+
+**(b) Precomputed embeddings** (Tessera / GSE / Copernicus)
+
+* Native output: embedding grid
+grid: (D, H, W)
+
+* Processing:
+	•	Pool over spatial dimensions (H, W):
+$$
+v_d = \frac{1}{HW} \sum_{y,x} g_{d,y,x}
+$$
+
+Why pooled?
+* Model-agnostic, stable, and comparable
+* Avoids differences in spatial resolution or token structure
+* Strongly recommended for cross-model benchmarks
+
+
+### **OutputSpec.grid(): ROI-level Spatial Embedding Field**
+
+**Semantic Meaning**
+
+> grid outputs a spatially structured embedding field:
+> An embedding tensor (D, H, W),
+where each spatial location corresponds to a vector.
+
+Suitable for:
+* Spatial visualization (PCA / norm / similarity maps)
+* Pixel-wise / patch-wise tasks
+* Intra-ROI structure analysis
+
+Unified Output Format
+```
+Embedding.data.shape == (D, H, W)
+```
+
+Returned as xarray.DataArray, carrying CRS, cropping, and metadata.
+
+**(a) ViT / MAE-style models**
+* Native output: tokens (N, D)
+
+Processing steps:
+	1.	Remove CLS token (if present)
+	2.	Reshape remaining tokens into a patch grid
+
+`(N', D) → (H, W, D) → (D, H, W)`
+
+(H, W) is determined by the model’s patch layout (e.g. 8×8, 14×14)
+
+
+**(b) Precomputed embeddings**: (Tessera / GSE ...): Native output is already (D, H, W)
+
+
+---
 ## **🏗️ Project Structure**
 
 ```

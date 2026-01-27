@@ -2,7 +2,7 @@ from rs_embed import BBox, PointBuffer, TemporalSpec, OutputSpec, get_embedding
 from plot_utils import *
 
 spatial = PointBuffer(lon=121.5, lat=31.2, buffer_m=2048)
-temporal = TemporalSpec.year(2021)
+temporal = TemporalSpec.year(2024)
 
 # # # Tessera: grid
 emb_tes_g = get_embedding(
@@ -98,3 +98,12 @@ print("tessera grid meta:", emb_tes_g.meta)
 #     backend="gee",
 # )
 # print(emb.data.shape, emb.meta["tokens_shape"])
+
+# emb = get_embedding(
+#     "presto",
+#     spatial=spatial,
+#     temporal=TemporalSpec.year(2022),
+#     output=OutputSpec.pooled(),
+#     backend="gee",
+# )
+# print(emb.data.shape, emb.meta["dim"])
