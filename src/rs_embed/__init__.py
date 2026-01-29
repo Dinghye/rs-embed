@@ -1,7 +1,7 @@
 from .core.specs import BBox, PointBuffer, TemporalSpec, SensorSpec, OutputSpec
-from .api import get_embedding
+from .api import get_embedding,get_embeddings_batch
 
 __all__ = [
     "BBox", "PointBuffer", "TemporalSpec", "SensorSpec", "OutputSpec",
-    "get_embedding",
+    "get_embedding", "get_embeddings_batch"
 ]

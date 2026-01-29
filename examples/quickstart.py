@@ -115,11 +115,30 @@ bbox = BBox(
 # )
 # print(emb.data.shape, emb.meta["dim"])
 
-emb = get_embedding(
+# emb = get_embedding(
+#     "dofa",
+#     spatial=spatial,
+#     temporal=TemporalSpec.range("2021-06-01", "2021-08-31"),
+#     output=OutputSpec.pooled(),
+#     backend="gee",
+# )
+# print(emb.data.shape, emb.meta)
+
+
+from rs_embed import BBox, get_embeddings_batch
+
+points = [
+    PointBuffer(lon=121.5, lat=31.2, buffer_m=100),
+    PointBuffer(lon=121.6, lat=31.3, buffer_m=100),
+    PointBuffer(lon=120.0, lat=30.0, buffer_m=100),
+]
+
+embeddings = get_embeddings_batch(
     "terrafm_b",
-    spatial=spatial,
-    temporal=TemporalSpec.range("2021-06-01", "2022-08-31"),
-    output=OutputSpec.pooled(),
-    backend="gee",
+    spatials=points,
+    temporal=TemporalSpec.range("2021-06-01", "2021-08-31"),
+    backend="gee"
 )
-print(emb.data.shape, emb.meta)
+
+for i, emb in enumerate(embeddings):
+    print(f"Embedding {i} shape: {emb.data.shape}")

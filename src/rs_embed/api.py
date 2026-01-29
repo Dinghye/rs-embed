@@ -29,3 +29,33 @@ def get_embedding(
         backend=backend,
         device=device,
     )
+
+
+def get_embeddings_batch(
+    model: str,
+    *,
+    spatials: List[SpatialSpec],  # get embeddings for multiple spatials
+    temporal: Optional[TemporalSpec] = None,
+    sensor: Optional[SensorSpec] = None,
+    output: OutputSpec = OutputSpec.pooled(),
+    backend: str = "gee",
+    device: str = "auto",
+) -> List[Embedding]:
+    # 1. initial embedder
+    from . import embedders 
+    cls = get_embedder_cls(model)
+    embedder = cls()
+    
+    # 2. loop over spatials
+    results = []
+    for spatial in spatials:
+        emb = embedder.get_embedding(
+            spatial=spatial,
+            temporal=temporal,
+            sensor=sensor,
+            output=output,
+            backend=backend,
+            device=device,
+        )
+        results.append(emb)
+    return results
