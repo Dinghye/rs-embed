@@ -11,6 +11,7 @@ from ..core.specs import SpatialSpec, TemporalSpec, SensorSpec, OutputSpec
 from ..providers.gee import GEEProvider
 from ..ops.pooling import pool_chw_to_vec
 from .base import EmbedderBase
+from .meta_utils import build_meta, temporal_midpoint_str
 
 @register("gse_annual")
 class GSEAnnualEmbedder(EmbedderBase):
@@ -64,15 +65,21 @@ class GSEAnnualEmbedder(EmbedderBase):
         emb_chw = np.stack(arrs, axis=0).astype(np.float32)
         emb_chw[emb_chw == -9999] = np.nan
 
-        meta = {
-            "model": self.model_name,
-            "type": "precomputed",
-            "backend": "gee",
-            "source": "GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL",
-            "year": temporal.year,
-            "scale_m": output.scale_m,
-            "bands": band_names,
-        }
+        meta = build_meta(
+            model=self.model_name,
+            kind="precomputed",
+            backend="gee",
+            source="GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL",
+            sensor=None,
+            temporal=temporal,
+            image_size=None,
+            input_time=temporal_midpoint_str(temporal),
+            extra={
+                "year": temporal.year,
+                "scale_m": output.scale_m,
+                "bands": band_names,
+            },
+        )
 
         if output.mode == "pooled":
             vec = pool_chw_to_vec(emb_chw, method=output.pooling)

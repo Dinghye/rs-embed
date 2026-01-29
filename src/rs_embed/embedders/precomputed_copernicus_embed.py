@@ -10,6 +10,7 @@ from ..core.embedding import Embedding
 from ..core.errors import ModelError
 from ..core.specs import BBox, PointBuffer, SpatialSpec, TemporalSpec, SensorSpec, OutputSpec
 from .base import EmbedderBase
+from .meta_utils import build_meta
 
 
 def _buffer_m_to_deg(lat: float, buffer_m: float) -> Tuple[float, float]:
@@ -133,16 +134,22 @@ class CopernicusEmbedder(EmbedderBase):
 
         chw = img.detach().cpu().numpy().astype(np.float32)
 
-        meta = {
-            "model": self.model_name,
-            "type": "precomputed",
-            "source": "torchgeo.CopernicusEmbed",
-            "data_dir": data_dir,
-            "download": download,
-            "expand_deg": expand_deg,
-            "bbox_4326": (minlon, minlat, maxlon, maxlat),
-            "chw_shape": tuple(chw.shape),
-        }
+        meta = build_meta(
+            model=self.model_name,
+            kind="precomputed",
+            backend="torchgeo",
+            source="torchgeo.CopernicusEmbed",
+            sensor=None,
+            temporal=None,
+            image_size=None,
+            extra={
+                "data_dir": data_dir,
+                "download": download,
+                "expand_deg": expand_deg,
+                "bbox_4326": (minlon, minlat, maxlon, maxlat),
+                "chw_shape": tuple(chw.shape),
+            },
+        )
 
         if output.mode == "pooled":
             vec = _pool_chw(chw, output.pooling)

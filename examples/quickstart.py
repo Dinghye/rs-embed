@@ -33,9 +33,9 @@ bbox = BBox(
 # print("tessera pooled:", emb_tes.data.shape)
 
 # Precomputed: GEE annual embedding
-emb = get_embedding("gse_annual", spatial=bbox, temporal=temporal, output=OutputSpec.grid(scale_m=100))
-print(emb.data.shape, emb.meta["source"])
-pca_tes = plot_embedding_pseudocolor(emb, title="Alpha Earth PCA pseudocolor")
+# emb = get_embedding("gse_annual", spatial=bbox, temporal=temporal, output=OutputSpec.grid(scale_m=100))
+# print(emb.data.shape, emb.meta["source"])
+# pca_tes = plot_embedding_pseudocolor(emb, title="Alpha Earth PCA pseudocolor")
 
 
 # On-the-fly: RemoteCLIP from S2 RGB
@@ -114,3 +114,12 @@ pca_tes = plot_embedding_pseudocolor(emb, title="Alpha Earth PCA pseudocolor")
 #     backend="gee",
 # )
 # print(emb.data.shape, emb.meta["dim"])
+
+emb = get_embedding(
+    "terrafm_b",
+    spatial=spatial,
+    temporal=TemporalSpec.range("2021-06-01", "2022-08-31"),
+    output=OutputSpec.pooled(),
+    backend="gee",
+)
+print(emb.data.shape, emb.meta)

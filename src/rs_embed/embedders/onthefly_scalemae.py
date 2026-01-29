@@ -13,6 +13,7 @@ from .base import EmbedderBase
 
 from ._vit_mae_utils import (
     fetch_s2_rgb_u8_from_gee,
+    temporal_to_range,
     pool_from_tokens,
     tokens_to_grid_dhw,
     base_meta,
@@ -230,9 +231,10 @@ class ScaleMAERGBEmbedder(EmbedderBase):
         model_id = os.environ.get("RS_EMBED_SCALEMAE_ID", self.DEFAULT_MODEL_ID)
         image_size = int(os.environ.get("RS_EMBED_SCALEMAE_IMG", str(self.DEFAULT_IMAGE_SIZE)))
 
+        t = temporal_to_range(temporal)
         rgb_u8 = fetch_s2_rgb_u8_from_gee(
             spatial=spatial,
-            temporal=temporal,
+            temporal=t,
             sensor=sensor,
             out_size=image_size,
         )
@@ -245,13 +247,15 @@ class ScaleMAERGBEmbedder(EmbedderBase):
             device=dev,
             input_res_m=float(sensor.scale_m),
         )
-
+        
         meta = base_meta(
             model_name=self.model_name,
             hf_id=model_id,
             backend="gee",
             image_size=image_size,
             sensor=sensor,
+            temporal=t,
+            source=sensor.collection,
             extra={"used_scale_m": float(sensor.scale_m), **extra, "out_shape": tuple(out.shape)},
         )
 

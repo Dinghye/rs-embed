@@ -79,6 +79,9 @@ emb = get_embedding("tessera", spatial=..., temporal=..., output=...)
 |**RemoteCLIP**|remoteclip_s2rgb|Sentinel-2 RGB|pooled / grid|
 |**SatMAE**|satmae_s2rgb|Sentinel-2 RGB|pooled / grid|
 |**ScaleMAE**|scalemae_s2rgb|Sentinel-2 RGB|pooled / grid|
+|**Terrafm**|terrafm_b|Sentinel-2(12band)|pooled/grid|
+
+
 
 **Notes**
 - Imagery is fetched automatically from **Google Earth Engine**

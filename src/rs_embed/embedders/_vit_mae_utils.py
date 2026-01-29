@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import asdict
 from typing import Any, Dict, Optional, Tuple, Union
 
 import numpy as np
@@ -8,30 +7,10 @@ import numpy as np
 from ..core.errors import ModelError
 from ..core.specs import TemporalSpec, SensorSpec, SpatialSpec, OutputSpec
 from ..providers.gee import GEEProvider
+from .meta_utils import temporal_to_range, temporal_midpoint_str, build_meta
 
 # Reuse your RemoteCLIP S2 fetcher (single source of truth)
 from .onthefly_remoteclip import _fetch_s2_rgb_chw, _s2_rgb_u8_from_chw
-
-
-# -------------------------
-# Temporal helpers
-# -------------------------
-def temporal_to_range(temporal: Optional[TemporalSpec], default: Tuple[str, str] = ("2022-06-01", "2022-09-01")) -> TemporalSpec:
-    """
-    Normalize TemporalSpec to a range spec:
-      - None -> default range
-      - year -> [year-01-01, year-12-31]
-      - range -> unchanged
-    """
-    if temporal is None:
-        return TemporalSpec.range(default[0], default[1])
-    temporal.validate()
-    if temporal.mode == "range":
-        return temporal
-    if temporal.mode == "year":
-        y = int(temporal.year)
-        return TemporalSpec.range(f"{y}-01-01", f"{y}-12-31")
-    raise ModelError(f"Unknown TemporalSpec mode: {temporal.mode}")
 
 
 # -------------------------
@@ -210,15 +189,25 @@ def base_meta(
     backend: str,
     image_size: int,
     sensor: SensorSpec,
+    temporal: Optional[TemporalSpec] = None,
+    source: Optional[str] = None,
+    input_time: Optional[str] = None,
+    embed_type: str = "on_the_fly",
     extra: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    meta = {
-        "model": model_name,
-        "hf_id": hf_id,
-        "backend": backend,
-        "image_size": int(image_size),
-        "sensor": asdict(sensor),
-    }
+    base = build_meta(
+        model=model_name,
+        kind=embed_type,
+        backend=backend,
+        source=source or getattr(sensor, "collection", None),
+        sensor=sensor,
+        temporal=temporal,
+        image_size=image_size,
+        input_time=input_time,
+        extra=None,
+    )
+    extra_fields = {"hf_id": hf_id}
     if extra:
-        meta.update(extra)
-    return meta
+        extra_fields.update(extra)
+    base.update(extra_fields)
+    return base

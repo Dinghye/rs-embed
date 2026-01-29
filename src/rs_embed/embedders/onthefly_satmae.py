@@ -16,6 +16,7 @@ from ._vit_mae_utils import (
     pool_from_tokens,
     tokens_to_grid_dhw,
     base_meta,
+    temporal_to_range,
     ensure_torch,
     maybe_use_model_transform,
     rgb_u8_to_tensor_clipnorm,
@@ -110,9 +111,10 @@ class SatMAERGBEmbedder(EmbedderBase):
         model_id = os.environ.get("RS_EMBED_SATMAE_ID", self.DEFAULT_MODEL_ID)
         image_size = int(os.environ.get("RS_EMBED_SATMAE_IMG", str(self.DEFAULT_IMAGE_SIZE)))
 
+        t = temporal_to_range(temporal)
         rgb_u8 = fetch_s2_rgb_u8_from_gee(
             spatial=spatial,
-            temporal=temporal,
+            temporal=t,
             sensor=sensor,
             out_size=image_size,
         )
@@ -126,6 +128,8 @@ class SatMAERGBEmbedder(EmbedderBase):
             backend="gee",
             image_size=image_size,
             sensor=sensor,
+            temporal=t,
+            source=sensor.collection,
             extra={"tokens_kind": "tokens_forward_encoder", "tokens_shape": tuple(tokens.shape)},
         )
 

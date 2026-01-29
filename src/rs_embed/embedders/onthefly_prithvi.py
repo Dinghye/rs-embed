@@ -20,6 +20,7 @@ from ._vit_mae_utils import (
     tokens_to_grid_dhw,
     base_meta,
     temporal_to_range,
+    temporal_midpoint_str,
 )
 
 
@@ -133,16 +134,6 @@ def _load_prithvi(
 
     m = m.to(dev).eval()
     return m, dev
-
-
-def _mid_date_str(start: str, end: str) -> str:
-    # robust mid-date for coords (Prithvi uses year + day-of-year)
-    import pandas as pd
-
-    s = pd.to_datetime(start)
-    e = pd.to_datetime(end)
-    mid = s + (e - s) / 2
-    return mid.strftime("%Y-%m-%d")
 
 
 def _prithvi_forward_tokens(
@@ -307,7 +298,7 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
         else:
             raise ModelError(f"Unsupported SpatialSpec: {type(spatial)}")
 
-        date_str = _mid_date_str(t.start, t.end)
+        date_str = temporal_midpoint_str(t)
 
         tokens = _prithvi_forward_tokens(
             model,
@@ -324,6 +315,8 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
             backend="gee",
             image_size=int(x_chw.shape[-1]),  # not fixed 224; depends on ROI/scale
             sensor=sensor,
+            temporal=t,
+            source=sensor.collection,
             extra={
                 "temporal_range": (t.start, t.end),
                 "coords_date": date_str,

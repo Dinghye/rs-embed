@@ -13,6 +13,7 @@ from ..core.errors import ModelError
 from ..core.specs import SpatialSpec, TemporalSpec, SensorSpec, OutputSpec
 from ..providers.gee import GEEProvider
 from .base import EmbedderBase
+from .meta_utils import build_meta, temporal_to_range, temporal_midpoint_str
 
 
 # -----------------------------
@@ -424,6 +425,7 @@ class RemoteCLIPS2RGBEmbedder(EmbedderBase):
         temporal.validate()
         if temporal.mode != "range":
             raise ModelError("remoteclip_s2rgb requires TemporalSpec.range in v0.1.")
+        t = temporal_to_range(temporal)
 
         provider = GEEProvider(auto_auth=True)
         provider.ensure_ready()
@@ -442,7 +444,7 @@ class RemoteCLIPS2RGBEmbedder(EmbedderBase):
 
         # fetch image
         s2_rgb_chw = _fetch_s2_rgb_chw(
-            provider, spatial, temporal, scale_m=scale_m, cloudy_pct=cloudy_pct, composite=composite
+            provider, spatial, t, scale_m=scale_m, cloudy_pct=cloudy_pct, composite=composite
         )
         rgb_u8 = _s2_rgb_u8_from_chw(s2_rgb_chw)
 
@@ -465,26 +467,39 @@ class RemoteCLIPS2RGBEmbedder(EmbedderBase):
             model, rgb_u8, image_size=image_size, device=device
         )
 
-        base_meta = {
-            "model": self.model_name,
-            "type": "on_the_fly",
-            "backend": "gee",
-            "source": "COPERNICUS/S2_SR_HARMONIZED",
-            "bands": ["B4", "B3", "B2"],
+        sensor_meta = {
+            "collection": "COPERNICUS/S2_SR_HARMONIZED",
+            "bands": ("B4", "B3", "B2"),
             "scale_m": scale_m,
             "cloudy_pct": cloudy_pct,
             "composite": composite,
-            "start": temporal.start,
-            "end": temporal.end,
-            "ckpt": ckpt,
-            "image_size": image_size,
-            "device": device,
-            "pretrained_required": True,
-            "auto_download": True,
-            "hf_cache_dir": cache_dir,
-            **wmeta,
-            **tmeta,
         }
+
+        base_meta = build_meta(
+            model=self.model_name,
+            kind="on_the_fly",
+            backend="gee",
+            source="COPERNICUS/S2_SR_HARMONIZED",
+            sensor=sensor_meta,
+            temporal=t,
+            image_size=image_size,
+            input_time=temporal_midpoint_str(t),
+            extra={
+                "bands": sensor_meta["bands"],
+                "scale_m": scale_m,
+                "cloudy_pct": cloudy_pct,
+                "composite": composite,
+                "start": t.start,
+                "end": t.end,
+                "ckpt": ckpt,
+                "device": device,
+                "pretrained_required": True,
+                "auto_download": True,
+                "hf_cache_dir": cache_dir,
+                **wmeta,
+                **tmeta,
+            },
+        )
 
         # ---- pooled output ----
         if output.mode == "pooled":
