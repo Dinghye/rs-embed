@@ -1,7 +1,7 @@
 # **rs-embed**
 
-![alt text](img/image.png)
 
+![alt text](img/image.png)
 
 **A unified Python toolkit for Remote Sensing Foundation Model embeddings**
 
@@ -61,7 +61,7 @@ emb = get_embedding("tessera", spatial=..., temporal=..., output=...)
 
 ---
 
-## **Supported Models**
+## **📦 Supported Models**
 ### **Precomputed Embeddings**
 
 |**Model**|**ID**|**Output**|**Resolution**|**Dim**|**Time Coverage**|**Notes**|
