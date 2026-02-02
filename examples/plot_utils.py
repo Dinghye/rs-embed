@@ -114,6 +114,7 @@ def plot_embedding_pseudocolor(
         pca = fit_pca_rgb(emb, n_samples=n_samples, seed=seed)
 
     rgb = transform_pca_rgb(emb, pca, robust_lo=robust_lo, robust_hi=robust_hi)
+    rgb = np.flipud(rgb)
 
     plt.figure(figsize=figsize)
     plt.imshow(rgb)
@@ -138,3 +139,47 @@ def plot_embedding_pseudocolor(
             plt.show()
     plt.savefig(f"{title.replace(' ','_')}_pca.png")
     return pca
+
+def percentile_stretch(rgb_hwc: np.ndarray, p_low=1.0, p_high=99.0, gamma=1.0) -> np.ndarray:
+    """Per-channel percentile stretch to [0,1]."""
+    rgb = rgb_hwc.astype(np.float32)
+    rgb = np.nan_to_num(rgb, nan=0.0, posinf=0.0, neginf=0.0)
+
+    out = np.empty_like(rgb)
+    for c in range(3):
+        lo = np.percentile(rgb[..., c], p_low)
+        hi = np.percentile(rgb[..., c], p_high)
+        if hi <= lo + 1e-6:
+            out[..., c] = 0.0
+        else:
+            out[..., c] = (rgb[..., c] - lo) / (hi - lo)
+    out = np.clip(out, 0.0, 1.0)
+    if gamma != 1.0:
+        out = out ** (1.0 / gamma)
+    return out
+
+
+def show_input_chw(x_chw: np.ndarray, title: str, rgb_idx=(0, 1, 2), p_low=1, p_high=99):
+    """Visualize CHW input. If C>=3 show RGB via indices; else show grayscale."""
+    if x_chw.ndim != 3:
+        print(f"Skip {title}: expected CHW, got shape={x_chw.shape}")
+        return
+
+    c, h, w = x_chw.shape
+    print(f"{title:40s} shape={x_chw.shape} dtype={x_chw.dtype} min={x_chw.min():.3g} max={x_chw.max():.3g}")
+
+    plt.figure(figsize=(6, 6))
+    if c >= 3:
+        r, g, b = rgb_idx
+        if max(rgb_idx) >= c:
+            raise ValueError(f"rgb_idx={rgb_idx} out of range for C={c}")
+
+        rgb = np.stack([x_chw[r], x_chw[g], x_chw[b]], axis=-1)  # HWC
+        rgb = percentile_stretch(rgb, p_low=p_low, p_high=p_high, gamma=1.0)
+        plt.imshow(rgb)
+    else:
+        plt.imshow(x_chw[0], cmap="gray")
+
+    plt.title(f"{title}  (C={c}, H={h}, W={w})")
+    plt.axis("off")
+    plt.show()
