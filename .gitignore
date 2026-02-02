@@ -7,3 +7,4 @@ build/
 .pytest_cache/
 .mypy_cache/
 _gee_checks/
+exports/

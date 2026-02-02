@@ -19,7 +19,7 @@ from .core.specs import SensorSpec, SpatialSpec, TemporalSpec
 from .providers.gee import GEEProvider
 
 
-def _build_gee_image(*, sensor: SensorSpec, temporal: Optional[TemporalSpec]) -> Any:
+def _build_gee_image(*, sensor: SensorSpec, temporal: Optional[TemporalSpec], region: Optional[Any] = None) -> Any:
     """Build an ee.Image from SensorSpec/TemporalSpec.
 
     Notes
@@ -45,6 +45,8 @@ def _build_gee_image(*, sensor: SensorSpec, temporal: Optional[TemporalSpec]) ->
     # Try collection first
     try:
         ic = ee.ImageCollection(sensor.collection)
+        if region is not None:
+            ic = ic.filterBounds(region)
         if temporal_range is not None:
             ic = ic.filterDate(temporal_range[0], temporal_range[1])
 
@@ -67,7 +69,7 @@ def _build_gee_image(*, sensor: SensorSpec, temporal: Optional[TemporalSpec]) ->
         img = ee.Image(sensor.collection)
 
     # Band selection is explicit (helps catch typos early)
-    img = img.select(list(sensor.bands))
+    # img = img.select(list(sensor.bands))
     return img
 
 
@@ -101,7 +103,7 @@ def inspect_gee_patch(
     import ee
 
     region = provider.get_region_3857(spatial)
-    img = _build_gee_image(sensor=sensor, temporal=temporal)
+    img = _build_gee_image(sensor=sensor, temporal=temporal, region=region)
 
     x_chw = provider.fetch_array_chw(
         image=img,
@@ -109,7 +111,15 @@ def inspect_gee_patch(
         region=region,
         scale_m=int(sensor.scale_m),
         fill_value=float(sensor.fill_value),
+        collection=sensor.collection,   # ✅ 让 alias 生效
     )
+    # x_chw = provider.fetch_array_chw(
+    #     image=img,
+    #     bands=sensor.bands,
+    #     region=region,
+    #     scale_m=int(sensor.scale_m),
+    #     fill_value=float(sensor.fill_value),
+    # )
 
     report = inspect_chw(
         x_chw,
