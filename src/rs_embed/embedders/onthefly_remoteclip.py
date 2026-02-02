@@ -446,6 +446,37 @@ class RemoteCLIPS2RGBEmbedder(EmbedderBase):
         s2_rgb_chw = _fetch_s2_rgb_chw(
             provider, spatial, t, scale_m=scale_m, cloudy_pct=cloudy_pct, composite=composite
         )
+
+        # Optional: inspect on-the-fly GEE input
+        from ..core.input_checks import (
+            maybe_inspect_chw,
+            checks_save_dir,
+            checks_should_raise,
+            save_quicklook_rgb,
+        )
+        extra_checks: Dict[str, Any] = {}
+        report = maybe_inspect_chw(
+            s2_rgb_chw,
+            sensor=sensor,
+            name="gee_s2_rgb_chw",
+            expected_channels=3,
+            value_range=(0.0, 1.0),
+            fill_value=0.0,
+            meta=extra_checks,
+        )
+        if report is not None and (not report.get("ok", True)) and checks_should_raise(sensor):
+            raise ModelError("GEE input inspection failed: " + "; ".join(report.get("issues", [])))
+        sd = checks_save_dir(sensor)
+        if sd and report is not None:
+            try:
+                import uuid
+                fn = f"remoteclip_s2_rgb_{uuid.uuid4().hex[:8]}.png"
+                save_quicklook_rgb(s2_rgb_chw, path=os.path.join(sd, fn), bands=(0, 1, 2), vmin=0.0, vmax=1.0)
+                extra_checks.setdefault("input_checks_artifacts", []).append({"name": "quicklook_rgb", "path": os.path.join(sd, fn)})
+            except Exception as _e:
+                # Never fail embedding because quicklook saving failed.
+                extra_checks.setdefault("input_checks_artifacts", []).append({"name": "quicklook_rgb", "error": repr(_e)})
+
         rgb_u8 = _s2_rgb_u8_from_chw(s2_rgb_chw)
 
         # HF cache dir
@@ -475,6 +506,23 @@ class RemoteCLIPS2RGBEmbedder(EmbedderBase):
             "composite": composite,
         }
 
+        extra = {
+            "bands": sensor_meta["bands"],
+            "scale_m": scale_m,
+            "cloudy_pct": cloudy_pct,
+            "composite": composite,
+            "start": t.start,
+            "end": t.end,
+            "ckpt": ckpt,
+            "device": device,
+            "pretrained_required": True,
+            "auto_download": True,
+            "hf_cache_dir": cache_dir,
+            **wmeta,
+            **tmeta,
+            **extra_checks,
+        }
+
         base_meta = build_meta(
             model=self.model_name,
             kind="on_the_fly",
@@ -484,21 +532,7 @@ class RemoteCLIPS2RGBEmbedder(EmbedderBase):
             temporal=t,
             image_size=image_size,
             input_time=temporal_midpoint_str(t),
-            extra={
-                "bands": sensor_meta["bands"],
-                "scale_m": scale_m,
-                "cloudy_pct": cloudy_pct,
-                "composite": composite,
-                "start": t.start,
-                "end": t.end,
-                "ckpt": ckpt,
-                "device": device,
-                "pretrained_required": True,
-                "auto_download": True,
-                "hf_cache_dir": cache_dir,
-                **wmeta,
-                **tmeta,
-            },
+            extra=extra,
         )
 
         # ---- pooled output ----

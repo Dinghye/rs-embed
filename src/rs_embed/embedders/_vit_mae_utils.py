@@ -13,8 +13,6 @@ from .meta_utils import temporal_to_range, temporal_midpoint_str, build_meta
 from .onthefly_remoteclip import _fetch_s2_rgb_chw, _s2_rgb_u8_from_chw
 
 
-
-
 # -------------------------
 # Image resize / fetch from GEE
 # -------------------------
@@ -63,6 +61,21 @@ def fetch_s2_rgb_u8_from_gee(
         cloudy_pct=sensor.cloudy_pct,
         composite=sensor.composite,
     )
+
+    # Optional: inspect on-the-fly GEE input (shared by multiple embedders)
+    from ..core.input_checks import maybe_inspect_chw, checks_should_raise
+    report = maybe_inspect_chw(
+        s2_chw,
+        sensor=sensor,
+        name="gee_s2_rgb_chw",
+        expected_channels=3,
+        value_range=(0.0, 1.0),
+        fill_value=0.0,
+        meta=None,
+    )
+    if report is not None and (not report.get("ok", True)) and checks_should_raise(sensor):
+        raise ModelError("GEE input inspection failed: " + "; ".join(report.get("issues", [])))
+
     rgb_u8 = _s2_rgb_u8_from_chw(s2_chw)
     return resize_rgb_u8(rgb_u8, out_size)
 

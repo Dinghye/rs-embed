@@ -70,6 +70,13 @@ class SensorSpec:
     fill_value: float = 0.0
     composite: Literal["median", "mosaic"] = "median"
 
+    # Optional: on-the-fly input inspection for GEE downloads.
+    # If enabled, embedders can attach a compact stats report into Embedding.meta
+    # (and optionally raise if issues are detected).
+    check_input: bool = False
+    check_raise: bool = True
+    check_save_dir: Optional[str] = None
+
 @dataclass(frozen=True)
 class OutputSpec:
     mode: Literal["grid", "pooled"]

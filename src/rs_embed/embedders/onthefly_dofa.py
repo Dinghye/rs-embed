@@ -333,6 +333,9 @@ class DOFAEmbedder(EmbedderBase):
         variant = getattr(sensor, "variant", "base") if sensor else "base"
         image_size = 224
 
+        # For optional on-the-fly input inspection
+        check_meta: Dict[str, Any] = {}
+
         # -----------------
         # Build input + wavelengths
         # -----------------
@@ -413,6 +416,21 @@ class DOFAEmbedder(EmbedderBase):
                 default_value=0.0,
             )
 
+            # Optional: inspect on-the-fly GEE input
+            from ..core.input_checks import maybe_inspect_chw, checks_should_raise
+            check_meta.clear()
+            report = maybe_inspect_chw(
+                x_chw,
+                sensor=sensor,
+                name="gee_multiband_sr_chw",
+                expected_channels=len(bands),
+                value_range=(0.0, 1.0),
+                fill_value=0.0,
+                meta=check_meta,
+            )
+            if report is not None and (not report.get("ok", True)) and checks_should_raise(sensor):
+                raise ModelError("GEE input inspection failed: " + "; ".join(report.get("issues", [])))
+
             x_chw, resize_meta = _resize_chw(x_chw, size=image_size)
             x_bchw = x_chw[None, ...].astype(np.float32)
 
@@ -443,6 +461,7 @@ class DOFAEmbedder(EmbedderBase):
             "wavelengths_um": list(map(float, wavelengths_um)),
             "input_size_hw": (int(x_bchw.shape[2]), int(x_bchw.shape[3])),
             "token_meta": tmeta,
+            **check_meta,
             **mmeta,
             **gee_meta,
         }

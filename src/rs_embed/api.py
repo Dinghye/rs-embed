@@ -1,6 +1,6 @@
 
 from __future__ import annotations
-from typing import Optional
+from typing import Optional, List
 
 from .core.registry import get_embedder_cls
 from .core.specs import SpatialSpec, TemporalSpec, SensorSpec, OutputSpec

@@ -184,6 +184,35 @@ class SkySensePlusS2Embedder(EmbedderBase):
         img_chw = _fetch_s2_rgb_chw(
             provider, spatial, t, scale_m=scale_m, cloudy_pct=cloudy_pct, composite=composite
         )
+
+        # Optional: inspect on-the-fly GEE input
+        from ..core.input_checks import (
+            maybe_inspect_chw,
+            checks_should_raise,
+            checks_save_dir,
+            save_quicklook_rgb,
+        )
+        check_meta: Dict[str, Any] = {}
+        report = maybe_inspect_chw(
+            img_chw,
+            sensor=sensor,
+            name="gee_s2_rgb_chw",
+            expected_channels=3,
+            value_range=(0.0, 1.0),
+            fill_value=0.0,
+            meta=check_meta,
+        )
+        if report is not None and (not report.get("ok", True)) and checks_should_raise(sensor):
+            raise ModelError("GEE input inspection failed: " + "; ".join(report.get("issues", [])))
+        sd = checks_save_dir(sensor)
+        if sd and report is not None:
+            try:
+                import uuid
+                fn = f"skysense_s2_rgb_{uuid.uuid4().hex[:8]}.png"
+                save_quicklook_rgb(img_chw, path=os.path.join(sd, fn), bands=(0, 1, 2), vmin=0.0, vmax=1.0)
+                check_meta.setdefault("input_checks_artifacts", []).append({"name": "quicklook_rgb", "path": os.path.join(sd, fn)})
+            except Exception as _e:
+                check_meta.setdefault("input_checks_artifacts", []).append({"name": "quicklook_rgb", "error": repr(_e)})
         
         # 3. 加载模型
         model, dev, cfg = _load_skysense_model(config_path, ckpt_path, device)
@@ -240,7 +269,8 @@ class SkySensePlusS2Embedder(EmbedderBase):
             extra={
                 "config": config_path,
                 "ckpt": ckpt_path,
-                "feat_shape": feat_np.shape
+                "feat_shape": feat_np.shape,
+                **check_meta,
             }
         )
 

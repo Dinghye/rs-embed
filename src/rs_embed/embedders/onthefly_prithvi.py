@@ -279,6 +279,37 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
             composite=str(sensor.composite),
             fill_value=float(sensor.fill_value),
         )
+
+        # Optional: inspect on-the-fly GEE input
+        from ..core.input_checks import (
+            maybe_inspect_chw,
+            checks_should_raise,
+            checks_save_dir,
+            save_quicklook_rgb,
+        )
+        check_meta: Dict[str, Any] = {}
+        report = maybe_inspect_chw(
+            x_chw,
+            sensor=sensor,
+            name="gee_s2_prithvi6_chw",
+            expected_channels=6,
+            value_range=(0.0, 1.0),
+            fill_value=float(sensor.fill_value),
+            meta=check_meta,
+        )
+        if report is not None and (not report.get("ok", True)) and checks_should_raise(sensor):
+            raise ModelError("GEE input inspection failed: " + "; ".join(report.get("issues", [])))
+
+        # Optional quicklook (RGB from RED/GREEN/BLUE)
+        sd = checks_save_dir(sensor)
+        if sd and report is not None:
+            try:
+                import uuid
+                fn = f"prithvi_s2_rgb_{uuid.uuid4().hex[:8]}.png"
+                save_quicklook_rgb(x_chw, path=os.path.join(sd, fn), bands=(2, 1, 0), vmin=0.0, vmax=1.0)
+                check_meta.setdefault("input_checks_artifacts", []).append({"name": "quicklook_rgb", "path": os.path.join(sd, fn)})
+            except Exception as _e:
+                check_meta.setdefault("input_checks_artifacts", []).append({"name": "quicklook_rgb", "error": repr(_e)})
         # Prithvi patch_size usually 16; pad to avoid border being ignored
         patch_mult = int(os.environ.get("RS_EMBED_PRITHVI_PATCH_MULT", "16"))
         x_chw = _pad_chw_to_multiple(x_chw, mult=patch_mult, value=float(sensor.fill_value))
@@ -327,7 +358,8 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
                 "coords_encoding": coords_encoding,
                 "num_frames": num_frames,
                 "input_hw":(int(x_chw.shape[1]), int(x_chw.shape[2])),
-                "patch_mult": patch_mult
+                "patch_mult": patch_mult,
+                **check_meta,
             },
         )
 

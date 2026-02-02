@@ -73,13 +73,19 @@ emb = get_embedding("tessera", spatial=..., temporal=..., output=...)
 ---
 ### **On-the-fly Foundation Models**
 
-|**Model**|**ID**|**Input Imagery**|**Output**|
-|---|---|---|---|
-|**Prithvi-EO v2**|prithvi_eo_v2_s2_6b|Sentinel-2 (6 bands)|pooled / grid|
-|**RemoteCLIP**|remoteclip_s2rgb|Sentinel-2 RGB|pooled / grid|
-|**SatMAE**|satmae_s2rgb|Sentinel-2 RGB|pooled / grid|
-|**ScaleMAE**|scalemae_s2rgb|Sentinel-2 RGB|pooled / grid|
-|**Terrafm**|terrafm_b|Sentinel-2(12band)|pooled/grid|
+| **Model**  | ** ID**          | **Architecture**                                | **Input (typical)**       | **Preprocessing / Normalization (in this package)**                                                                                | **Output type(s)** | **Raw output dimension(s)**                                                        | **Note **        |
+|------------|------------------|-------------------------------------------------|---------------------------|------------------------------------------------------------------------------------------------------------------------------------|--------------------|------------------------------------------------------------------------------------|------------------|
+| RemoteClip | remoteclip_s2rgb | CLIP-style Vision Transformer (ViT-B/32)        | S2 → RGB composite        | RGB → uint8 + CLIP image normalization (mean/std); optional GEE patch checks + quicklook                                           | pooled, grid       | pooled: [512] (projection dim) ; grid: [768, 7, 7] (ViT width + 224/32 tokens)     |                  |
+| SatMAE     | satmae_s2rgb     | ViT-L/16 (Masked Autoencoder-style pretraining) | S2 → RGB composite        | RGB → uint8 + CLIP image normalization; optional GEE patch checks + quicklook                                                      | pooled, grid       | pooled: [1024] ; grid: [1024, 14, 14]                                              |                  |
+| ScaleMAE   | scalemae_s2rgb   | ViT-L/16 (Masked Autoencoder-style)             | S2 → RGB composite        | RGB → uint8 + CLIP image normalization; optional GEE patch checks + quicklook                                                      | pooled, grid       | pooled: [1024] ; grid: [1024, 14, 14]                                              |                  |
+| Prithvi    | prithvi_s2_6b    | Temporal ViT encoder (Prithvi ViT-100 style)    | S2 6 bands         | Scales S2 SR by /10000, then clamps to [0,1]; optional GEE patch checks + quicklook                                                | pooled, grid       | pooled: [768] ; grid: [768, 14, 14]                                                | From TerraTorch  |
+| DOFA       | dofa_s2          | ViT (Base/Large variants)                       | S2 bands            | Scales by /10000, clamps to [0,1]; optional GEE patch checks + quicklook                                                           | pooled, grid       | base: pooled [768], grid [768, 14, 14] ; large: pooled [1024], grid [1024, 14, 14] | From TorchGeo    |
+| TerraFM-B  | terrafm_b        | ViT-Base style (embed dim 768, patch 16)        | S1/S2 depending on config | Applies TerraFM-specific normalization (including scaling/clamping and per-sensor handling); optional GEE patch checks + quicklook | pooled, grid       | pooled: [768] ; grid: [768, 14, 14]                                                |                  |
+
+
+
+
+
 
 
 

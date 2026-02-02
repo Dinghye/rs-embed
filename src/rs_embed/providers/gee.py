@@ -52,8 +52,26 @@ class GEEProvider(ProviderBase):
 
     def fetch_array_chw(self, *, image: Any, bands: Tuple[str, ...], region: Any,
                         scale_m: int, fill_value: float) -> np.ndarray:
-        # image: ee.Image; region: ee.Geometry (EPSG:3857 rectangle)
-        rect = image.sampleRectangle(region=region, defaultValue=fill_value).getInfo()
+        """Download a rectangular patch as a CHW numpy array.
+
+        Notes
+        -----
+        `ee.Image.sampleRectangle` does **not** accept a `scale` argument.
+        Without explicitly setting a projection/scale on the image, Earth Engine
+        may return a *single aggregated pixel* (often yielding arrays of shape
+        (C, 1, 1)), which then fails our input checks.
+
+        To make the output resolution deterministic, we reproject the image to
+        EPSG:3857 at the requested `scale_m` before sampling.
+        """
+
+        import ee
+
+        # Force deterministic pixel grid.
+        proj = ee.Projection("EPSG:3857").atScale(int(scale_m))
+        img = image.reproject(proj).clip(region)
+
+        rect = img.sampleRectangle(region=region, defaultValue=fill_value).getInfo()
         props = rect["properties"]
         arrs = []
         for b in bands:

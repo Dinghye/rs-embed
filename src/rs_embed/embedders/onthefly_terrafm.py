@@ -378,6 +378,9 @@ class TerraFMBEmbedder(EmbedderBase):
             or os.environ.get("HUGGINGFACE_HOME")
         )
 
+        # For optional on-the-fly input inspection
+        check_meta: Dict[str, Any] = {}
+
         # -----------------
         # Build input tensor
         # -----------------
@@ -425,6 +428,22 @@ class TerraFMBEmbedder(EmbedderBase):
                 )  # [2,H,W]
             else:
                 raise ModelError("modality must be 's2' or 's1'.")
+
+            # Optional: inspect on-the-fly GEE input
+            from ..core.input_checks import maybe_inspect_chw, checks_should_raise
+            check_meta.clear()
+            exp_c = 12 if modality == "s2" else 2
+            report = maybe_inspect_chw(
+                x_chw,
+                sensor=sensor,
+                name=f"gee_{modality}_chw",
+                expected_channels=exp_c,
+                value_range=(0.0, 1.0),
+                fill_value=0.0,
+                meta=check_meta,
+            )
+            if report is not None and (not report.get("ok", True)) and checks_should_raise(sensor):
+                raise ModelError("GEE input inspection failed: " + "; ".join(report.get("issues", [])))
 
             # resize to 224
             x_chw = _resize_chw_to_224(x_chw, size=image_size)
@@ -496,6 +515,7 @@ class TerraFMBEmbedder(EmbedderBase):
                 "image_size": image_size,
                 "device": device,
                 "hf_cache_dir": cache_dir,
+                **check_meta,
                 **wmeta,
             },
         )

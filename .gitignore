@@ -1,3 +1,9 @@
 data/
 __pycache__/
 *.py[cod]
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+_gee_checks/
