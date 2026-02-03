@@ -1,25 +1,25 @@
-# **rs-embed**
+# **rs-embed: A unified Python toolkit for Remote Sensing Foundation Model embeddings**
 
 
 ![alt text](img/image.png)
 
-**A unified Python toolkit for Remote Sensing Foundation Model embeddings**
+****
 
 
 > One line of code to get embeddings from **any Remote Sensing (RS) foundation model** for a given ROI.
-> Supports both **precomputed embeddings** (Tessera, GSE, Copernicus Embed) and
-> **on-the-fly models** (Prithvi-EO v2, RemoteCLIP, SatMAE, ScaleMAE).
+> Supports both **precomputed embeddings** (eg. Tessera, GSE, Copernicus Embed..) and
+> **on-the-fly models** (eg. Prithvi-EO v2, RemoteCLIP, SatMAE, ScaleMAE etc..)
 
 ---
 
-Current usage: 
+Installation(temporary): 
 ```
 git clone git@github.com:Dinghye/rs-embed.git
 cd rs-embed
 conda env create -f environment.yml
 pip install -e .
-
 ```
+To see usage example of `rs-embed` ->examples/playground.ipynb
 
 ## **✨ Motivation**
 

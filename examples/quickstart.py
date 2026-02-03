@@ -1,147 +1,198 @@
-from rs_embed import BBox, PointBuffer, TemporalSpec, OutputSpec, get_embedding
-from plot_utils import *
+"""Quick smoke test for any registered on-the-fly model.
 
-# spatial = PointBuffer(lon=121.5, lat=31.2, buffer_m=2048)
-# temporal = TemporalSpec.year(2024)
+Pass ``--model`` after registering a new embedder to verify it runs end-to-end
+without editing this script. Default values mimic the playground notebook
+demo (temporal range + three sample points for batch mode).
 
+How to run:
 
-# bbox = BBox(
-#     minlon=121.45, minlat=31.15,
-#     maxlon=121.55, maxlat=31.25,
-# )
-# # # # Tessera: grid
-# emb_tes_g = get_embedding(
-#     "tessera",
-#     spatial=bbox,
-#     temporal=temporal,#TemporalSpec.range("2021-06-01", "2021-08-31"),
-#     output=OutputSpec.grid(),
-#     backend="local",
-# )
-# pca_tes = plot_embedding_pseudocolor(emb_tes_g, title="Tessera PCA pseudocolor")
-# print("tessera grid meta:", emb_tes_g.meta)
-
-# # print("tessera grid:", emb_tes_g.data.shape)
-
-# # Tessera: pooled
-# emb_tes = get_embedding(
-#     "tessera",
-#     spatial=spatial,
-#     temporal=TemporalSpec.range("2021-06-01", "2021-08-31"),
-#     output=OutputSpec.pooled(),
-#     backend="local",
-# )
-# print("tessera pooled:", emb_tes.data.shape)
-
-# Precomputed: GEE annual embedding
-# emb = get_embedding("gse_annual", spatial=bbox, temporal=temporal, output=OutputSpec.grid(scale_m=100))
-# print(emb.data.shape, emb.meta["source"])
-# pca_tes = plot_embedding_pseudocolor(emb, title="Alpha Earth PCA pseudocolor")
+- Default (matches notebook): quickstart.py → pooled DOFA, 2021-06-01 to 2021-08-31 around (121.5, 31.2) buffer 2048 m.
+- Different model: quickstart.py --model remoteclip_s2rgb --output grid --grid-scale 20
+- Batch sample: quickstart.py --batch
+- Custom points: python examples/quickstart.py --point 120 30 --point 121.6 31.3
+- BBox: python examples/quickstart.py --bbox 121.45 31.15 121.55 31.25
 
 
-# On-the-fly: RemoteCLIP from S2 RGB
-# emb2 = get_embedding("remoteclip_s2rgb", spatial=spatial, temporal=TemporalSpec.range("2022-06-01","2022-09-01"),
-#                      output=OutputSpec.pooled(pooling="mean"))
-# print(emb2.data.shape, emb2.meta["model"])
-# print(emb2.meta)
+"""
 
-# embg = get_embedding(
-#   "remoteclip_s2rgb",
-#   spatial=spatial,
-#   temporal=TemporalSpec.range("2022-06-01","2022-09-01"),
-#   output=OutputSpec.grid()
-# )
-# print(embg.data.shape)  # (512, 7, 7) 
-# print(embg.meta)
+import argparse
+from typing import List, Sequence, Tuple
 
-
-# CopernicusEmbed: grid
-# emb_cop_g = get_embedding(
-#     "copernicus_embed",
-#     spatial=spatial,
-#     temporal = temporal,                     
-#     output=OutputSpec.grid(),
-#     backend="local",
-# )
-# print("cop grid:", emb_cop_g.data.shape)
-# print("cop meta:", emb_cop_g.meta)
-# plot_embedding_pseudocolor(emb_cop_g, title="CopernicusEmbed PCA pseudocolor")
-
-# # CopernicusEmbed: pooled
-# emb_cop = get_embedding(
-#     "copernicus_embed",
-#     spatial=spatial,
-#     output=OutputSpec.pooled(),
-#     backend="local",
-# )
-# print("cop pooled:", emb_cop.data.shape)
+from rs_embed import (
+    BBox,
+    PointBuffer,
+    TemporalSpec,
+    OutputSpec,
+    get_embedding,
+    get_embeddings_batch,
+)
 
 
-
-# emb = get_embedding(
-#     "satmae_rgb",
-#     spatial=spatial,
-#     temporal=TemporalSpec.range("2022-06-01","2022-09-01"),
-#     output=OutputSpec.pooled("mean"),
-#     backend="gee",
-# )
-# print(emb.data.shape)
-
-# embg = get_embedding(
-#     "scalemae_rgb",
-#     spatial=spatial,
-#     temporal=TemporalSpec.range("2022-06-01","2022-09-01"),
-#     output=OutputSpec.grid(),
-#     backend="gee",
-    
-# )
-# print(embg.data.shape, embg.meta["grid_hw"])
-
-# emb = get_embedding(
-#     "prithvi_eo_v2_s2_6b",
-#     spatial=spatial,
-#     temporal=TemporalSpec.range("2022-06-01","2022-09-01"),
-#     output=OutputSpec.pooled("mean"),
-#     backend="gee",
-# )
-# print(emb.data.shape)
-# print(emb.meta)
-
-# emb = get_embedding(
-#     "presto",
-#     spatial=spatial,
-#     temporal=TemporalSpec.year(2022),
-#     output=OutputSpec.pooled(),
-#     backend="gee",
-# )
-# print(emb.data.shape, emb.meta["dim"])
-
-# emb = get_embedding(
-#     "dofa",
-#     spatial=spatial,
-#     temporal=TemporalSpec.range("2021-06-01", "2021-08-31"),
-#     output=OutputSpec.pooled(),
-#     backend="gee",
-# )
-# print(emb.data.shape, emb.meta)
-
-from rs_embed import PointBuffer, TemporalSpec, OutputSpec
-from rs_embed.export import export_npz
-
-points = [
-    ("p1", PointBuffer(lon=120.10, lat=30.20, buffer_m=256)),
-    ("p2", PointBuffer(lon=120.30, lat=30.10, buffer_m=256)),
-]
-
-for name, spatial in points:
-    export_npz(
-        out_path=f"exports/{name}_2022_summer.npz",
-        models=["remoteclip_s2rgb", "prithvi_eo_v2_s2_6b"],
-        spatial=spatial,
-        temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
-        output=OutputSpec.pooled(),
-        backend="gee",
-        device="auto",
-        save_inputs=True,
-        save_embeddings=True,
-        save_manifest=True,
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "-m",
+        "--model",
+        default="dofa",
+        help="Model id registered in rs_embed (e.g., dofa, remoteclip_s2rgb)",
     )
+    parser.add_argument(
+        "--backend",
+        default="gee",
+        help="Backend to use; on-the-fly models typically use 'gee'",
+    )
+    parser.add_argument(
+        "--start",
+        default="2021-06-01",
+        help="Start date for TemporalSpec.range (YYYY-MM-DD)",
+    )
+    parser.add_argument(
+        "--end",
+        default="2021-08-31",
+        help="End date for TemporalSpec.range (YYYY-MM-DD)",
+    )
+    parser.add_argument(
+        "--year",
+        type=int,
+        help="Optional single year (overrides start/end) for models that use TemporalSpec.year",
+    )
+    parser.add_argument(
+        "--output",
+        choices=["pooled", "grid"],
+        default="pooled",
+        help="Choose pooled vector or grid tokens",
+    )
+    parser.add_argument(
+        "--pooling",
+        default="mean",
+        help="Pooling strategy when output=pooled",
+    )
+    parser.add_argument(
+        "--grid-scale",
+        type=int,
+        default=10,
+        help="Scale (meters) when output=grid",
+    )
+    parser.add_argument(
+        "--lon",
+        type=float,
+        default=121.5,
+        help="Longitude for the single-point example",
+    )
+    parser.add_argument(
+        "--lat",
+        type=float,
+        default=31.2,
+        help="Latitude for the single-point example",
+    )
+    parser.add_argument(
+        "--buffer-m",
+        type=int,
+        default=2048,
+        help="Buffer size in meters around the point",
+    )
+    parser.add_argument(
+        "--bbox",
+        nargs=4,
+        type=float,
+        metavar=("MINLON", "MINLAT", "MAXLON", "MAXLAT"),
+        help="Optional bbox (uses bbox instead of point buffer)",
+    )
+    parser.add_argument(
+        "--batch",
+        action="store_true",
+        help="Also run get_embeddings_batch on a small list of points",
+    )
+    parser.add_argument(
+        "--point",
+        action="append",
+        nargs=2,
+        type=float,
+        metavar=("LON", "LAT"),
+        help="Extra lon/lat pairs for batch mode (implies --batch)",
+    )
+    parser.add_argument(
+        "--device",
+        default="auto",
+        help="Device selection forwarded to the embedder (auto/cpu/cuda)",
+    )
+    return parser.parse_args()
+
+
+def _build_temporal(args: argparse.Namespace) -> TemporalSpec:
+    if args.year:
+        return TemporalSpec.year(args.year)
+    return TemporalSpec.range(args.start, args.end)
+
+
+def _build_output_spec(args: argparse.Namespace) -> OutputSpec:
+    if args.output == "grid":
+        return OutputSpec.grid(scale_m=args.grid_scale)
+    return OutputSpec.pooled(pooling=args.pooling)
+
+
+def _default_batch_points(buffer_m: int) -> List[PointBuffer]:
+    return [
+        PointBuffer(lon=121.5, lat=31.2, buffer_m=buffer_m),
+        PointBuffer(lon=121.6, lat=31.3, buffer_m=buffer_m),
+        PointBuffer(lon=120.0, lat=30.0, buffer_m=buffer_m),
+    ]
+
+
+def _collect_batch_points(args: argparse.Namespace) -> List[PointBuffer]:
+    if not args.point:
+        return _default_batch_points(args.buffer_m)
+    return [PointBuffer(lon=lon, lat=lat, buffer_m=args.buffer_m) for lon, lat in args.point]
+
+
+def _run_single(args: argparse.Namespace, output_spec: OutputSpec, temporal: TemporalSpec) -> None:
+    if args.bbox:
+        minlon, minlat, maxlon, maxlat = args.bbox
+        spatial = BBox(minlon=minlon, minlat=minlat, maxlon=maxlon, maxlat=maxlat)
+    else:
+        spatial = PointBuffer(lon=args.lon, lat=args.lat, buffer_m=args.buffer_m)
+
+    emb = get_embedding(
+        args.model,
+        spatial=spatial,
+        temporal=temporal,
+        output=output_spec,
+        backend=args.backend,
+        device=args.device,
+    )
+    print(f"[single] model={args.model}, output={args.output}, backend={args.backend}, shape={emb.data.shape}")
+    print("meta:", emb.meta)
+
+
+def _run_batch(args: argparse.Namespace, output_spec: OutputSpec, temporal: TemporalSpec) -> None:
+    points = _collect_batch_points(args)
+    embeddings = get_embeddings_batch(
+        args.model,
+        spatials=points,
+        temporal=temporal,
+        output=output_spec,
+        backend=args.backend,
+        device=args.device,
+    )
+    for i, emb in enumerate(embeddings):
+        print(f"[batch] idx={i}, shape={emb.data.shape}")
+    if embeddings:
+        print("meta (first):", embeddings[0].meta)
+
+
+def main() -> None:
+    args = _parse_args()
+    if args.point:
+        args.batch = True
+
+    temporal = _build_temporal(args)
+    output_spec = _build_output_spec(args)
+
+    _run_single(args, output_spec, temporal)
+
+    if args.batch:
+        _run_batch(args, output_spec, temporal)
+
+
+if __name__ == "__main__":
+    main()
