@@ -10,6 +10,7 @@ This project introduces OutputSpec to provide a unified abstraction over the out
 > pooled represents an entire ROI (Region of Interest) with a single vector (D,).
 
 This is the most stable and comparable representation, suitable for:
+
 * Classification / regression
 * Retrieval / similarity search
 * Clustering
@@ -22,6 +23,7 @@ Embedding.data.shape == (D,)
 
 **(a) ViT / MAE-style models**
 (RemoteCLIP / Prithvi / SatMAE / ScaleMAE)
+
 * Native output: patch tokens
 * tokens: (N, D)   # N = patch tokens (+ optional CLS)
 

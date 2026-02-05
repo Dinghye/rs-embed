@@ -42,3 +42,4 @@ from rs_embed import (
     OutputSpec,
     get_embedding,
 )
+```
