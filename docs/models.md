@@ -4,15 +4,6 @@ This page lists supported model backends and their I/O characteristics.
 
 
 
-## How to choose (practical)
-
-- If you want **fair cross-model comparisons**, start with **`OutputSpec.pooled()`**.
-- If you want **spatial visualization / intra-ROI structure**, use **`OutputSpec.grid()`**.
-- If you want **fast setup & clean environment**, choose 🧊 **precomputed embeddings**.
-- If you want **end-to-end feature extraction from imagery**, choose 🔥 **on-the-fly models** (via GEE).
-
-
-
 ## 🧊 **Precomputed Embeddings**
 
 |**Model**|**ID**|**Output**|**Resolution**|**Dim**|**Time Coverage**|**Notes**|
