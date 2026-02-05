@@ -6,6 +6,36 @@
 ****
 
 
+<div align="center">
+
+# rs-embed  
+### A unified Python toolkit for Remote Sensing Foundation Model embeddings
+
+<img src="img/image.png" alt="rs-embed banner" width="860" />
+
+**One line of code to get embeddings from *any* Remote Sensing (RS) foundation model for a given ROI.**  
+Supports both **precomputed embeddings** (e.g., Tessera, GSE, Copernicus Embed) and  
+**on-the-fly models** (e.g., Prithvi-EO v2, RemoteCLIP, SatMAE, ScaleMAE).
+
+<!-- Badges (optional): replace OWNER/REPO and workflow file names -->
+<!--
+[![CI](https://img.shields.io/github/actions/workflow/status/OWNER/REPO/ci.yml)](../../actions)
+[![License](https://img.shields.io/github/license/OWNER/REPO)](./LICENSE)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue)](#)
+-->
+
+[Examples](./examples) · [Playground Notebook](./examples/playground.ipynb) · [Roadmap](#-roadmap) · [Contributing](./CONTRIBUTING.md)
+
+</div>
+
+---
+
+## TL;DR
+
+```python
+emb = get_embedding("tessera", spatial=..., temporal=..., output=...)
+
+
 > One line of code to get embeddings from **any Remote Sensing (RS) foundation model** for a given ROI.
 > Supports both **precomputed embeddings** (eg. Tessera, GSE, Copernicus Embed..) and
 > **on-the-fly models** (eg. Prithvi-EO v2, RemoteCLIP, SatMAE, ScaleMAE etc..)
