@@ -307,6 +307,6 @@ class MyEmbedder(EmbedderBase):
 ## **🗺️ Roadmap**
 - Multi-temporal embeddings (T × D × H × W)
 - Strict CRS-aware grid alignment
-- Deeper integration with TorchGeo / xarray / rasterio
+- Speed up
 - pip install rs-embed
 

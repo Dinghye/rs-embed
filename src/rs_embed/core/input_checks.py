@@ -348,14 +348,12 @@ def save_quicklook_rgb(
     x_chw: np.ndarray,
     *,
     path: str,
-    bands: Tuple[int, int, int] = (0, 1, 2),
-    vmin: float = 0.0,
-    vmax: float = 1.0,
+    bands=(0, 1, 2),
+    pmin: float = 2.0,
+    pmax: float = 98.0,
 ) -> None:
-    """Save a simple RGB quicklook PNG/JPG using matplotlib.
-
-    This is optional and only used when a save_dir is configured.
-    """
+    import os
+    import numpy as np
     import matplotlib.pyplot as plt
 
     if x_chw.ndim != 3:
@@ -366,12 +364,56 @@ def save_quicklook_rgb(
         raise ValueError(f"bands={bands} out of range for C={c}")
 
     rgb = np.stack([x_chw[r], x_chw[g], x_chw[b]], axis=-1).astype(np.float32)
-    rgb = np.clip((rgb - vmin) / max(vmax - vmin, 1e-6), 0.0, 1.0)
 
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    plt.figure()
-    plt.imshow(rgb)
+    # 关键：把 NaN/Inf 先处理掉（否则后面 clip 也没用）
+    rgb = np.nan_to_num(rgb, nan=0.0, posinf=0.0, neginf=0.0)
+
+    # 分位数拉伸（对每个通道分别拉伸更稳）
+    out = np.empty_like(rgb)
+    for ch in range(3):
+        lo, hi = np.percentile(rgb[..., ch], (pmin, pmax))
+        if hi <= lo + 1e-6:
+            out[..., ch] = 0.0
+        else:
+            out[..., ch] = (rgb[..., ch] - lo) / (hi - lo)
+    out = np.clip(out, 0.0, 1.0)
+
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    plt.figure(figsize=(4, 4))
+    plt.imshow(out, interpolation="nearest")
     plt.axis("off")
     plt.tight_layout(pad=0)
     plt.savefig(path, dpi=200, bbox_inches="tight", pad_inches=0)
     plt.close()
+
+# def save_quicklook_rgb(
+#     x_chw: np.ndarray,
+#     *,
+#     path: str,
+#     bands: Tuple[int, int, int] = (0, 1, 2),
+#     vmin: float = 0.0,
+#     vmax: float = 1.0,
+# ) -> None:
+#     """Save a simple RGB quicklook PNG/JPG using matplotlib.
+
+#     This is optional and only used when a save_dir is configured.
+#     """
+#     import matplotlib.pyplot as plt
+
+#     if x_chw.ndim != 3:
+#         raise ValueError(f"Expected CHW, got {x_chw.shape}")
+#     c, h, w = x_chw.shape
+#     r, g, b = bands
+#     if max(r, g, b) >= c:
+#         raise ValueError(f"bands={bands} out of range for C={c}")
+
+#     rgb = np.stack([x_chw[r], x_chw[g], x_chw[b]], axis=-1).astype(np.float32)
+#     rgb = np.clip((rgb - vmin) / max(vmax - vmin, 1e-6), 0.0, 1.0)
+
+#     os.makedirs(os.path.dirname(path), exist_ok=True)
+#     plt.figure()
+#     plt.imshow(rgb)
+#     plt.axis("off")
+#     plt.tight_layout(pad=0)
+#     plt.savefig(path, dpi=200, bbox_inches="tight", pad_inches=0)
+#     plt.close()

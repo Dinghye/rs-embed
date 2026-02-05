@@ -160,7 +160,7 @@ def _prithvi_forward_tokens(
 
     d = pd.to_datetime(date_str)
     temporal_coords = torch.tensor([[[float(d.year), float(d.dayofyear - 1)]]], dtype=torch.float32, device=device)  # [1,1,2]
-    location_coords = torch.tensor([[float(lon), float(lat)]], dtype=torch.float32, device=device)  # [1,2]
+    location_coords = torch.tensor([[float(lat), float(lon)]], dtype=torch.float32, device=device)  # [1,2]
 
     with torch.no_grad():
         out = model(x, temporal_coords=temporal_coords, location_coords=location_coords)

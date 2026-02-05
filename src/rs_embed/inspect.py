@@ -111,7 +111,7 @@ def inspect_gee_patch(
         region=region,
         scale_m=int(sensor.scale_m),
         fill_value=float(sensor.fill_value),
-        collection=sensor.collection,   # ✅ 让 alias 生效
+        collection=sensor.collection,   
     )
     # x_chw = provider.fetch_array_chw(
     #     image=img,

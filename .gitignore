@@ -8,3 +8,10 @@ build/
 .mypy_cache/
 _gee_checks/
 exports/
+examples/**
+
+!examples/
+
+!examples/playground.ipynb
+!examples/plot_utils.py
+!examples/quickstart.py
