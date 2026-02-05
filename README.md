@@ -19,12 +19,10 @@
 
 ```python
 emb = get_embedding("tessera", spatial=..., temporal=..., output=...)
+```
 
 * 🧊 Precomputed embeddings: Tessera / GSE / Copernicus Embed
 * 🔥 On-the-fly models: Prithvi-EO v2 / RemoteCLIP / SatMAE / ScaleMAE (imagery via GEE)
-
-```
-
 
 ## Install(tempory)
 ```bash
@@ -55,6 +53,9 @@ print(emb.data.shape)  # (D,)
 
 ## Learn More
 📚 Full documentation: https://dinghye.github.io/rs-embed/
+
+
+
 
 ## License
 Apache-2.0
