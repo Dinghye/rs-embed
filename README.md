@@ -6,11 +6,12 @@
 
 <!-- Badges: replace YOUR_USER/YOUR_REPO + workflow file name -->
 [![Docs](https://img.shields.io/badge/docs-online-brightgreen)](https://dinghye.github.io/rs-embed/)
-![Docs Build](https://img.shields.io/github/actions/workflow/status/Dinghye/rs-embed/docs.yml?label=docs)
+![Visitors](https://visitor-badge.laobi.icu/badge?page_id=Dinghye.rs-embed)
+
 ![License](https://img.shields.io/github/license/Dinghye/rs-embed)
 ![Last Commit](https://img.shields.io/github/last-commit/Dinghye/rs-embed)
 
-[Docs](https://dinghye.github.io/rs-embed/) · [Examples](./examples) · [Playground](./examples/playground.ipynb) · 
+[Docs](https://dinghye.github.io/rs-embed/) · [Examples](./examples) · [Playground](./examples/playground.ipynb)
 
 </div>
 
