@@ -50,6 +50,7 @@ v_d = \frac{1}{HW} \sum_{y,x} g_{d,y,x}
 $$
 
 Why pooled?
+
 * Model-agnostic, stable, and comparable
 * Avoids differences in spatial resolution or token structure
 * Strongly recommended for cross-model benchmarks
@@ -63,6 +64,7 @@ Why pooled?
 where each spatial location corresponds to a vector.
 
 Suitable for:
+
 * Spatial visualization (PCA / norm / similarity maps)
 * Pixel-wise / patch-wise tasks
 * Intra-ROI structure analysis
@@ -78,6 +80,7 @@ Returned as xarray.DataArray, carrying CRS, cropping, and metadata.
 * Native output: tokens (N, D)
 
 Processing steps:
+
 	1.	Remove CLS token (if present)
 	2.	Reshape remaining tokens into a patch grid
 
