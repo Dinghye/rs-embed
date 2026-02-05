@@ -1,9 +1,9 @@
-## 📤 Output Semantics
+
 
 This project introduces OutputSpec to provide a unified abstraction over the outputs of different Remote Sensing Foundation Models (RS FMs).
 
 
-### OutputSpec.pooled(): ROI-level Vector Embedding
+## OutputSpec.pooled(): ROI-level Vector Embedding
 
 **Semantic Meaning**
 
@@ -53,3 +53,37 @@ Why pooled?
 * Model-agnostic, stable, and comparable
 * Avoids differences in spatial resolution or token structure
 * Strongly recommended for cross-model benchmarks
+
+## **OutputSpec.grid(): ROI-level Spatial Embedding Field**
+
+**Semantic Meaning**
+
+> grid outputs a spatially structured embedding field:
+> An embedding tensor (D, H, W),
+where each spatial location corresponds to a vector.
+
+Suitable for:
+* Spatial visualization (PCA / norm / similarity maps)
+* Pixel-wise / patch-wise tasks
+* Intra-ROI structure analysis
+
+Unified Output Format
+```
+Embedding.data.shape == (D, H, W)
+```
+
+Returned as xarray.DataArray, carrying CRS, cropping, and metadata.
+
+**(a) ViT / MAE-style models**
+* Native output: tokens (N, D)
+
+Processing steps:
+	1.	Remove CLS token (if present)
+	2.	Reshape remaining tokens into a patch grid
+
+`(N', D) → (H, W, D) → (D, H, W)`
+
+(H, W) is determined by the model’s patch layout (e.g. 8×8, 14×14)
+
+
+**(b) Precomputed embeddings**: (Tessera / GSE ...): Native output is already (D, H, W)
