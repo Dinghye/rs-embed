@@ -162,3 +162,123 @@ def test_export_batch_combined_npz_dedup(tmp_path, monkeypatch):
 
     assert out_path.exists()
     assert fetch_calls["n"] == len(spatials)
+
+
+def test_export_batch_netcdf_per_item(tmp_path, monkeypatch):
+    """export_batch with format='netcdf' writes .nc files with correct variables."""
+    class DummyNC:
+        def describe(self):
+            return {
+                "type": "onthefly",
+                "inputs": {"collection": "C", "bands": ["B1", "B2"]},
+                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+            }
+
+        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+            return Embedding(data=np.arange(4, dtype=np.float32), meta={})
+
+    registry.register("dummy_nc")(DummyNC)
+
+    import rs_embed.api as api
+
+    class DummyProvider:
+        def __init__(self, *a, **kw): pass
+        def ensure_ready(self): return None
+
+    monkeypatch.setattr(api, "GEEProvider", DummyProvider)
+    monkeypatch.setattr(api, "_fetch_gee_patch_raw",
+                        lambda prov, *, spatial, temporal, sensor: np.ones((2, 4, 4), dtype=np.float32))
+    monkeypatch.setattr(api, "_inspect_input_raw", lambda x, *, sensor, name: {"ok": True})
+    api._get_embedder_bundle_cached.cache_clear()
+
+    spatials = [PointBuffer(lon=0, lat=0, buffer_m=10), PointBuffer(lon=1, lat=1, buffer_m=10)]
+    temporal = TemporalSpec.range("2021-01-01", "2021-06-01")
+    sensor = SensorSpec(collection="C", bands=("B1", "B2"))
+
+    out_dir = tmp_path / "nc_out"
+    res = api.export_batch(
+        spatials=spatials,
+        temporal=temporal,
+        models=["dummy_nc"],
+        out_dir=str(out_dir),
+        backend="gee",
+        device="cpu",
+        output=OutputSpec.pooled(),
+        sensor=sensor,
+        format="netcdf",
+        save_inputs=True,
+        save_embeddings=True,
+        save_manifest=True,
+    )
+
+    assert len(res) == len(spatials)
+    for i in range(len(spatials)):
+        nc = out_dir / f"p{i:05d}.nc"
+        assert nc.exists(), f"Missing {nc}"
+        json_f = out_dir / f"p{i:05d}.json"
+        assert json_f.exists(), f"Missing {json_f}"
+
+    # Verify NetCDF contents
+    import xarray as xr
+    ds = xr.open_dataset(str(out_dir / "p00000.nc"))
+    assert "embedding__dummy_nc" in ds.data_vars
+    assert "input_chw__dummy_nc" in ds.data_vars
+    assert tuple(ds["embedding__dummy_nc"].dims) == ("dim",)
+    assert tuple(ds["input_chw__dummy_nc"].dims) == ("band", "y", "x")
+    ds.close()
+
+
+def test_export_batch_netcdf_combined(tmp_path, monkeypatch):
+    """export_batch with format='netcdf' and out_path produces a combined .nc."""
+    class DummyComb:
+        def describe(self):
+            return {
+                "type": "onthefly",
+                "inputs": {"collection": "C", "bands": ["B1"]},
+                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+            }
+
+        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+            return Embedding(data=np.array([1.0, 2.0], dtype=np.float32), meta={})
+
+    registry.register("dummy_comb")(DummyComb)
+
+    import rs_embed.api as api
+
+    class DummyProvider:
+        def __init__(self, *a, **kw): pass
+        def ensure_ready(self): return None
+
+    monkeypatch.setattr(api, "GEEProvider", DummyProvider)
+    monkeypatch.setattr(api, "_fetch_gee_patch_raw",
+                        lambda prov, *, spatial, temporal, sensor: np.ones((1, 2, 2), dtype=np.float32))
+    monkeypatch.setattr(api, "_inspect_input_raw", lambda x, *, sensor, name: {"ok": True})
+    api._get_embedder_bundle_cached.cache_clear()
+
+    spatials = [PointBuffer(lon=0, lat=0, buffer_m=10), PointBuffer(lon=1, lat=1, buffer_m=10)]
+    temporal = TemporalSpec.year(2022)
+    sensor = SensorSpec(collection="C", bands=("B1",))
+
+    out_path = tmp_path / "combined.nc"
+    result = api.export_batch(
+        spatials=spatials,
+        temporal=temporal,
+        models=["dummy_comb"],
+        out_path=str(out_path),
+        backend="gee",
+        device="cpu",
+        output=OutputSpec.pooled(),
+        sensor=sensor,
+        format="netcdf",
+        save_inputs=True,
+        save_embeddings=True,
+    )
+
+    assert out_path.exists()
+    assert "nc_path" in result
+
+    import xarray as xr
+    ds = xr.open_dataset(str(out_path))
+    assert "embeddings__dummy_comb" in ds.data_vars
+    assert ds["embeddings__dummy_comb"].shape == (2, 2)  # (point, dim)
+    ds.close()

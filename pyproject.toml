@@ -19,6 +19,7 @@ dependencies = [
 gee = ["earthengine-api>=0.1.390", "geemap>=0.30.0"]
 torch = ["torch>=2.1"]
 models = ["rshf>= 0.1.12"] 
+netcdf = ["netCDF4>=1.6"]
 dev = ["pytest>=7.4", "pytest-cov>=4.1"]
 
 [project.urls]
