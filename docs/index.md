@@ -1,18 +1,8 @@
-# rs-embed
-
 ![rs-embed banner](assets/banner.png)
 
 > **One line of code** to get embeddings from **any Remote Sensing (RS) foundation model** for a given ROI.  
-> Supports both **precomputed embeddings** (e.g., Tessera, GSE, Copernicus Embed) and  
-> **on-the-fly models** (e.g., Prithvi-EO v2, RemoteCLIP, SatMAE, ScaleMAE).
 
 ---
-
-## TL;DR
-
-```python
-emb = get_embedding("tessera", spatial=..., temporal=..., output=...)
-```
 
 ## Motivation
 
@@ -26,25 +16,15 @@ Yet, using them in practice remains surprisingly painful:
 RS-Embed aims to fix this.
 
 !!! success “Goal”
-Provide a **minimal**, **unified**, and **stable API** that turns diverse RS foundation models into a simple `ROI → embedding service` — so researchers can focus on **downstream tasks**, **benchmarking**, and **analysis**, not glue code.
+    Provide a **minimal**, **unified**, and **stable API** that turns diverse RS foundation models into a simple `ROI → embedding service` — so researchers can focus on **downstream tasks**, **benchmarking**, and **analysis**, not glue code.
+
+## Why rs-embed?
+
+- **Unified interface** for diverse embedding models (on-the-fly models and precomputed products).
+- **Spatial + temporal specs** to describe what you want, not how to fetch it.
+- **Batch export as a first-class workflow** via `export_batch`.
 
 
-
-## **🚀 Key Features**
-- ✅ **Unified input interface**
-    - Spatial: BBox, PointBuffer
-    - Temporal: TemporalSpec.year(), TemporalSpec.range()
-- ✅ **Unified output interface**
-    - Pooled embeddings → (D,)
-    - Grid embeddings → (D, H, W) (as xarray.DataArray)
-- ✅ **Model-agnostic API**
-```python
-emb = get_embedding("tessera", spatial=..., temporal=..., output=...)
-```
-
-- ✅ **Two classes of supported models**
-    - 🧊 **Precomputed embeddings** (no deep learning environment required)
-    - 🔥 **On-the-fly models** (imagery fetched automatically from Google Earth Engine)
 
 ## Where to go next
 - 🚀 Start here: Quick Start
