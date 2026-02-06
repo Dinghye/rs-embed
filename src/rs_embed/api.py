@@ -154,8 +154,9 @@ def export_batch(
 
     backend_n = backend.lower().strip()
     fmt = format.lower().strip()
-    if fmt != "npz":
-        raise ModelError(f"Unsupported export format: {format!r}. Only 'npz' is currently implemented.")
+    from .writers import SUPPORTED_FORMATS, get_extension
+    if fmt not in SUPPORTED_FORMATS:
+        raise ModelError(f"Unsupported export format: {format!r}. Supported: {SUPPORTED_FORMATS}.")
 
     # validate specs early
     _validate_specs(spatial=spatials[0], temporal=temporal, output=output)
@@ -199,6 +200,7 @@ def export_batch(
             save_manifest=save_manifest,
             fail_on_bad_input=fail_on_bad_input,
             num_workers=num_workers,
+            fmt=fmt,
         )
 
     # per-item mode (out_dir)
@@ -265,8 +267,9 @@ def export_batch(
                         input_reports[(ii, sk)] = rep
 
         # export each point in chunk
+        ext = get_extension(fmt)
         for i in idxs:
-            out_file = os.path.join(out_dir, f"{names[i]}.npz")
+            out_file = os.path.join(out_dir, f"{names[i]}{ext}")
             mani = _export_one_point_npz(
                 point_index=i,
                 spatial=spatials[i],
@@ -285,6 +288,7 @@ def export_batch(
                 save_embeddings=save_embeddings,
                 save_manifest=save_manifest,
                 fail_on_bad_input=fail_on_bad_input,
+                fmt=fmt,
             )
             manifests.append(mani)
 
@@ -553,11 +557,8 @@ def _export_one_point_npz(
     save_embeddings: bool,
     save_manifest: bool,
     fail_on_bad_input: bool,
+    fmt: str = "npz",
 ) -> Dict[str, Any]:
-    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-    if not out_path.endswith(".npz"):
-        out_path = out_path + ".npz"
-
     arrays: Dict[str, np.ndarray] = {}
     manifest: Dict[str, Any] = {
         "created_at": _utc_ts(),
@@ -660,17 +661,12 @@ def _export_one_point_npz(
 
         manifest["models"].append(m_entry)
 
-    np.savez_compressed(out_path, **arrays)
-
-    if save_manifest:
-        json_path = os.path.splitext(out_path)[0] + ".json"
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(_jsonable(manifest), f, ensure_ascii=False, indent=2)
-        manifest["manifest_path"] = json_path
-
-    manifest["npz_path"] = out_path
-    manifest["npz_keys"] = sorted(list(arrays.keys()))
-    return _jsonable(manifest)
+    from .writers import write_arrays
+    manifest = write_arrays(
+        fmt=fmt, out_path=out_path, arrays=arrays,
+        manifest=_jsonable(manifest), save_manifest=save_manifest,
+    )
+    return manifest
 
 
 def _export_combined_npz(
@@ -689,12 +685,9 @@ def _export_combined_npz(
     save_manifest: bool,
     fail_on_bad_input: bool,
     num_workers: int,
+    fmt: str = "npz",
 ) -> Dict[str, Any]:
     # Simple combined implementation (no chunking): for large N prefer out_dir.
-    os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-    if not out_path.endswith(".npz"):
-        out_path = out_path + ".npz"
-
     arrays: Dict[str, np.ndarray] = {}
     manifest: Dict[str, Any] = {
         "created_at": _utc_ts(),
@@ -824,13 +817,9 @@ def _export_combined_npz(
 
         manifest["models"].append(m_entry)
 
-    np.savez_compressed(out_path, **arrays)
-    if save_manifest:
-        json_path = os.path.splitext(out_path)[0] + ".json"
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(_jsonable(manifest), f, ensure_ascii=False, indent=2)
-        manifest["manifest_path"] = json_path
-
-    manifest["npz_path"] = out_path
-    manifest["npz_keys"] = sorted(list(arrays.keys()))
-    return _jsonable(manifest)
+    from .writers import write_arrays
+    manifest = write_arrays(
+        fmt=fmt, out_path=out_path, arrays=arrays,
+        manifest=_jsonable(manifest), save_manifest=save_manifest,
+    )
+    return manifest
