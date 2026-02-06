@@ -51,7 +51,7 @@ class GSEAnnualEmbedder(EmbedderBase):
         import ee
         provider = GEEProvider(auto_auth=True)
         region = provider.get_region_3857(spatial)
-        print(region.getInfo())
+        # print(region.getInfo())
 
         col = ee.ImageCollection("GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL")
         img = col.filterDate(f"{temporal.year}-01-01", f"{temporal.year+1}-01-01").mosaic()
@@ -85,11 +85,11 @@ class GSEAnnualEmbedder(EmbedderBase):
             vec = pool_chw_to_vec(emb_chw, method=output.pooling)
             return Embedding(data=vec, meta={**meta, "pooling": output.pooling})
 
-        # grid: return xarray with dims (band,y,x)
+        # grid: return xarray with dims (d,y,x)
         da = xr.DataArray(
             emb_chw,
-            dims=("band", "y", "x"),
-            coords={"band": list(band_names)},
+            dims=("d", "y", "x"),
+            coords={"d": list(band_names)},
             name="embedding",
             attrs=meta,
         )

@@ -2,6 +2,8 @@
 from __future__ import annotations
 from typing import Dict, Type, Any
 
+from .errors import ModelError
+
 _REGISTRY: Dict[str, Type[Any]] = {}
 
 def register(name: str):
@@ -26,7 +28,7 @@ def get_embedder_cls(name: str) -> Type[Any]:
     _ensure_registry_loaded()
     k = name.lower()
     if k not in _REGISTRY:
-        raise KeyError(
+        raise ModelError(
             f"Unknown model '{name}'. Available: {sorted(_REGISTRY.keys())}. "
             f"If this list is empty, ensure embedders are importable "
             f"(e.g. optional deps like torch/ee are installed)."

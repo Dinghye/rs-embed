@@ -1,6 +1,6 @@
 <div align="center">
 
-# <img src="./docs/assets/icon.png" width="30" alt="icon" />  rs-embed
+# <img src="./docs/assets/icon.png" width="35" alt="icon" />  rs-embed
 **One line of code to get embeddings from any Remote Sensing foundation model for a given ROI.**
 
 
@@ -57,7 +57,6 @@ print(emb.data.shape)  # (D,)
 
 ## Learn More
 📚 Full documentation: https://dinghye.github.io/rs-embed/
-
 
 
 
