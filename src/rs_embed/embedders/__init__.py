@@ -9,4 +9,3 @@ from .onthefly_prithvi import PrithviEOV2S2_6B_Embedder  # noqa: F401
 # from .onthefly_presto import PrestoEmbedder  # noqa: F401
 from .onthefly_terrafm import TerraFMBEmbedder  # noqa: F401
 from .onthefly_dofa import DOFAEmbedder  # noqa: F401
-from .onthefly_skysense import SkySensePlusS2Embedder # noqa: F401

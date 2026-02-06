@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Optional, Tuple
+from functools import lru_cache
+from typing import Any, Dict, Optional, Tuple, Tuple
 
 import numpy as np
 
@@ -22,7 +23,19 @@ from ._vit_mae_utils import (
 )
 
 
-def _load_scalemae(model_id: str, device: str = "auto"):
+
+def _resolve_device(device: str) -> str:
+    if device != "auto":
+        return device
+    try:
+        import torch
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    except Exception:
+        return "cpu"
+
+
+@lru_cache(maxsize=8)
+def _load_scalemae_cached(model_id: str, dev: str):
     ensure_torch()
     import torch
 
@@ -31,10 +44,18 @@ def _load_scalemae(model_id: str, device: str = "auto"):
     except Exception as e:
         raise ModelError("ScaleMAE requires rshf with rshf.scalemae.ScaleMAE. Try: pip install -U rshf") from e
 
-    dev = "cuda" if (device == "auto" and torch.cuda.is_available()) else ("cpu" if device == "auto" else device)
-    m = ScaleMAE.from_pretrained(model_id)
-    m = m.to(dev).eval()
-    return m, dev
+    model = ScaleMAE.from_pretrained(model_id)
+    try:
+        model = model.to(dev).eval()
+    except Exception:
+        pass
+
+    meta = {"model_id": model_id, "device": dev}
+    return model, meta
+
+def _load_scalemae(model_id: str, device: str = "auto"):
+    dev = _resolve_device(device)
+    return _load_scalemae_cached(model_id, dev)
 
 
 def _infer_patch_size(model) -> int:
@@ -206,93 +227,107 @@ class ScaleMAERGBEmbedder(EmbedderBase):
             "output": ["pooled", "grid"],
         }
 
+    
+    def __init__(self) -> None:
+        self._provider: Optional[Any] = None
+
+    def _get_provider(self):
+        if self._provider is None:
+            from ..providers.gee import GEEProvider
+            p = GEEProvider(auto_auth=True)
+            p.ensure_ready()
+            self._provider = p
+        return self._provider
+
     def get_embedding(
-        self,
-        *,
-        spatial: SpatialSpec,
-        temporal: Optional[TemporalSpec],
-        sensor: Optional[SensorSpec],
-        output: OutputSpec,
-        backend: str,
-        device: str = "auto",
-    ) -> Embedding:
-        if backend.lower() not in ("gee", "auto"):
-            raise ModelError("scalemae_rgb expects backend='gee' (or 'auto').")
+            self,
+            *,
+            spatial: SpatialSpec,
+            temporal: Optional[TemporalSpec],
+            sensor: Optional[SensorSpec],
+            output: OutputSpec,
+            backend: str,
+            device: str = "auto",
+        ) -> Embedding:
+            if backend.lower() not in ("gee", "auto"):
+                raise ModelError("scalemae_rgb expects backend='gee' (or 'auto').")
 
-        if sensor is None:
-            sensor = SensorSpec(
-                collection="COPERNICUS/S2_SR_HARMONIZED",
-                bands=("B4", "B3", "B2"),
-                scale_m=10,
-                cloudy_pct=30,
-                composite="median",
-            )
-
-        model_id = os.environ.get("RS_EMBED_SCALEMAE_ID", self.DEFAULT_MODEL_ID)
-        image_size = int(os.environ.get("RS_EMBED_SCALEMAE_IMG", str(self.DEFAULT_IMAGE_SIZE)))
-
-        t = temporal_to_range(temporal)
-        rgb_u8 = fetch_s2_rgb_u8_from_gee(
-            spatial=spatial,
-            temporal=t,
-            sensor=sensor,
-            out_size=image_size,
-        )
-
-        model, dev = _load_scalemae(model_id=model_id, device=device)
-        out, extra = _scalemae_forward_tokens_or_vec(
-            model,
-            rgb_u8,
-            image_size=image_size,
-            device=dev,
-            input_res_m=float(sensor.scale_m),
-        )
-        
-        meta = base_meta(
-            model_name=self.model_name,
-            hf_id=model_id,
-            backend="gee",
-            image_size=image_size,
-            sensor=sensor,
-            temporal=t,
-            source=sensor.collection,
-            extra={"used_scale_m": float(sensor.scale_m), **extra, "out_shape": tuple(out.shape)},
-        )
-
-        if output.mode == "pooled":
-            if out.ndim == 2:
-                vec, cls_removed = pool_from_tokens(out, output.pooling)
-                meta.update({"pooling": f"patch_{output.pooling}", "cls_removed": bool(cls_removed)})
-                return Embedding(data=vec, meta=meta)
-
-            if out.ndim == 1:
-                meta.update({"pooling": "model_pooled", "cls_removed": False})
-                return Embedding(data=out.astype(np.float32), meta=meta)
-
-            raise ModelError(f"Unexpected shape for pooled: {out.shape}")
-
-        if output.mode == "grid":
-            if out.ndim != 2:
-                raise ModelError(
-                    "grid output requires token sequence [N,D]. "
-                    f"Got {out.shape} (tokens_kind={meta.get('tokens_kind')})."
+            if sensor is None:
+                sensor = SensorSpec(
+                    collection="COPERNICUS/S2_SR_HARMONIZED",
+                    bands=("B4", "B3", "B2"),
+                    scale_m=10,
+                    cloudy_pct=30,
+                    composite="median",
                 )
 
-            grid, (h, w), cls_removed = tokens_to_grid_dhw(out)
-            meta.update({"grid_hw": (h, w), "grid_kind": "patch_tokens", "cls_removed": bool(cls_removed)})
+            model_id = os.environ.get("RS_EMBED_SCALEMAE_ID", self.DEFAULT_MODEL_ID)
+            image_size = int(os.environ.get("RS_EMBED_SCALEMAE_IMG", str(self.DEFAULT_IMAGE_SIZE)))
 
-            try:
-                import xarray as xr
-            except Exception as e:
-                raise ModelError("grid output requires xarray. Install: pip install xarray") from e
-
-            da = xr.DataArray(
-                grid,
-                dims=("d", "y", "x"),
-                coords={"d": np.arange(grid.shape[0]), "y": np.arange(h), "x": np.arange(w)},
-                name="embedding",
-                attrs=meta,
+            t = temporal_to_range(temporal)
+            rgb_u8 = fetch_s2_rgb_u8_from_gee(
+                spatial=spatial,
+                temporal=t,
+                sensor=sensor,
+                out_size=image_size,
+                provider=self._get_provider(),
             )
-            return Embedding(data=da, meta=meta)
 
-        raise ModelError(f"Unknown output mode: {output.mode}")
+            model, wmeta = _load_scalemae(model_id=model_id, device=device)
+            dev = wmeta.get("device", device)
+            out, extra = _scalemae_forward_tokens_or_vec(
+                model,
+                rgb_u8,
+                image_size=image_size,
+                device=dev,
+                input_res_m=float(sensor.scale_m),
+            )
+            
+            meta = base_meta(
+                model_name=self.model_name,
+                hf_id=model_id,
+                backend="gee",
+                image_size=image_size,
+                sensor=sensor,
+                temporal=t,
+                source=sensor.collection,
+                extra={"used_scale_m": float(sensor.scale_m), **extra, "out_shape": tuple(out.shape)},
+            )
+
+            if output.mode == "pooled":
+                if out.ndim == 2:
+                    vec, cls_removed = pool_from_tokens(out, output.pooling)
+                    meta.update({"pooling": f"patch_{output.pooling}", "cls_removed": bool(cls_removed)})
+                    return Embedding(data=vec, meta=meta)
+
+                if out.ndim == 1:
+                    meta.update({"pooling": "model_pooled", "cls_removed": False})
+                    return Embedding(data=out.astype(np.float32), meta=meta)
+
+                raise ModelError(f"Unexpected shape for pooled: {out.shape}")
+
+            if output.mode == "grid":
+                if out.ndim != 2:
+                    raise ModelError(
+                        "grid output requires token sequence [N,D]. "
+                        f"Got {out.shape} (tokens_kind={meta.get('tokens_kind')})."
+                    )
+
+                grid, (h, w), cls_removed = tokens_to_grid_dhw(out)
+                meta.update({"grid_hw": (h, w), "grid_kind": "patch_tokens", "cls_removed": bool(cls_removed)})
+
+                try:
+                    import xarray as xr
+                except Exception as e:
+                    raise ModelError("grid output requires xarray. Install: pip install xarray") from e
+
+                da = xr.DataArray(
+                    grid,
+                    dims=("d", "y", "x"),
+                    coords={"d": np.arange(grid.shape[0]), "y": np.arange(h), "x": np.arange(w)},
+                    name="embedding",
+                    attrs=meta,
+                )
+                return Embedding(data=da, meta=meta)
+
+            raise ModelError(f"Unknown output mode: {output.mode}")

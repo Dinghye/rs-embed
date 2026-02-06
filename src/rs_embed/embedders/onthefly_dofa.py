@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional, Tuple, List
 import numpy as np
 import xarray as xr
 
+from functools import lru_cache
 from ..core.registry import register
 from ..core.embedding import Embedding
 from ..core.errors import ModelError
@@ -162,6 +163,48 @@ def _fetch_gee_multiband_sr_chw(
 # -----------------------------
 # DOFA model + forward adapters
 # -----------------------------
+
+def _resolve_device(device: str) -> str:
+    if device != "auto":
+        return device
+    try:
+        import torch
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    except Exception:
+        return "cpu"
+
+
+@lru_cache(maxsize=4)
+def _load_dofa_model_cached(variant: str, dev: str):
+    try:
+        import torch
+        from torchgeo.models import (
+            DOFABase16_Weights,
+            DOFALarge16_Weights,
+            dofa_base_patch16_224,
+            dofa_large_patch16_224,
+        )
+    except Exception as e:
+        raise ModelError("DOFA requires torchgeo. Install: pip install torchgeo") from e
+
+    variant_l = str(variant).lower()
+    if variant_l in ("base", "b"):
+        weights = DOFABase16_Weights.DEFAULT
+        model = dofa_base_patch16_224(weights=weights)
+    elif variant_l in ("large", "l"):
+        weights = DOFALarge16_Weights.DEFAULT
+        model = dofa_large_patch16_224(weights=weights)
+    else:
+        raise ModelError(f"Unknown DOFA variant='{variant}' (expected 'base' or 'large').")
+
+    try:
+        model = model.to(dev).eval()
+    except Exception:
+        pass
+
+    meta = {"variant": variant_l, "device": dev}
+    return model, meta
+
 def _load_dofa_model(
     *,
     variant: str = "base",
@@ -319,6 +362,17 @@ class DOFAEmbedder(EmbedderBase):
             },
         }
 
+    
+    def __init__(self) -> None:
+        self._provider: Optional[GEEProvider] = None
+
+    def _get_provider(self) -> GEEProvider:
+        if self._provider is None:
+            p = GEEProvider(auto_auth=True)
+            p.ensure_ready()
+            self._provider = p
+        return self._provider
+
     def get_embedding(
         self,
         *,
@@ -445,6 +499,7 @@ class DOFAEmbedder(EmbedderBase):
         # Model + forward
         # -----------------
         model, mmeta = _load_dofa_model(variant=variant, device=device)
+        dev = mmeta.get("device", device)
         tokens, pooled, tmeta = _dofa_forward_tokens_and_pooled(
             model, x_bchw, wavelengths_um=wavelengths_um, device=device
         )

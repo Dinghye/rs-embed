@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from functools import lru_cache
 from typing import Any, Dict, Optional, Tuple, List
 
 import numpy as np
@@ -169,6 +170,7 @@ def _fetch_s1_vvvh_chw(
 # -----------------------------
 # HF asset management (strict)
 # -----------------------------
+@lru_cache(maxsize=8)
 def _ensure_hf_terrafm_assets(
     repo_id: str,
     *,
@@ -207,6 +209,7 @@ def _ensure_hf_terrafm_assets(
     return py_path, wt_path
 
 
+@lru_cache(maxsize=8)
 def _load_terrafm_module(local_py_path: str):
     """Dynamic import terrafm.py from downloaded file."""
     import importlib.util
@@ -242,6 +245,7 @@ def _assert_weights_loaded(model) -> Dict[str, float]:
     return {"param_mean": mean, "param_std": std, "param_absmax": mx}
 
 
+@lru_cache(maxsize=4)
 def _load_terrafm_b(
     *,
     auto_download: bool = True,
@@ -349,199 +353,209 @@ class TerraFMBEmbedder(EmbedderBase):
             "notes": "grid output is model feature-map grid (not pixel grid).",
         }
 
+    
+    def __init__(self) -> None:
+        self._provider: Optional[GEEProvider] = None
+
+    def _get_provider(self) -> GEEProvider:
+        if self._provider is None:
+            p = GEEProvider(auto_auth=True)
+            p.ensure_ready()
+            self._provider = p
+        return self._provider
+
     def get_embedding(
-        self,
-        *,
-        spatial: SpatialSpec,
-        temporal: Optional[TemporalSpec],
-        sensor: Optional[SensorSpec],
-        output: OutputSpec,
-        backend: str,
-        device: str = "auto",
-    ) -> Embedding:
-        backend_l = backend.lower()
+            self,
+            *,
+            spatial: SpatialSpec,
+            temporal: Optional[TemporalSpec],
+            sensor: Optional[SensorSpec],
+            output: OutputSpec,
+            backend: str,
+            device: str = "auto",
+        ) -> Embedding:
+            backend_l = backend.lower()
 
-        # defaults / overrides (match your style: sensor carries overrides)
-        modality = getattr(sensor, "modality", "s2") if sensor else "s2"
-        modality = str(modality).lower()
+            # defaults / overrides (match your style: sensor carries overrides)
+            modality = getattr(sensor, "modality", "s2") if sensor else "s2"
+            modality = str(modality).lower()
 
-        scale_m = getattr(sensor, "scale_m", 10) if sensor else 10
-        cloudy_pct = getattr(sensor, "cloudy_pct", 30) if sensor else 30
-        composite = getattr(sensor, "composite", "median") if sensor else "median"
-        orbit = getattr(sensor, "orbit", None) if sensor else None
-        use_float_linear = bool(getattr(sensor, "use_float_linear", True)) if sensor else True
+            scale_m = getattr(sensor, "scale_m", 10) if sensor else 10
+            cloudy_pct = getattr(sensor, "cloudy_pct", 30) if sensor else 30
+            composite = getattr(sensor, "composite", "median") if sensor else "median"
+            orbit = getattr(sensor, "orbit", None) if sensor else None
+            use_float_linear = bool(getattr(sensor, "use_float_linear", True)) if sensor else True
 
-        image_size = 224
-        cache_dir = (
-            os.environ.get("HUGGINGFACE_HUB_CACHE")
-            or os.environ.get("HF_HOME")
-            or os.environ.get("HUGGINGFACE_HOME")
-        )
-
-        # For optional on-the-fly input inspection
-        check_meta: Dict[str, Any] = {}
-
-        # -----------------
-        # Build input tensor
-        # -----------------
-        if backend_l == "tensor":
-            if sensor is None or not hasattr(sensor, "data"):
-                raise ModelError("backend='tensor' requires sensor.data as CHW or BCHW numpy/torch.")
-            x = sensor.data
-            # accept np or torch
-            try:
-                import torch
-                if torch.is_tensor(x):
-                    x = x.detach().cpu().numpy()
-            except Exception:
-                pass
-            x = np.asarray(x)
-            if x.ndim == 3:
-                x_bchw = x[None, ...]
-            elif x.ndim == 4:
-                x_bchw = x
-            else:
-                raise ModelError(f"Expected CHW or BCHW, got shape={x.shape}")
-
-            # resize to 224 to match TerraFM patch embed
-            if x_bchw.shape[-2:] != (image_size, image_size):
-                x_bchw = np.stack([_resize_chw_to_224(xi, size=image_size) for xi in x_bchw], axis=0)
-
-        elif backend_l == "gee":
-            if temporal is None:
-                raise ModelError("terrafm_b_gee requires TemporalSpec.range(start,end).")
-            temporal.validate()
-            if temporal.mode != "range":
-                raise ModelError("terrafm_b_gee requires TemporalSpec.range in v0.1.")
-
-            provider = GEEProvider(auto_auth=True)
-            provider.ensure_ready()
-
-            if modality == "s2":
-                x_chw = _fetch_s2_sr_12_chw(
-                    provider, spatial, temporal, scale_m=scale_m, cloudy_pct=cloudy_pct, composite=composite
-                )  # [12,H,W]
-            elif modality == "s1":
-                x_chw = _fetch_s1_vvvh_chw(
-                    provider, spatial, temporal, scale_m=scale_m, orbit=orbit,
-                    use_float_linear=use_float_linear, composite=composite
-                )  # [2,H,W]
-            else:
-                raise ModelError("modality must be 's2' or 's1'.")
-
-            # Optional: inspect on-the-fly GEE input
-            from ..core.input_checks import maybe_inspect_chw, checks_should_raise
-            check_meta.clear()
-            exp_c = 12 if modality == "s2" else 2
-            report = maybe_inspect_chw(
-                x_chw,
-                sensor=sensor,
-                name=f"gee_{modality}_chw",
-                expected_channels=exp_c,
-                value_range=(0.0, 1.0),
-                fill_value=0.0,
-                meta=check_meta,
+            image_size = 224
+            cache_dir = (
+                os.environ.get("HUGGINGFACE_HUB_CACHE")
+                or os.environ.get("HF_HOME")
+                or os.environ.get("HUGGINGFACE_HOME")
             )
-            if report is not None and (not report.get("ok", True)) and checks_should_raise(sensor):
-                raise ModelError("GEE input inspection failed: " + "; ".join(report.get("issues", [])))
 
-            # resize to 224
-            x_chw = _resize_chw_to_224(x_chw, size=image_size)
-            x_bchw = x_chw[None, ...].astype(np.float32)
+            # For optional on-the-fly input inspection
+            check_meta: Dict[str, Any] = {}
 
-        else:
-            raise ModelError("terrafm_b_gee supports backend='gee' or 'tensor' only.")
+            # -----------------
+            # Build input tensor
+            # -----------------
+            if backend_l == "tensor":
+                if sensor is None or not hasattr(sensor, "data"):
+                    raise ModelError("backend='tensor' requires sensor.data as CHW or BCHW numpy/torch.")
+                x = sensor.data
+                # accept np or torch
+                try:
+                    import torch
+                    if torch.is_tensor(x):
+                        x = x.detach().cpu().numpy()
+                except Exception:
+                    pass
+                x = np.asarray(x)
+                if x.ndim == 3:
+                    x_bchw = x[None, ...]
+                elif x.ndim == 4:
+                    x_bchw = x
+                else:
+                    raise ModelError(f"Expected CHW or BCHW, got shape={x.shape}")
 
-        # channel sanity: TerraFM HF terrafm.py routes by C==2 (S1) else (S2). Keep it strict.
-        c = int(x_bchw.shape[1])
-        if c not in (2, 12):
-            raise ModelError(f"TerraFM expects C=2 (S1 VV/VH) or C=12 (S2 SR bands). Got C={c}")
+                # resize to 224 to match TerraFM patch embed
+                if x_bchw.shape[-2:] != (image_size, image_size):
+                    x_bchw = np.stack([_resize_chw_to_224(xi, size=image_size) for xi in x_bchw], axis=0)
 
-        # -----------------
-        # Load model (strict weights)
-        # -----------------
-        model, wmeta = _load_terrafm_b(auto_download=True, cache_dir=cache_dir)
+            elif backend_l == "gee":
+                if temporal is None:
+                    raise ModelError("terrafm_b_gee requires TemporalSpec.range(start,end).")
+                temporal.validate()
+                if temporal.mode != "range":
+                    raise ModelError("terrafm_b_gee requires TemporalSpec.range in v0.1.")
 
-        pooled, grid = _terrafm_pooled_and_grid(
-            model,
-            x_bchw.astype(np.float32),
-            device=device,
-            want_grid=(output.mode == "grid"),
-        )
+                provider = self._get_provider()
 
-        temporal_used = temporal if backend_l == "gee" else None
-        sensor_meta = None
-        source = None
-        if backend_l == "gee":
-            if modality == "s2":
-                sensor_meta = {
-                    "collection": "COPERNICUS/S2_SR_HARMONIZED",
-                    "bands": tuple(_S2_SR_12_BANDS),
-                    "scale_m": scale_m,
-                    "cloudy_pct": cloudy_pct,
-                    "composite": composite,
-                }
-                source = sensor_meta["collection"]
-            elif modality == "s1":
-                sensor_meta = {
-                    "collection": "COPERNICUS/S1_GRD_FLOAT" if use_float_linear else "COPERNICUS/S1_GRD",
-                    "bands": ("VV", "VH"),
-                    "scale_m": scale_m,
-                    "cloudy_pct": cloudy_pct,
-                    "composite": composite,
-                    "orbit": orbit,
-                    "use_float_linear": use_float_linear,
-                }
-                source = sensor_meta["collection"]
+                if modality == "s2":
+                    x_chw = _fetch_s2_sr_12_chw(
+                        provider, spatial, temporal, scale_m=scale_m, cloudy_pct=cloudy_pct, composite=composite
+                    )  # [12,H,W]
+                elif modality == "s1":
+                    x_chw = _fetch_s1_vvvh_chw(
+                        provider, spatial, temporal, scale_m=scale_m, orbit=orbit,
+                        use_float_linear=use_float_linear, composite=composite
+                    )  # [2,H,W]
+                else:
+                    raise ModelError("modality must be 's2' or 's1'.")
 
-        base_meta = build_meta(
-            model=self.model_name,
-            kind="on_the_fly",
-            backend=backend_l,
-            source=source,
-            sensor=sensor_meta,
-            temporal=temporal_used,
-            image_size=image_size,
-            input_time=temporal_midpoint_str(temporal_used),
-            extra={
-                "modality": modality,
-                "scale_m": scale_m if backend_l == "gee" else None,
-                "cloudy_pct": cloudy_pct if backend_l == "gee" else None,
-                "composite": composite if backend_l == "gee" else None,
-                "orbit": orbit if (backend_l == "gee" and modality == "s1") else None,
-                "use_float_linear": use_float_linear if (backend_l == "gee" and modality == "s1") else None,
-                "start": getattr(temporal_used, "start", None),
-                "end": getattr(temporal_used, "end", None),
-                "image_size": image_size,
-                "device": device,
-                "hf_cache_dir": cache_dir,
-                **check_meta,
-                **wmeta,
-            },
-        )
+                # Optional: inspect on-the-fly GEE input
+                from ..core.input_checks import maybe_inspect_chw, checks_should_raise
+                check_meta.clear()
+                exp_c = 12 if modality == "s2" else 2
+                report = maybe_inspect_chw(
+                    x_chw,
+                    sensor=sensor,
+                    name=f"gee_{modality}_chw",
+                    expected_channels=exp_c,
+                    value_range=(0.0, 1.0),
+                    fill_value=0.0,
+                    meta=check_meta,
+                )
+                if report is not None and (not report.get("ok", True)) and checks_should_raise(sensor):
+                    raise ModelError("GEE input inspection failed: " + "; ".join(report.get("issues", [])))
 
-        # ---- pooled output ----
-        if output.mode == "pooled":
-            return Embedding(data=pooled.astype(np.float32), meta=base_meta)
+                # resize to 224
+                x_chw = _resize_chw_to_224(x_chw, size=image_size)
+                x_bchw = x_chw[None, ...].astype(np.float32)
 
-        # ---- grid output ----
-        if output.mode == "grid":
-            if grid is None:
-                raise ModelError("Grid output requested but TerraFM grid extraction returned None.")
+            else:
+                raise ModelError("terrafm_b_gee supports backend='gee' or 'tensor' only.")
 
-            meta = {**base_meta, "grid_type": "feature_map", "grid_shape": tuple(grid.shape)}
-            da = xr.DataArray(
-                grid,
-                dims=("d", "y", "x"),
-                coords={
-                    "d": np.arange(grid.shape[0]),
-                    "y": np.arange(grid.shape[1]),
-                    "x": np.arange(grid.shape[2]),
+            # channel sanity: TerraFM HF terrafm.py routes by C==2 (S1) else (S2). Keep it strict.
+            c = int(x_bchw.shape[1])
+            if c not in (2, 12):
+                raise ModelError(f"TerraFM expects C=2 (S1 VV/VH) or C=12 (S2 SR bands). Got C={c}")
+
+            # -----------------
+            # Load model (strict weights)
+            # -----------------
+            model, wmeta = _load_terrafm_b(auto_download=True, cache_dir=cache_dir)
+
+            pooled, grid = _terrafm_pooled_and_grid(
+                model,
+                x_bchw.astype(np.float32),
+                device=device,
+                want_grid=(output.mode == "grid"),
+            )
+
+            temporal_used = temporal if backend_l == "gee" else None
+            sensor_meta = None
+            source = None
+            if backend_l == "gee":
+                if modality == "s2":
+                    sensor_meta = {
+                        "collection": "COPERNICUS/S2_SR_HARMONIZED",
+                        "bands": tuple(_S2_SR_12_BANDS),
+                        "scale_m": scale_m,
+                        "cloudy_pct": cloudy_pct,
+                        "composite": composite,
+                    }
+                    source = sensor_meta["collection"]
+                elif modality == "s1":
+                    sensor_meta = {
+                        "collection": "COPERNICUS/S1_GRD_FLOAT" if use_float_linear else "COPERNICUS/S1_GRD",
+                        "bands": ("VV", "VH"),
+                        "scale_m": scale_m,
+                        "cloudy_pct": cloudy_pct,
+                        "composite": composite,
+                        "orbit": orbit,
+                        "use_float_linear": use_float_linear,
+                    }
+                    source = sensor_meta["collection"]
+
+            base_meta = build_meta(
+                model=self.model_name,
+                kind="on_the_fly",
+                backend=backend_l,
+                source=source,
+                sensor=sensor_meta,
+                temporal=temporal_used,
+                image_size=image_size,
+                input_time=temporal_midpoint_str(temporal_used),
+                extra={
+                    "modality": modality,
+                    "scale_m": scale_m if backend_l == "gee" else None,
+                    "cloudy_pct": cloudy_pct if backend_l == "gee" else None,
+                    "composite": composite if backend_l == "gee" else None,
+                    "orbit": orbit if (backend_l == "gee" and modality == "s1") else None,
+                    "use_float_linear": use_float_linear if (backend_l == "gee" and modality == "s1") else None,
+                    "start": getattr(temporal_used, "start", None),
+                    "end": getattr(temporal_used, "end", None),
+                    "image_size": image_size,
+                    "device": device,
+                    "hf_cache_dir": cache_dir,
+                    **check_meta,
+                    **wmeta,
                 },
-                name="embedding",
-                attrs=meta,
             )
-            return Embedding(data=da, meta=meta)
 
-        raise ModelError(f"Unknown output mode: {output.mode}")
+            # ---- pooled output ----
+            if output.mode == "pooled":
+                return Embedding(data=pooled.astype(np.float32), meta=base_meta)
+
+            # ---- grid output ----
+            if output.mode == "grid":
+                if grid is None:
+                    raise ModelError("Grid output requested but TerraFM grid extraction returned None.")
+
+                meta = {**base_meta, "grid_type": "feature_map", "grid_shape": tuple(grid.shape)}
+                da = xr.DataArray(
+                    grid,
+                    dims=("d", "y", "x"),
+                    coords={
+                        "d": np.arange(grid.shape[0]),
+                        "y": np.arange(grid.shape[1]),
+                        "x": np.arange(grid.shape[2]),
+                    },
+                    name="embedding",
+                    attrs=meta,
+                )
+                return Embedding(data=da, meta=meta)
+
+            raise ModelError(f"Unknown output mode: {output.mode}")
 

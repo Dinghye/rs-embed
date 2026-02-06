@@ -382,18 +382,14 @@ def _remoteclip_encode_tokens(
 
         raise ModelError("RemoteCLIP exposes neither token sequence nor pooled encoding methods.")
 
-
 @register("remoteclip_s2rgb")
 class RemoteCLIPS2RGBEmbedder(EmbedderBase):
     """
     ROI -> (GEE S2 SR Harmonized RGB composite) -> RemoteCLIP -> pooled or token-grid embedding
-    """
 
-    def __init__(self) -> None:
-        # Reuse the provider/model to avoid repeated initialization in the batch.
-        self._provider: Optional[GEEProvider] = None
-        # key: (ckpt, cache_dir_str, resolved_device) -> (model, wmeta)
-        self._model_cache: Dict[Tuple[str, str, str], Tuple[Any, Dict[str, Any]]] = {}
+    - OutputSpec.pooled(): returns vec [D]
+    - OutputSpec.grid(): returns token grid [D, Ht, Wt] (ViT patch grid, NOT pixel grid)
+    """
 
     def describe(self) -> Dict[str, Any]:
         return {
@@ -412,6 +408,13 @@ class RemoteCLIPS2RGBEmbedder(EmbedderBase):
             "notes": "grid output is ViT token grid (patch-level), typically 7x7 for ViT-B/32 at 224px.",
         }
 
+    
+    def __init__(self) -> None:
+        # Cache provider/model to avoid repeated auth + HF downloads inside batch loops.
+        self._provider: Optional[GEEProvider] = None
+        # key: (ckpt, cache_dir, resolved_device) -> (model, weight_meta)
+        self._model_cache: Dict[Tuple[str, str, str], Tuple[Any, Dict[str, Any]]] = {}
+
     def _get_provider(self) -> GEEProvider:
         if self._provider is None:
             p = GEEProvider(auto_auth=True)
@@ -420,7 +423,6 @@ class RemoteCLIPS2RGBEmbedder(EmbedderBase):
         return self._provider
 
     def _resolve_device(self, device: str) -> str:
-        # Ensure the stability of the cache key: auto -> cpu/cuda
         if device != "auto":
             return device
         try:
@@ -429,19 +431,13 @@ class RemoteCLIPS2RGBEmbedder(EmbedderBase):
         except Exception:
             return "cpu"
 
-    def _get_model(
-        self,
-        *,
-        ckpt: str,
-        cache_dir: Optional[str],
-        device: str,
-    ) -> Tuple[Any, Dict[str, Any], str]:
+    def _get_model(self, *, ckpt: str, cache_dir: Optional[str], device: str) -> Tuple[Any, Dict[str, Any], str]:
         dev = self._resolve_device(device)
         cache_dir_s = cache_dir or ""
         key = (ckpt, cache_dir_s, dev)
         if key in self._model_cache:
-            model, wmeta = self._model_cache[key]
-            return model, wmeta, dev
+            m, wmeta = self._model_cache[key]
+            return m, wmeta, dev
 
         model, wmeta = _load_rshf_remoteclip(
             ckpt,
@@ -449,153 +445,167 @@ class RemoteCLIPS2RGBEmbedder(EmbedderBase):
             require_pretrained=True,
             cache_dir=cache_dir,
         )
-
         try:
-            import torch  # noqa: F401
             model = model.to(dev).eval()
         except Exception:
             pass
-
         self._model_cache[key] = (model, wmeta)
         return model, wmeta, dev
 
     def get_embedding(
-        self,
-        *,
-        spatial: SpatialSpec,
-        temporal: Optional[TemporalSpec],
-        sensor: Optional[SensorSpec],
-        output: OutputSpec,
-        backend: str,
-        device: str = "auto",
-    ) -> Embedding:
-        if backend.lower() != "gee":
-            raise ModelError("remoteclip_s2rgb only supports backend='gee' in v0.1.")
-        if temporal is None:
-            raise ModelError("remoteclip_s2rgb requires TemporalSpec.range(start,end).")
-        temporal.validate()
-        if temporal.mode != "range":
-            raise ModelError("remoteclip_s2rgb requires TemporalSpec.range in v0.1.")
-        t = temporal_to_range(temporal)
+            self,
+            *,
+            spatial: SpatialSpec,
+            temporal: Optional[TemporalSpec],
+            sensor: Optional[SensorSpec],
+            output: OutputSpec,
+            backend: str,
+            device: str = "auto",
+        ) -> Embedding:
+            if backend.lower() != "gee":
+                raise ModelError("remoteclip_s2rgb only supports backend='gee' in v0.1.")
+            if temporal is None:
+                raise ModelError("remoteclip_s2rgb requires TemporalSpec.range(start,end).")
+            temporal.validate()
+            if temporal.mode != "range":
+                raise ModelError("remoteclip_s2rgb requires TemporalSpec.range in v0.1.")
+            t = temporal_to_range(temporal)
 
-        provider = self._get_provider()
+            provider = self._get_provider()
 
-        # overrides via SensorSpec
-        scale_m = sensor.scale_m if sensor else 10
-        cloudy_pct = sensor.cloudy_pct if sensor else 30
-        composite = sensor.composite if sensor else "median"
+            # overrides via SensorSpec
+            scale_m = sensor.scale_m if sensor else 10
+            cloudy_pct = sensor.cloudy_pct if sensor else 30
+            composite = sensor.composite if sensor else "median"
 
-        ckpt = "MVRL/remote-clip-vit-base-patch32"
-        if sensor and isinstance(sensor.collection, str) and sensor.collection.startswith("hf:"):
-            ckpt = sensor.collection.replace("hf:", "", 1).strip()
+            ckpt = "MVRL/remote-clip-vit-base-patch32"
+            # v0.1 convention: sensor.collection="hf:<repo_id_or_local_path>"
+            if sensor and isinstance(sensor.collection, str) and sensor.collection.startswith("hf:"):
+                ckpt = sensor.collection.replace("hf:", "", 1).strip()
 
-        image_size = 224
+            image_size = 224
 
-        # fetch image
-        s2_rgb_chw = _fetch_s2_rgb_chw(
-            provider, spatial, t, scale_m=scale_m, cloudy_pct=cloudy_pct, composite=composite
-        )
-
-        # Optional: inspect on-the-fly GEE input
-        from ..core.input_checks import (
-            maybe_inspect_chw,
-            checks_save_dir,
-            checks_should_raise,
-            save_quicklook_rgb,
-        )
-        extra_checks: Dict[str, Any] = {}
-        report = maybe_inspect_chw(
-            s2_rgb_chw,
-            sensor=sensor,
-            name="gee_s2_rgb_chw",
-            expected_channels=3,
-            value_range=(0.0, 1.0),
-            fill_value=0.0,
-            meta=extra_checks,
-        )
-        if report is not None and (not report.get("ok", True)) and checks_should_raise(sensor):
-            raise ModelError("GEE input inspection failed: " + "; ".join(report.get("issues", [])))
-        sd = checks_save_dir(sensor)
-        if sd and report is not None:
-            try:
-                import uuid
-                fn = f"remoteclip_s2_rgb_{uuid.uuid4().hex[:8]}.png"
-                save_quicklook_rgb(s2_rgb_chw, path=os.path.join(sd, fn), bands=(0, 1, 2), vmin=0.0, vmax=1.0)
-                extra_checks.setdefault("input_checks_artifacts", []).append({"name": "quicklook_rgb", "path": os.path.join(sd, fn)})
-            except Exception as _e:
-                extra_checks.setdefault("input_checks_artifacts", []).append({"name": "quicklook_rgb", "error": repr(_e)})
-
-        rgb_u8 = _s2_rgb_u8_from_chw(s2_rgb_chw)
-
-        # HF cache dir
-        cache_dir = (
-            os.environ.get("HUGGINGFACE_HUB_CACHE")
-            or os.environ.get("HF_HOME")
-            or os.environ.get("HUGGINGFACE_HOME")
-        )
-
-        model, wmeta, dev = self._get_model(ckpt=ckpt, cache_dir=cache_dir, device=device)
-
-        tokens_or_vec, tmeta = _remoteclip_encode_tokens(
-            model, rgb_u8, image_size=image_size, device=dev
-        )
-
-        sensor_meta = {
-            "collection": "COPERNICUS/S2_SR_HARMONIZED",
-            "bands": ("B4", "B3", "B2"),
-            "scale_m": scale_m,
-            "cloudy_pct": cloudy_pct,
-            "composite": composite,
-        }
-
-        extra = {
-            "bands": sensor_meta["bands"],
-            "scale_m": scale_m,
-            "cloudy_pct": cloudy_pct,
-            "composite": composite,
-            "start": t.start,
-            "end": t.end,
-            "ckpt": ckpt,
-            "device": dev,
-            "pretrained_required": True,
-            "auto_download": True,
-            "hf_cache_dir": cache_dir,
-            **wmeta,
-            **tmeta,
-            **extra_checks,
-        }
-
-        base_meta = build_meta(
-            model=self.model_name,
-            kind="on_the_fly",
-            backend="gee",
-            source="rshf.RemoteCLIP",
-            sensor=sensor,
-            temporal=temporal,
-            image_size=image_size,
-            input_time=temporal_midpoint_str(temporal),
-            extra=extra,
-        )
-
-        # output formatting
-        if output.mode == "pooled":
-            if isinstance(tokens_or_vec, np.ndarray) and tokens_or_vec.ndim == 1:
-                return Embedding(data=tokens_or_vec.astype(np.float32), meta=base_meta)
-            # tokens -> pooled
-            vec = tokens_or_vec.mean(axis=0).astype(np.float32)
-            base_meta["pooling"] = "mean"
-            return Embedding(data=vec, meta=base_meta)
-
-        # grid
-        if isinstance(tokens_or_vec, np.ndarray) and tokens_or_vec.ndim == 2:
-            grid_dhw, gmeta = _tokens_to_grid_dhw(tokens_or_vec)
-            base_meta.update(gmeta)
-            da = xr.DataArray(
-                grid_dhw,
-                dims=("d", "y", "x"),
-                name="embedding",
-                attrs=base_meta,
+            # fetch image
+            s2_rgb_chw = _fetch_s2_rgb_chw(
+                provider, spatial, t, scale_m=scale_m, cloudy_pct=cloudy_pct, composite=composite
             )
-            return Embedding(data=da, meta=base_meta)
 
-        raise ModelError("remoteclip_s2rgb: grid mode requested but token grid could not be produced.")
+            # Optional: inspect on-the-fly GEE input
+            from ..core.input_checks import (
+                maybe_inspect_chw,
+                checks_save_dir,
+                checks_should_raise,
+                save_quicklook_rgb,
+            )
+            extra_checks: Dict[str, Any] = {}
+            report = maybe_inspect_chw(
+                s2_rgb_chw,
+                sensor=sensor,
+                name="gee_s2_rgb_chw",
+                expected_channels=3,
+                value_range=(0.0, 1.0),
+                fill_value=0.0,
+                meta=extra_checks,
+            )
+            if report is not None and (not report.get("ok", True)) and checks_should_raise(sensor):
+                raise ModelError("GEE input inspection failed: " + "; ".join(report.get("issues", [])))
+            sd = checks_save_dir(sensor)
+            if sd and report is not None:
+                try:
+                    import uuid
+                    fn = f"remoteclip_s2_rgb_{uuid.uuid4().hex[:8]}.png"
+                    save_quicklook_rgb(s2_rgb_chw, path=os.path.join(sd, fn), bands=(0, 1, 2), vmin=0.0, vmax=1.0)
+                    extra_checks.setdefault("input_checks_artifacts", []).append({"name": "quicklook_rgb", "path": os.path.join(sd, fn)})
+                except Exception as _e:
+                    # Never fail embedding because quicklook saving failed.
+                    extra_checks.setdefault("input_checks_artifacts", []).append({"name": "quicklook_rgb", "error": repr(_e)})
+
+            rgb_u8 = _s2_rgb_u8_from_chw(s2_rgb_chw)
+
+            # HF cache dir
+            cache_dir = (
+                os.environ.get("HUGGINGFACE_HUB_CACHE")
+                or os.environ.get("HF_HOME")
+                or os.environ.get("HUGGINGFACE_HOME")
+            )
+
+            # load model once per (ckpt, cache_dir, device)
+            model, wmeta, dev = self._get_model(ckpt=ckpt, cache_dir=cache_dir, device=device)
+
+            tokens_or_vec, tmeta = _remoteclip_encode_tokens(
+                model, rgb_u8, image_size=image_size, device=dev
+            )
+
+            sensor_meta = {
+                "collection": "COPERNICUS/S2_SR_HARMONIZED",
+                "bands": ("B4", "B3", "B2"),
+                "scale_m": scale_m,
+                "cloudy_pct": cloudy_pct,
+                "composite": composite,
+            }
+
+            extra = {
+                "bands": sensor_meta["bands"],
+                "scale_m": scale_m,
+                "cloudy_pct": cloudy_pct,
+                "composite": composite,
+                "start": t.start,
+                "end": t.end,
+                "ckpt": ckpt,
+                "device": dev,
+                "pretrained_required": True,
+                "auto_download": True,
+                "hf_cache_dir": cache_dir,
+                **wmeta,
+                **tmeta,
+                **extra_checks,
+            }
+
+            base_meta = build_meta(
+                model=self.model_name,
+                kind="on_the_fly",
+                backend="gee",
+                source="COPERNICUS/S2_SR_HARMONIZED",
+                sensor=sensor_meta,
+                temporal=t,
+                image_size=image_size,
+                input_time=temporal_midpoint_str(t),
+                extra=extra,
+            )
+
+            # ---- pooled output ----
+            if output.mode == "pooled":
+                if tokens_or_vec.ndim == 1:
+                    vec = tokens_or_vec.astype(np.float32)
+                elif tokens_or_vec.ndim == 2:
+                    vec = tokens_or_vec.mean(axis=0).astype(np.float32)  # tokens mean
+                    base_meta["pooling"] = "token_mean"
+                else:
+                    raise ModelError(f"Unexpected tokens/vec shape for pooled: {tokens_or_vec.shape}")
+                return Embedding(data=vec, meta=base_meta)
+
+            # ---- grid output ----
+            if output.mode == "grid":
+                if tokens_or_vec.ndim != 2:
+                    raise ModelError(
+                        "grid output requires token sequence [N,D]. "
+                        "Your RemoteCLIP wrapper only provides pooled vectors (no forward_encoder tokens)."
+                    )
+
+                grid_dhw, gmeta = _tokens_to_grid_dhw(tokens_or_vec)
+                meta = {**base_meta, **gmeta, "grid_type": "vit_tokens"}  # patch grid, not pixel grid
+
+                da = xr.DataArray(
+                    grid_dhw,
+                    dims=("d", "y", "x"),
+                    coords={
+                        "d": np.arange(grid_dhw.shape[0]),
+                        "y": np.arange(grid_dhw.shape[1]),
+                        "x": np.arange(grid_dhw.shape[2]),
+                    },
+                    name="embedding",
+                    attrs=meta,
+                )
+                return Embedding(data=da, meta=meta)
+
+            raise ModelError(f"Unknown output mode: {output.mode}")

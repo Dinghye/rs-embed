@@ -10,7 +10,7 @@ from ..core.embedding import Embedding
 from ..core.errors import ModelError
 from ..core.specs import BBox, PointBuffer, SpatialSpec, TemporalSpec, SensorSpec, OutputSpec
 from .base import EmbedderBase
-from .meta_utils import build_meta, temporal_midpoint_str
+
 
 def _buffer_m_to_deg(lat: float, buffer_m: float) -> Tuple[float, float]:
     import math
@@ -201,21 +201,16 @@ def _mosaic_and_crop_strict_roi(
 
 @register("tessera")
 class TesseraEmbedder(EmbedderBase):
-    def describe(self) -> Dict[str, Any]:
-        return {
-            "type": "precomputed",
-            "backend": ["local"],
-            "temporal": {"mode": "year|range|none", "default_year": 2021},
-             "output": ["grid", "pooled"],
-             "source": "geotessera.GeoTessera",
-             "notes": [
-                 "Loads precomputed embeddings via geotessera and mosaics tiles to cover the ROI.",
-                 "If TemporalSpec is a range, the year is inferred from the start date.",
-                 "You can override cache dir with env RS_EMBED_TESSERA_CACHE or sensor.collection='cache:/path'.",
-             ],
-         }
-    
-    
+
+    def __init__(self) -> None:
+        # Cache GeoTessera instances per cache_dir to avoid repeated index scans.
+        self._gt_cache: Dict[str, Any] = {}
+
+    def _get_gt(self, cache_dir: str):
+        if cache_dir not in self._gt_cache:
+            from geotessera import GeoTessera
+            self._gt_cache[cache_dir] = GeoTessera(cache_dir=cache_dir)
+        return self._gt_cache[cache_dir]
     def get_embedding(
         self,
         *,
@@ -251,28 +246,20 @@ class TesseraEmbedder(EmbedderBase):
         rows = list(gt.fetch_embeddings(tiles))
         chw, crop_meta = _mosaic_and_crop_strict_roi(rows, bbox_4326=bbox)
 
-        meta = build_meta(
-             model=self.model_name,
-             kind="precomputed",
-             backend="local",
-             source="geotessera.GeoTessera",
-             sensor=sensor,
-             temporal=temporal,
-             image_size=None,
-             input_time=temporal_midpoint_str(temporal),
-             extra={
-                 "cache_dir": cache_dir,
-                 "bbox_4326": bounds,
-                 "preferred_year": year,
-                 "chw_shape": tuple(chw.shape),
-                 **crop_meta,
-             },
-         )
+        meta = {
+            "model": self.model_name,
+            "type": "precomputed",
+            "source": "geotessera.GeoTessera",
+            "cache_dir": cache_dir,
+            "bbox_4326": bounds,
+            "preferred_year": year,
+            "chw_shape": tuple(chw.shape),
+            **crop_meta,
+        }
 
         if output.mode == "pooled":
             vec = _pool(chw, output.pooling)
-            # meta["pooling"] = f"{output.pooling}_hw"
-            meta["pooling"] = output.pooling
+            meta["pooling"] = f"{output.pooling}_hw"
             return Embedding(data=vec, meta=meta)
 
         if output.mode == "grid":
@@ -291,3 +278,4 @@ class TesseraEmbedder(EmbedderBase):
             return Embedding(data=da, meta=meta)
 
         raise ModelError(f"Unknown output mode: {output.mode}")
+

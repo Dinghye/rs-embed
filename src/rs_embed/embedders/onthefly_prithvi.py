@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from functools import lru_cache
 import math
 from dataclasses import asdict
 from typing import Any, Dict, Optional, Tuple
@@ -99,14 +100,25 @@ def _pad_chw_to_multiple(x_chw: np.ndarray, mult: int = 16, value: float = 0.0) 
 # -------------------------
 # Prithvi model loading (TerraTorch)
 # -------------------------
-def _load_prithvi(
+
+def _resolve_device(device: str) -> str:
+    if device != "auto":
+        return device
+    try:
+        import torch
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    except Exception:
+        return "cpu"
+
+
+@lru_cache(maxsize=8)
+def _load_prithvi_cached(
     model_key: str,
-    *,
     pretrained: bool,
     bands: Tuple[str, ...],
     num_frames: int,
     coords_encoding: Tuple[str, ...],
-    device: str = "auto",
+    dev: str,
 ):
     ensure_torch()
     import torch
@@ -115,8 +127,6 @@ def _load_prithvi(
         from terratorch.registry import BACKBONE_REGISTRY
     except Exception as e:
         raise ModelError("Prithvi requires terratorch. Install: pip install terratorch") from e
-
-    dev = "cuda" if (device == "auto" and torch.cuda.is_available()) else ("cpu" if device == "auto" else device)
 
     try:
         m = BACKBONE_REGISTRY.build(
@@ -128,13 +138,48 @@ def _load_prithvi(
         )
     except Exception as e:
         raise ModelError(
-            f"Failed to build Prithvi backbone '{model_key}' via TerraTorch BACKBONE_REGISTRY. "
-            f"Original error: {e}"
+            f"Failed to build Prithvi backbone '{model_key}'. "
+            f"Check terratorch install and model_key/bands/num_frames."
         ) from e
 
-    m = m.to(dev).eval()
-    return m, dev
+    try:
+        m = m.to(dev).eval()
+    except Exception:
+        pass
 
+    meta = {
+        "model_key": model_key,
+        "pretrained": bool(pretrained),
+        "bands": tuple(bands),
+        "num_frames": int(num_frames),
+        "coords_encoding": tuple(coords_encoding),
+        "device": dev,
+    }
+    return m, meta
+
+def _load_prithvi(
+    model_key: str,
+    *,
+    pretrained: bool,
+    bands: Tuple[str, ...],
+    num_frames: int,
+    coords_encoding: Tuple[str, ...],
+    device: str = "auto",
+):
+    """Load (and cache) a Prithvi backbone via TerraTorch.
+
+    Returns: (model, meta, resolved_device)
+    """
+    dev = _resolve_device(device)
+    m, meta = _load_prithvi_cached(
+        model_key,
+        bool(pretrained),
+        tuple(bands),
+        int(num_frames),
+        tuple(coords_encoding),
+        dev,
+    )
+    return m, meta, dev
 
 def _prithvi_forward_tokens(
     model,
@@ -225,165 +270,175 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
             ],
         }
 
+    
+    def __init__(self) -> None:
+        self._provider: Optional[GEEProvider] = None
+
+    def _get_provider(self) -> GEEProvider:
+        if self._provider is None:
+            p = GEEProvider(auto_auth=True)
+            p.ensure_ready()
+            self._provider = p
+        return self._provider
+
     def get_embedding(
-        self,
-        *,
-        spatial: SpatialSpec,
-        temporal: Optional[TemporalSpec],
-        sensor: Optional[SensorSpec],
-        output: OutputSpec,
-        backend: str,
-        device: str = "auto",
-    ) -> Embedding:
-        if backend.lower() not in ("gee", "auto"):
-            raise ModelError("prithvi_eo_v2_s2_6b expects backend='gee' (or 'auto').")
+            self,
+            *,
+            spatial: SpatialSpec,
+            temporal: Optional[TemporalSpec],
+            sensor: Optional[SensorSpec],
+            output: OutputSpec,
+            backend: str,
+            device: str = "auto",
+        ) -> Embedding:
+            if backend.lower() not in ("gee", "auto"):
+                raise ModelError("prithvi_eo_v2_s2_6b expects backend='gee' (or 'auto').")
 
-        # Defaults for Prithvi inputs
-        if sensor is None:
-            sensor = SensorSpec(
-                collection="COPERNICUS/S2_SR_HARMONIZED",
+            # Defaults for Prithvi inputs
+            if sensor is None:
+                sensor = SensorSpec(
+                    collection="COPERNICUS/S2_SR_HARMONIZED",
+                    bands=tuple(PRITHVI_S2_BANDS_DST),
+                    scale_m=self.DEFAULT_IMAGE_SCALE_M,
+                    cloudy_pct=self.DEFAULT_CLOUDY_PCT,
+                    composite=self.DEFAULT_COMPOSITE,
+                    fill_value=0.0,
+                )
+
+            t = temporal_to_range(temporal)  # normalize to range
+
+            # Load model
+            model_key = os.environ.get("RS_EMBED_PRITHVI_KEY", self.DEFAULT_MODEL_KEY)
+            pretrained = os.environ.get("RS_EMBED_PRITHVI_PRETRAINED", "1").strip() not in ("0", "false", "False")
+            coords_encoding = ("time", "location")
+            num_frames = 1
+
+            model, wmeta,dev = _load_prithvi(
+                model_key,
+                pretrained=pretrained,
                 bands=tuple(PRITHVI_S2_BANDS_DST),
-                scale_m=self.DEFAULT_IMAGE_SCALE_M,
-                cloudy_pct=self.DEFAULT_CLOUDY_PCT,
-                composite=self.DEFAULT_COMPOSITE,
-                fill_value=0.0,
+                num_frames=num_frames,
+                coords_encoding=coords_encoding,
+                device=device,
             )
 
-        t = temporal_to_range(temporal)  # normalize to range
+            # Fetch S2 6-band patch from GEE
+            provider = self._get_provider()
 
-        # Load model
-        model_key = os.environ.get("RS_EMBED_PRITHVI_KEY", self.DEFAULT_MODEL_KEY)
-        pretrained = os.environ.get("RS_EMBED_PRITHVI_PRETRAINED", "1").strip() not in ("0", "false", "False")
-        coords_encoding = ("time", "location")
-        num_frames = 1
-
-        model, dev = _load_prithvi(
-            model_key,
-            pretrained=pretrained,
-            bands=tuple(PRITHVI_S2_BANDS_DST),
-            num_frames=num_frames,
-            coords_encoding=coords_encoding,
-            device=device,
-        )
-
-        # Fetch S2 6-band patch from GEE
-        provider = GEEProvider(auto_auth=True)
-        provider.ensure_ready()
-
-        x_chw = _fetch_s2_prithvi6_chw(
-            provider,
-            spatial=spatial,
-            temporal=t,
-            scale_m=int(sensor.scale_m),
-            cloudy_pct=int(sensor.cloudy_pct),
-            composite=str(sensor.composite),
-            fill_value=float(sensor.fill_value),
-        )
-
-        # Optional: inspect on-the-fly GEE input
-        from ..core.input_checks import (
-            maybe_inspect_chw,
-            checks_should_raise,
-            checks_save_dir,
-            save_quicklook_rgb,
-        )
-        check_meta: Dict[str, Any] = {}
-        report = maybe_inspect_chw(
-            x_chw,
-            sensor=sensor,
-            name="gee_s2_prithvi6_chw",
-            expected_channels=6,
-            value_range=(0.0, 1.0),
-            fill_value=float(sensor.fill_value),
-            meta=check_meta,
-        )
-        if report is not None and (not report.get("ok", True)) and checks_should_raise(sensor):
-            raise ModelError("GEE input inspection failed: " + "; ".join(report.get("issues", [])))
-
-        # Optional quicklook (RGB from RED/GREEN/BLUE)
-        sd = checks_save_dir(sensor)
-        if sd and report is not None:
-            try:
-                import uuid
-                fn = f"prithvi_s2_rgb_{uuid.uuid4().hex[:8]}.png"
-                save_quicklook_rgb(x_chw, path=os.path.join(sd, fn), bands=(2, 1, 0), vmin=0.0, vmax=1.0)
-                check_meta.setdefault("input_checks_artifacts", []).append({"name": "quicklook_rgb", "path": os.path.join(sd, fn)})
-            except Exception as _e:
-                check_meta.setdefault("input_checks_artifacts", []).append({"name": "quicklook_rgb", "error": repr(_e)})
-        # Prithvi patch_size usually 16; pad to avoid border being ignored
-        patch_mult = int(os.environ.get("RS_EMBED_PRITHVI_PATCH_MULT", "16"))
-        x_chw = _pad_chw_to_multiple(x_chw, mult=patch_mult, value=float(sensor.fill_value))
-
-        # coords: use temporal mid-date and ROI center (provider can compute center from region; v0.1: derive from SpatialSpec)
-        # We keep it simple: for BBox/PointBuffer in EPSG:4326, we can derive center lon/lat.
-        from ..core.specs import BBox, PointBuffer  # local import to avoid cycles
-
-        if isinstance(spatial, BBox):
-            spatial.validate()
-            lon = (spatial.minlon + spatial.maxlon) / 2
-            lat = (spatial.minlat + spatial.maxlat) / 2
-        elif isinstance(spatial, PointBuffer):
-            spatial.validate()
-            lon = spatial.lon
-            lat = spatial.lat
-        else:
-            raise ModelError(f"Unsupported SpatialSpec: {type(spatial)}")
-
-        date_str = temporal_midpoint_str(t)
-
-        tokens = _prithvi_forward_tokens(
-            model,
-            x_chw,
-            lon=lon,
-            lat=lat,
-            date_str=date_str,
-            device=dev,
-        )  # [N,D] (maybe includes CLS)
-
-        meta = base_meta(
-            model_name=self.model_name,
-            hf_id=model_key,  # for terratorch we store model key here
-            backend="gee",
-            image_size=int(x_chw.shape[-1]),  # not fixed 224; depends on ROI/scale
-            sensor=sensor,
-            temporal=t,
-            source=sensor.collection,
-            extra={
-                "temporal_range": (t.start, t.end),
-                "coords_date": date_str,
-                "coords_lonlat": (float(lon), float(lat)),
-                "tokens_shape": tuple(tokens.shape),
-                "model_key": model_key,
-                "pretrained": bool(pretrained),
-                "coords_encoding": coords_encoding,
-                "num_frames": num_frames,
-                "input_hw":(int(x_chw.shape[1]), int(x_chw.shape[2])),
-                "patch_mult": patch_mult,
-                **check_meta,
-            },
-        )
-
-        if output.mode == "pooled":
-            vec, cls_removed = pool_from_tokens(tokens, output.pooling)
-            meta.update({"pooling": f"patch_{output.pooling}", "cls_removed": bool(cls_removed)})
-            return Embedding(data=vec, meta=meta)
-
-        if output.mode == "grid":
-            grid, (h, w), cls_removed = tokens_to_grid_dhw(tokens)
-            meta.update({"grid_hw": (h, w), "grid_kind": "patch_tokens", "cls_removed": bool(cls_removed)})
-
-            try:
-                import xarray as xr
-            except Exception as e:
-                raise ModelError("grid output requires xarray. Install: pip install xarray") from e
-
-            da = xr.DataArray(
-                grid,
-                dims=("d", "y", "x"),
-                coords={"d": np.arange(grid.shape[0]), "y": np.arange(h), "x": np.arange(w)},
-                name="embedding",
-                attrs=meta,
+            x_chw = _fetch_s2_prithvi6_chw(
+                provider,
+                spatial=spatial,
+                temporal=t,
+                scale_m=int(sensor.scale_m),
+                cloudy_pct=int(sensor.cloudy_pct),
+                composite=str(sensor.composite),
+                fill_value=float(sensor.fill_value),
             )
-            return Embedding(data=da, meta=meta)
 
-        raise ModelError(f"Unknown output mode: {output.mode}")
+            # Optional: inspect on-the-fly GEE input
+            from ..core.input_checks import (
+                maybe_inspect_chw,
+                checks_should_raise,
+                checks_save_dir,
+                save_quicklook_rgb,
+            )
+            check_meta: Dict[str, Any] = {}
+            report = maybe_inspect_chw(
+                x_chw,
+                sensor=sensor,
+                name="gee_s2_prithvi6_chw",
+                expected_channels=6,
+                value_range=(0.0, 1.0),
+                fill_value=float(sensor.fill_value),
+                meta=check_meta,
+            )
+            if report is not None and (not report.get("ok", True)) and checks_should_raise(sensor):
+                raise ModelError("GEE input inspection failed: " + "; ".join(report.get("issues", [])))
+
+            # Optional quicklook (RGB from RED/GREEN/BLUE)
+            sd = checks_save_dir(sensor)
+            if sd and report is not None:
+                try:
+                    import uuid
+                    fn = f"prithvi_s2_rgb_{uuid.uuid4().hex[:8]}.png"
+                    save_quicklook_rgb(x_chw, path=os.path.join(sd, fn), bands=(2, 1, 0), vmin=0.0, vmax=1.0)
+                    check_meta.setdefault("input_checks_artifacts", []).append({"name": "quicklook_rgb", "path": os.path.join(sd, fn)})
+                except Exception as _e:
+                    check_meta.setdefault("input_checks_artifacts", []).append({"name": "quicklook_rgb", "error": repr(_e)})
+            # Prithvi patch_size usually 16; pad to avoid border being ignored
+            patch_mult = int(os.environ.get("RS_EMBED_PRITHVI_PATCH_MULT", "16"))
+            x_chw = _pad_chw_to_multiple(x_chw, mult=patch_mult, value=float(sensor.fill_value))
+
+            # coords: use temporal mid-date and ROI center (provider can compute center from region; v0.1: derive from SpatialSpec)
+            # We keep it simple: for BBox/PointBuffer in EPSG:4326, we can derive center lon/lat.
+            from ..core.specs import BBox, PointBuffer  # local import to avoid cycles
+
+            if isinstance(spatial, BBox):
+                spatial.validate()
+                lon = (spatial.minlon + spatial.maxlon) / 2
+                lat = (spatial.minlat + spatial.maxlat) / 2
+            elif isinstance(spatial, PointBuffer):
+                spatial.validate()
+                lon = spatial.lon
+                lat = spatial.lat
+            else:
+                raise ModelError(f"Unsupported SpatialSpec: {type(spatial)}")
+
+            date_str = temporal_midpoint_str(t)
+
+            tokens = _prithvi_forward_tokens(
+                model,
+                x_chw,
+                lon=lon,
+                lat=lat,
+                date_str=date_str,
+                device=dev,
+            )  # [N,D] (maybe includes CLS)
+
+            meta = base_meta(
+                model_name=self.model_name,
+                hf_id=model_key,  # for terratorch we store model key here
+                backend="gee",
+                image_size=int(x_chw.shape[-1]),  # not fixed 224; depends on ROI/scale
+                sensor=sensor,
+                temporal=t,
+                source=sensor.collection,
+                extra={
+                    "temporal_range": (t.start, t.end),
+                    "coords_date": date_str,
+                    "coords_lonlat": (float(lon), float(lat)),
+                    "tokens_shape": tuple(tokens.shape),
+                    "model_key": model_key,
+                    "pretrained": bool(pretrained),
+                    "coords_encoding": coords_encoding,
+                    "num_frames": num_frames,
+                    "input_hw":(int(x_chw.shape[1]), int(x_chw.shape[2])),
+                    "patch_mult": patch_mult,
+                    **check_meta,
+                },
+            )
+
+            if output.mode == "pooled":
+                vec, cls_removed = pool_from_tokens(tokens, output.pooling)
+                meta.update({"pooling": f"patch_{output.pooling}", "cls_removed": bool(cls_removed)})
+                return Embedding(data=vec, meta=meta)
+
+            if output.mode == "grid":
+                grid, (h, w), cls_removed = tokens_to_grid_dhw(tokens)
+                meta.update({"grid_hw": (h, w), "grid_kind": "patch_tokens", "cls_removed": bool(cls_removed)})
+
+                try:
+                    import xarray as xr
+                except Exception as e:
+                    raise ModelError("grid output requires xarray. Install: pip install xarray") from e
+
+                da = xr.DataArray(
+                    grid,
+                    dims=("d", "y", "x"),
+                    coords={"d": np.arange(grid.shape[0]), "y": np.arange(h), "x": np.arange(w)},
+                    name="embedding",
+                    attrs=meta,
+                )
+                return Embedding(data=da, meta=meta)
+
+            raise ModelError(f"Unknown output mode: {output.mode}")
