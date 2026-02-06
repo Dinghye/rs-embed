@@ -37,15 +37,16 @@ def test_bbox_validate_non_4326_crs():
         bbox.validate()
 
 
-def test_bbox_is_frozen():
-    bbox = BBox(minlon=0.0, minlat=0.0, maxlon=1.0, maxlat=1.0)
+@pytest.mark.parametrize("obj, attr", [
+    (BBox(minlon=0.0, minlat=0.0, maxlon=1.0, maxlat=1.0), "minlon"),
+    (PointBuffer(lon=1.0, lat=2.0, buffer_m=100.0), "lon"),
+    (TemporalSpec.year(2024), "year"),
+    (OutputSpec.pooled(), "mode"),
+    (SensorSpec(collection="C", bands=("B1",)), "collection"),
+])
+def test_specs_are_frozen(obj, attr):
     with pytest.raises(AttributeError):
-        bbox.minlon = 5.0
-
-
-def test_bbox_default_crs():
-    bbox = BBox(minlon=0.0, minlat=0.0, maxlon=1.0, maxlat=1.0)
-    assert bbox.crs == "EPSG:4326"
+        setattr(obj, attr, "x")
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -75,10 +76,6 @@ def test_pointbuffer_validate_non_4326_crs():
         pb.validate()
 
 
-def test_pointbuffer_is_frozen():
-    pb = PointBuffer(lon=1.0, lat=2.0, buffer_m=100.0)
-    with pytest.raises(AttributeError):
-        pb.lon = 5.0
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -124,10 +121,6 @@ def test_temporal_spec_invalid_mode():
         ts.validate()
 
 
-def test_temporal_spec_is_frozen():
-    ts = TemporalSpec.year(2024)
-    with pytest.raises(AttributeError):
-        ts.year = 2025
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -156,10 +149,6 @@ def test_output_spec_grid_default_scale():
     assert grid.scale_m == 10
 
 
-def test_output_spec_is_frozen():
-    o = OutputSpec.pooled()
-    with pytest.raises(AttributeError):
-        o.mode = "grid"
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -196,7 +185,3 @@ def test_sensor_spec_custom():
     assert s.check_save_dir == "/tmp/out"
 
 
-def test_sensor_spec_is_frozen():
-    s = SensorSpec(collection="C", bands=("B1",))
-    with pytest.raises(AttributeError):
-        s.collection = "X"

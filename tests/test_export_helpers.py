@@ -259,3 +259,24 @@ def test_default_sensor_for_model_no_info():
             return {"type": "onthefly"}
 
     assert _default_sensor_for_model("mystery") is None
+
+
+# ══════════════════════════════════════════════════════════════════════
+# _embedding_to_numpy — generic fallback
+# ══════════════════════════════════════════════════════════════════════
+
+def test_embedding_to_numpy_generic_list():
+    """Generic array-like (not ndarray or xarray) goes through np.asarray fallback."""
+    e = Embedding(data=[1.0, 2.0, 3.0], meta={})
+    out = _embedding_to_numpy(e)
+    assert isinstance(out, np.ndarray)
+    assert out.dtype == np.float32
+    np.testing.assert_allclose(out, [1.0, 2.0, 3.0])
+
+
+def test_embedding_to_numpy_preserves_shape():
+    arr = np.zeros((3, 4, 4), dtype=np.float64)
+    e = Embedding(data=arr, meta={})
+    out = _embedding_to_numpy(e)
+    assert out.shape == (3, 4, 4)
+    assert out.dtype == np.float32

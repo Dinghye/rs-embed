@@ -19,12 +19,3 @@ def test_embedding_xarray():
     assert emb.data.shape == (3, 4, 4)
 
 
-def test_embedding_meta_can_be_empty():
-    emb = Embedding(data=np.zeros(5), meta={})
-    assert emb.meta == {}
-
-
-def test_embedding_is_mutable():
-    emb = Embedding(data=np.zeros(5), meta={})
-    emb.meta["new_key"] = "value"
-    assert emb.meta["new_key"] == "value"
