@@ -15,7 +15,7 @@ Yet, using them in practice remains surprisingly painful:
 
 RS-Embed aims to fix this.
 
-!!! success “Goal”
+!!! success "Goal"
     Provide a **minimal**, **unified**, and **stable API** that turns diverse RS foundation models into a simple `ROI → embedding service` — so researchers can focus on **downstream tasks**, **benchmarking**, and **analysis**, not glue code.
 
 ## Why rs-embed?

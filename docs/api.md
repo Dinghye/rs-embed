@@ -319,32 +319,6 @@ export_batch(
 
 ---
 
-### export_npz
-
-```python
-export_npz(
-    *,
-    spatial: SpatialSpec,
-    temporal: Optional[TemporalSpec],
-    models: List[str],
-    out_path: str,
-    backend: str = "gee",
-    device: str = "auto",
-    output: OutputSpec = OutputSpec.pooled(),
-    sensor: Optional[SensorSpec] = None,
-    per_model_sensors: Optional[Dict[str, SensorSpec]] = None,
-    save_inputs: bool = True,
-    save_embeddings: bool = True,
-    save_manifest: bool = True,
-    fail_on_bad_input: bool = False,
-) -> Dict[str, Any]
-```
-
-Exports a single ROI to `.npz` (and an optional `.json` manifest).  
-In the current version, this is a thin wrapper around `export_batch(format="npz")`, so it inherits the same caching and duplicate-download-avoidance optimizations.
-
----
-
 ### inspect_gee_patch
 
 ```python

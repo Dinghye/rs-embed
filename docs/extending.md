@@ -1,15 +1,338 @@
-# **🔌 Extending the Toolkit**
 
-1. Create a new embedder:
+## Overview
+
+To add a new model, you typically do four things:
+
+1. **Create an embedder class** in `src/rs_embed/embedders/`
+2. Decorate it with **`@register("your_model_name")`**
+3. Implement:
+   - `describe()`
+   - `get_embedding(...)`
+4. (Optional, recommended) Override:
+   - `get_embeddings_batch(...)` for true batched inference
+
+---
+
+## The Registry
+
+Models are discovered through the registry in `rs_embed.core.registry`:
+
+- `@register("name")` registers an embedder class.
+- `get_embedder_cls("name")` resolves the class.
+- `list_models()` lists available model names.
+
+Registration uses a **side-effect import**:
+the registry is populated when `rs_embed.embedders` is imported.
+
+!!! tip
+    Put your embedder in `rs_embed/embedders/` and ensure `rs_embed/embedders/__init__.py` imports it (directly or indirectly).
+    This ensures registry auto-loading works.
+
+---
+
+## Embedder Contract
+
+All models implement `EmbedderBase`:
+
+```python
+from rs_embed.embedders.base import EmbedderBase
+
+class EmbedderBase:
+    def describe(self) -> dict: ...
+    def get_embedding(
+        self,
+        *,
+        spatial,
+        temporal,
+        sensor,
+        output,
+        backend="gee",
+        device="auto",
+        input_chw=None,
+    ): ...
 ```
-@register("my_model")
-class MyEmbedder(EmbedderBase):
-    def get_embedding(...):
-        ...
-```    
-2. Return a unified Embedding(data, meta)
-3. Automatically available via get_embedding(...)
 
-> You only need to implement:
-> **ROI → embedding**
-> Everything else (specs, metadata, output formatting) is handled by the framework.
+### `describe()`
+
+`describe()` should return a JSON-serializable dictionary describing capabilities and requirements. A typical structure is:
+
+```python
+{
+  "type": "on_the_fly" | "precomputed",
+  "backend": ["gee", ...],
+  "inputs": {
+    "sensor_required": true/false,
+    "default_sensor": {...} | null,
+    "notes": "..."
+  },
+  "outputs": {
+    "supports": ["pooled", "grid"],
+    "dtype": "float32"
+  }
+}
+```
+
+!!! note
+    `describe()` should be **fast** and should not trigger heavy downloads or model loading.
+
+---
+
+## Template: Minimal Model (Hello World)
+
+This is the smallest possible embedder you can add. It returns a deterministic random vector.
+
+Create `src/rs_embed/embedders/toy_model.py`:
+
+```python
+from __future__ import annotations
+
+from typing import Any, Dict, Optional
+import numpy as np
+
+from rs_embed.core.registry import register
+from rs_embed.core.embedding import Embedding
+from rs_embed.core.specs import SpatialSpec, TemporalSpec, SensorSpec, OutputSpec
+from rs_embed.embedders.base import EmbedderBase
+
+
+@register("toy_model_v1")
+class ToyModelV1(EmbedderBase):
+    def describe(self) -> Dict[str, Any]:
+        return {
+            "type": "precomputed",
+            "backend": ["gee"],  # or ["local"] if you add your own provider
+            "inputs": {"sensor_required": False, "default_sensor": None},
+            "outputs": {"supports": ["pooled"], "dtype": "float32"},
+        }
+
+    def get_embedding(
+        self,
+        *,
+        spatial: SpatialSpec,
+        temporal: Optional[TemporalSpec],
+        sensor: Optional[SensorSpec],
+        output: OutputSpec,
+        backend: str = "gee",
+        device: str = "auto",
+        input_chw: Optional[np.ndarray] = None,
+    ) -> Embedding:
+        # Use stable seed so results are reproducible per spatial/temporal.
+        seed = hash((repr(spatial), repr(temporal), self.model_name)) & 0xFFFFFFFF
+        rng = np.random.default_rng(seed)
+
+        if output.mode != "pooled":
+            raise ValueError("toy_model_v1 only supports pooled output")
+
+        vec = rng.standard_normal(512).astype("float32")
+        meta = {
+            "model": self.model_name,
+            "backend": backend,
+            "device": device,
+            "spatial": spatial.to_dict(),
+            "temporal": temporal.to_dict() if temporal else None,
+        }
+        return Embedding(data=vec, meta=meta)
+```
+
+Then make sure it is imported by `rs_embed.embedders` (either add an import in `src/rs_embed/embedders/__init__.py` or ensure a wildcard import brings it in).
+
+---
+
+## On-the-fly Models (GEE patch → model → embedding)
+
+Most vision models in rs-embed work like this:
+
+1. Use a provider (e.g., Earth Engine) to fetch an **input patch** (CHW numpy).
+2. Preprocess it (normalize/resample).
+3. Run inference.
+4. Return `Embedding(data=..., meta=...)`.
+
+### Recommended pattern
+
+- Use `SensorSpec` to define:
+  - collection
+  - bands
+  - scale_m
+  - composite strategy
+- Use the provider to fetch inputs.
+
+You can follow existing implementations in:
+- `rs_embed/embedders/onthefly_*.py`
+
+!!! tip
+    Keep network IO (fetching patches) separate from model inference whenever possible.
+    This makes batching and caching much easier.
+
+---
+
+## Supporting `export_batch` Input Reuse (`input_chw`)
+
+`export_batch` can prefetch the input patch once and reuse it for both:
+
+- saving `inputs`
+- computing `embeddings`
+
+To benefit from this optimization, your `get_embedding` should follow this rule:
+
+> If `input_chw` is provided, **do not fetch inputs again**. Use `input_chw` as the model input.
+
+Example snippet:
+
+```python
+if input_chw is None:
+    # fetch from backend/provider
+    input_chw = provider.fetch_array_chw(...)
+# now preprocess + infer using input_chw
+```
+
+!!! important
+    This is the key to avoiding “download twice” when `save_inputs=True` and `save_embeddings=True`.
+
+---
+
+## True Batch Inference (`get_embeddings_batch`)
+
+`EmbedderBase.get_embeddings_batch` defaults to a Python loop calling `get_embedding`.  
+If your model supports vectorized/batched inference (common for torch models), override it:
+
+```python
+def get_embeddings_batch(
+    self,
+    *,
+    spatials,
+    temporal=None,
+    sensor=None,
+    output=OutputSpec.pooled(),
+    backend="gee",
+    device="auto",
+):
+    # 1) fetch/preprocess inputs for all spatials
+    # 2) stack into a batch tensor
+    # 3) run a single forward pass
+    # 4) split outputs back into Embedding objects
+```
+
+Best practice:
+- Batch **inference** (GPU-friendly).
+- Parallelize **IO** (provider fetch) with threads if needed.
+- Keep memory stable by using chunking (see `export_batch(chunk_size=...)`).
+
+---
+
+## Handling `OutputSpec` (pooled vs grid)
+
+`OutputSpec` controls output shape:
+
+- `OutputSpec.pooled()` → `(D,)`
+- `OutputSpec.grid(...)` → `(D, H, W)`
+
+If your model does not support a mode, raise a clear error:
+
+```python
+if output.mode == "grid" and not supported:
+    raise ValueError("model_x does not support grid output")
+```
+
+---
+
+## Optional Dependencies (Packaging)
+
+Many embedders rely on optional packages (e.g., `torch`, `ee`).  
+Follow this pattern:
+
+- Import heavy dependencies **inside** methods or within a `try/except` at module import.
+- If the dependency is missing, raise a **helpful** error (`ModelError`) explaining what to install.
+
+Example:
+
+```python
+from rs_embed.core.errors import ModelError
+
+try:
+    import torch
+except Exception as e:
+    torch = None
+    _torch_err = e
+
+def _require_torch():
+    if torch is None:
+        raise ModelError('Torch is required. Install with: pip install "rs-embed[torch]"')
+```
+
+---
+
+## Testing Your New Model
+
+### 1) Registry test (fast)
+
+Add a test ensuring registration works:
+
+```python
+from rs_embed.core.registry import get_embedder_cls
+
+def test_toy_model_registered():
+    cls = get_embedder_cls("toy_model_v1")
+    assert cls is not None
+```
+
+### 2) API-level test (recommended)
+
+```python
+from rs_embed import PointBuffer, TemporalSpec, OutputSpec, get_embedding
+
+def test_toy_model_get_embedding():
+    emb = get_embedding(
+        "toy_model_v1",
+        spatial=PointBuffer(0, 0, 1000),
+        temporal=TemporalSpec.year(2022),
+        output=OutputSpec.pooled(),
+        backend="gee",
+    )
+    assert emb.data.shape == (512,)
+```
+
+### 3) Export integration test (optional)
+
+If your model supports input reuse and batch export, add a small `export_batch` test using `monkeypatch` to avoid real network calls.  
+See existing patterns in:
+- `tests/test_export_batch.py`
+- `tests/test_gee_provider.py`
+
+Run tests:
+
+```bash
+pytest -q
+```
+
+---
+
+## Documenting the Model
+
+Update docs in one of these places:
+
+- `docs/API.md` / `docs/api.md` (add model name and usage)
+- `docs/extending.md` (this page)
+- `examples/playground.ipynb` (add a short cell demonstrating the new model)
+
+If you use MkDocs, add to `mkdocs.yml`:
+
+```yaml
+nav:
+  - Home: index.md
+  - API: api.md
+  - Extending: extending.md
+```
+
+---
+
+## Checklist
+
+Before opening a PR / shipping the model:
+
+- [ ] `@register("...")` added and discoverable via `list_models()`
+- [ ] `describe()` is fast and accurate
+- [ ] `get_embedding()` supports `input_chw` reuse (if on-the-fly)
+- [ ] clear errors for missing optional dependencies
+- [ ] unit tests added (`pytest -q` passes)
+- [ ] minimal usage example in docs or notebook
+
