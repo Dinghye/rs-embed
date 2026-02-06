@@ -10,6 +10,15 @@ pip install -e .
 
 Examples notebook: examples/playground.ipynb
 
+
+## Authenticate Google Earth Engine
+
+If you are using GEE for the first time, you need to complete the authentication process by using the following command.
+
+```bash
+earthengine authenticate
+```
+
 ### **Example A — Tessera (Precomputed)**
 
 ```python
@@ -47,3 +56,10 @@ print(emb.data.shape)  # (D, H, W)
 
 !!! tip
 If you only want to use precomputed embeddings, you can start with backend="local" and skip GEE.
+
+
+## Authenticate GEE
+
+```bash
+earthengine authenticate
+```

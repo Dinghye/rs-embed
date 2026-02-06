@@ -1,13 +1,12 @@
 <div align="center">
 
-# rs-embed
+# <img src="./docs/assets/icon.png" width="30" alt="icon" />  rs-embed
 **One line of code to get embeddings from any Remote Sensing foundation model for a given ROI.**
 
 
 <!-- Badges: replace YOUR_USER/YOUR_REPO + workflow file name -->
 [![Docs](https://img.shields.io/badge/docs-online-brightgreen)](https://dinghye.github.io/rs-embed/)
 ![Visitors](https://visitor-badge.laobi.icu/badge?page_id=Dinghye.rs-embed)
-
 ![License](https://img.shields.io/github/license/Dinghye/rs-embed)
 ![Last Commit](https://img.shields.io/github/last-commit/Dinghye/rs-embed)
 
@@ -33,6 +32,9 @@ cd rs-embed
 conda env create -f environment.yml
 conda activate rs-embed
 pip install -e .
+
+# If you are using GEE for the first time, run:
+earthengine authenticate
 ```
 
 ## Quick Example
