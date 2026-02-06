@@ -1,14 +1,100 @@
 import numpy as np
+import pytest
 
-from rs_embed.core.input_checks import inspect_chw, maybe_inspect_chw
-from rs_embed.core.input_checks import checks_enabled, checks_should_raise, checks_save_dir
+from rs_embed.core.input_checks import (
+    inspect_chw,
+    maybe_inspect_chw,
+    checks_enabled,
+    checks_should_raise,
+    checks_save_dir,
+    _safe_float,
+    _env_flag,
+)
+from rs_embed.core.specs import SensorSpec
 
+
+# ══════════════════════════════════════════════════════════════════════
+# _env_flag / _safe_float helpers
+# ══════════════════════════════════════════════════════════════════════
+
+@pytest.mark.parametrize(
+    "val,expected",
+    [("1", True), ("true", True), ("yes", True), ("on", True),
+     ("0", False), ("false", False), ("no", False), ("off", False), ("", False)],
+)
+def test_env_flag_values(monkeypatch, val, expected):
+    monkeypatch.setenv("TEST_FLAG", val)
+    assert _env_flag("TEST_FLAG") is expected
+
+
+def test_safe_float():
+    assert _safe_float(3) == 3.0
+    assert _safe_float("2.5") == 2.5
+    assert _safe_float(None) is None
+    assert _safe_float("not-a-number") is None
+
+
+# ══════════════════════════════════════════════════════════════════════
+# inspect_chw — type / shape guards
+# ══════════════════════════════════════════════════════════════════════
 
 def test_inspect_chw_non_array():
     report = inspect_chw("not-array")
     assert report["ok"] is False
     assert any("not a numpy array" in s for s in report["issues"])
 
+
+def test_inspect_chw_wrong_ndim():
+    report = inspect_chw(np.zeros((4, 4), dtype=np.float32))
+    assert report["ok"] is False
+    assert any("ndim" in s for s in report["issues"])
+
+
+def test_inspect_chw_4d():
+    report = inspect_chw(np.zeros((1, 2, 3, 4), dtype=np.float32))
+    assert report["ok"] is False
+
+
+# ══════════════════════════════════════════════════════════════════════
+# inspect_chw — channel mismatch
+# ══════════════════════════════════════════════════════════════════════
+
+def test_inspect_chw_channel_mismatch():
+    x = np.random.default_rng(0).random((3, 8, 8)).astype(np.float32)
+    report = inspect_chw(x, expected_channels=6)
+    assert report["ok"] is False
+    assert any("channel mismatch" in s for s in report["issues"])
+
+
+def test_inspect_chw_channel_match():
+    x = np.random.default_rng(0).random((3, 8, 8)).astype(np.float32)
+    report = inspect_chw(x, expected_channels=3)
+    assert report["ok"] is True
+
+
+# ══════════════════════════════════════════════════════════════════════
+# inspect_chw — NaN / Inf detection
+# ══════════════════════════════════════════════════════════════════════
+
+def test_inspect_chw_nan():
+    x = np.ones((1, 4, 4), dtype=np.float32)
+    x[0, 0, :] = np.nan
+    report = inspect_chw(x)
+    assert report["ok"] is False
+    assert any("NaN" in s for s in report["issues"])
+
+
+def test_inspect_chw_inf():
+    x = np.ones((1, 4, 4), dtype=np.float32)
+    x[0, 0, 0] = np.inf
+    report = inspect_chw(x)
+    assert report["ok"] is False
+    assert report["finite_frac"] < 1.0
+
+
+# ══════════════════════════════════════════════════════════════════════
+# inspect_chw — fill value and value range
+# ══════════════════════════════════════════════════════════════════════
 
 def test_inspect_chw_flags_fill_and_range():
     x = np.zeros((2, 4, 4), dtype=np.float32)
@@ -17,6 +103,82 @@ def test_inspect_chw_flags_fill_and_range():
     assert report.get("fill_frac", 0.0) > 0.98
     assert report.get("outside_range_frac", 0.0) > 0.9
 
+
+def test_inspect_chw_fill_value_below_threshold():
+    """fill_frac <= 0.98 should not trigger an issue for fill alone."""
+    x = np.random.default_rng(1).random((1, 10, 10)).astype(np.float32)
+    # Set ~50% to fill value
+    x[0, :5, :] = 0.0
+    report = inspect_chw(x, fill_value=0.0)
+    fill_issues = [s for s in report["issues"] if "fill_value" in s]
+    assert len(fill_issues) == 0
+
+
+def test_inspect_chw_value_range_ok():
+    rng = np.random.default_rng(2)
+    x = rng.uniform(0.0, 1.0, (2, 8, 8)).astype(np.float32)
+    report = inspect_chw(x, value_range=(0.0, 1.0))
+    range_issues = [s for s in report["issues"] if "outside range" in s]
+    assert len(range_issues) == 0
+
+
+# ══════════════════════════════════════════════════════════════════════
+# inspect_chw — constant band detection
+# ══════════════════════════════════════════════════════════════════════
+
+def test_inspect_chw_constant_band():
+    x = np.ones((2, 4, 4), dtype=np.float32)
+    report = inspect_chw(x)
+    assert report["ok"] is False
+    assert any("near-constant" in s for s in report["issues"])
+
+
+def test_inspect_chw_one_constant_one_varying():
+    x = np.ones((2, 4, 4), dtype=np.float32)
+    x[1] = np.random.default_rng(0).random((4, 4)).astype(np.float32)
+    report = inspect_chw(x)
+    assert report["ok"] is False
+    assert any("near-constant" in s for s in report["issues"])
+
+
+# ══════════════════════════════════════════════════════════════════════
+# inspect_chw — band stats and report fields
+# ══════════════════════════════════════════════════════════════════════
+
+def test_inspect_chw_band_stats():
+    rng = np.random.default_rng(42)
+    x = rng.uniform(0, 10, (3, 16, 16)).astype(np.float32)
+    report = inspect_chw(x)
+    assert len(report["band_min"]) == 3
+    assert len(report["band_max"]) == 3
+    assert len(report["band_mean"]) == 3
+    assert len(report["band_std"]) == 3
+    for i in range(3):
+        assert report["band_min"][i] <= report["band_mean"][i] <= report["band_max"][i]
+
+
+def test_inspect_chw_has_shape_and_dtype():
+    x = np.zeros((1, 2, 2), dtype=np.float64)
+    report = inspect_chw(x)
+    assert report["shape"] == (1, 2, 2)
+    assert "float64" in report["dtype"]
+
+
+# ══════════════════════════════════════════════════════════════════════
+# inspect_chw — downsampling on large arrays
+# ══════════════════════════════════════════════════════════════════════
+
+def test_inspect_chw_downsample():
+    rng = np.random.default_rng(7)
+    x = rng.random((3, 200, 200)).astype(np.float32)
+    report = inspect_chw(x, max_pixels_for_full_stats=1000)
+    assert "downsample_stride" in report
+    assert report["downsample_stride"] > 1
+
+
+# ══════════════════════════════════════════════════════════════════════
+# maybe_inspect_chw
+# ══════════════════════════════════════════════════════════════════════
 
 def test_maybe_inspect_chw_disabled(monkeypatch):
     monkeypatch.delenv("RS_EMBED_CHECK_INPUT", raising=False)
@@ -38,6 +200,25 @@ def test_maybe_inspect_chw_enabled_meta(monkeypatch):
     assert meta.get("input_checks_config", {}).get("enabled") is True
 
 
+def test_maybe_inspect_chw_sensor_flag():
+    """Enable via SensorSpec.check_input without env var."""
+    sensor = SensorSpec(
+        collection="C", bands=("B1",), check_input=True, check_raise=False,
+    )
+    meta = {}
+    report = maybe_inspect_chw(
+        np.zeros((1, 2, 2), dtype=np.float32),
+        sensor=sensor,
+        meta=meta,
+    )
+    assert report is not None
+    assert meta["input_checks_config"]["raise"] is False
+
+
+# ══════════════════════════════════════════════════════════════════════
+# checks_enabled / checks_should_raise / checks_save_dir
+# ══════════════════════════════════════════════════════════════════════
+
 def test_checks_flags_env_override(monkeypatch):
     monkeypatch.setenv("RS_EMBED_CHECK_INPUT", "1")
     monkeypatch.setenv("RS_EMBED_CHECK_RAISE", "0")
@@ -45,6 +226,29 @@ def test_checks_flags_env_override(monkeypatch):
     assert checks_should_raise() is False
 
 
+def test_checks_should_raise_default_no_env(monkeypatch):
+    monkeypatch.delenv("RS_EMBED_CHECK_RAISE", raising=False)
+    # No sensor → defaults to True
+    assert checks_should_raise() is True
+
+
+def test_checks_should_raise_sensor_override(monkeypatch):
+    monkeypatch.delenv("RS_EMBED_CHECK_RAISE", raising=False)
+    sensor = SensorSpec(collection="C", bands=("B1",), check_raise=False)
+    assert checks_should_raise(sensor) is False
+
+
 def test_checks_save_dir_env(monkeypatch):
     monkeypatch.setenv("RS_EMBED_CHECK_SAVE_DIR", "/tmp/rs_embed_checks")
     assert checks_save_dir() == "/tmp/rs_embed_checks"
+
+
+def test_checks_save_dir_sensor(monkeypatch):
+    monkeypatch.delenv("RS_EMBED_CHECK_SAVE_DIR", raising=False)
+    sensor = SensorSpec(collection="C", bands=("B1",), check_save_dir="/data/out")
+    assert checks_save_dir(sensor) == "/data/out"
+
+
+def test_checks_save_dir_none(monkeypatch):
+    monkeypatch.delenv("RS_EMBED_CHECK_SAVE_DIR", raising=False)
+    assert checks_save_dir() is None
