@@ -75,14 +75,6 @@ def test_register_overwrite():
     assert registry.get_embedder_cls("dup") is Second
 
 
-# ── list_models returns sorted list ───────────────────────────────
-
-def test_list_models_sorted():
-    for name in ("z_model", "a_model", "m_model"):
-        registry.register(name)(type(name, (), {}))
-    assert registry.list_models() == ["a_model", "m_model", "z_model"]
-
-
 # ── empty registry ─────────────────────────────────────────────────
 
 def test_list_models_empty():

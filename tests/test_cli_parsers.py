@@ -204,3 +204,54 @@ def test_inspect_gee_missing_collection():
         cli.build_parser().parse_args(
             ["inspect-gee", "--bands", "B1", "--bbox", "0", "0", "1", "1"]
         )
+
+
+# ══════════════════════════════════════════════════════════════════════
+# _parse_models / _parse_bands — edge cases
+# ══════════════════════════════════════════════════════════════════════
+
+def test_parse_models_empty_raises():
+    with pytest.raises(Exception):
+        cli._parse_models("")
+
+
+def test_parse_bands_whitespace():
+    assert cli._parse_bands("  B4 , B3 , B2  ") == ("B4", "B3", "B2")
+
+
+# ══════════════════════════════════════════════════════════════════════
+# export-npz flag parsing
+# ══════════════════════════════════════════════════════════════════════
+
+def test_export_npz_flag_options():
+    args = cli.build_parser().parse_args(
+        ["export-npz", "--models", "tessera",
+         "--out", "/tmp/out.npz",
+         "--bbox", "0", "0", "1", "1",
+         "--no-inputs", "--no-embeddings", "--no-json", "--fail-on-bad-input"]
+    )
+    assert args.no_inputs is True
+    assert args.no_embeddings is True
+    assert args.no_json is True
+    assert args.fail_on_bad_input is True
+
+
+def test_export_npz_grid_output():
+    args = cli.build_parser().parse_args(
+        ["export-npz", "--models", "tessera",
+         "--out", "/tmp/out.npz",
+         "--bbox", "0", "0", "1", "1",
+         "--output", "grid"]
+    )
+    assert args.output == "grid"
+
+
+def test_export_npz_custom_backend_device():
+    args = cli.build_parser().parse_args(
+        ["export-npz", "--models", "tessera",
+         "--out", "/tmp/out.npz",
+         "--bbox", "0", "0", "1", "1",
+         "--backend", "local", "--device", "cpu"]
+    )
+    assert args.backend == "local"
+    assert args.device == "cpu"

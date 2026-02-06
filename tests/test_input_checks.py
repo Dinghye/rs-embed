@@ -7,6 +7,7 @@ from rs_embed.core.input_checks import (
     checks_enabled,
     checks_should_raise,
     checks_save_dir,
+    save_quicklook_rgb,
     _safe_float,
     _env_flag,
 )
@@ -252,3 +253,87 @@ def test_checks_save_dir_sensor(monkeypatch):
 def test_checks_save_dir_none(monkeypatch):
     monkeypatch.delenv("RS_EMBED_CHECK_SAVE_DIR", raising=False)
     assert checks_save_dir() is None
+
+
+# ══════════════════════════════════════════════════════════════════════
+# inspect_chw — histogram generation
+# ══════════════════════════════════════════════════════════════════════
+
+def test_inspect_chw_histogram_keys():
+    """Inspect report should include histogram data for well-behaved input."""
+    rng = np.random.default_rng(10)
+    x = rng.uniform(0, 10, (2, 16, 16)).astype(np.float32)
+    report = inspect_chw(x, hist_bins=8)
+    # At least one histogram representation should exist
+    assert "hist_bins" in report or "hist" in report
+
+
+def test_inspect_chw_histogram_with_clip_range():
+    rng = np.random.default_rng(11)
+    x = rng.uniform(0, 100, (1, 8, 8)).astype(np.float32)
+    report = inspect_chw(x, hist_bins=4, hist_clip_range=(10.0, 90.0))
+    assert "hist_bins" in report or "hist" in report
+
+
+def test_inspect_chw_no_histogram_when_bins_zero():
+    rng = np.random.default_rng(12)
+    x = rng.random((1, 4, 4)).astype(np.float32)
+    report = inspect_chw(x, hist_bins=0)
+    assert "hist_bins" not in report
+    assert "band_hist" not in report
+
+
+# ══════════════════════════════════════════════════════════════════════
+# inspect_chw — quantiles
+# ══════════════════════════════════════════════════════════════════════
+
+def test_inspect_chw_quantiles_present():
+    rng = np.random.default_rng(13)
+    x = rng.random((2, 8, 8)).astype(np.float32)
+    report = inspect_chw(x, quantiles=(0.25, 0.5, 0.75))
+    assert "band_quantiles" in report
+    assert "p25" in report["band_quantiles"]
+    assert "p50" in report["band_quantiles"]
+    assert "p75" in report["band_quantiles"]
+
+
+def test_inspect_chw_no_quantiles():
+    rng = np.random.default_rng(14)
+    x = rng.random((1, 4, 4)).astype(np.float32)
+    report = inspect_chw(x, quantiles=())
+    assert "band_quantiles" not in report
+
+
+# ══════════════════════════════════════════════════════════════════════
+# inspect_chw — zero-size spatial
+# ══════════════════════════════════════════════════════════════════════
+
+def test_inspect_chw_zero_spatial():
+    x = np.zeros((2, 0, 4), dtype=np.float32)
+    report = inspect_chw(x)
+    assert report["ok"] is False
+    assert any("non-positive" in s for s in report["issues"])
+
+
+# ══════════════════════════════════════════════════════════════════════
+# save_quicklook_rgb
+# ══════════════════════════════════════════════════════════════════════
+
+def test_save_quicklook_rgb_creates_file(tmp_path):
+    rng = np.random.default_rng(20)
+    x = rng.random((3, 16, 16)).astype(np.float32)
+    out = str(tmp_path / "ql.png")
+    save_quicklook_rgb(x, path=out)
+    import os
+    assert os.path.isfile(out)
+
+
+def test_save_quicklook_rgb_wrong_ndim():
+    with pytest.raises(ValueError, match="Expected CHW"):
+        save_quicklook_rgb(np.zeros((4, 4), dtype=np.float32), path="/tmp/bad.png")
+
+
+def test_save_quicklook_rgb_band_out_of_range():
+    x = np.zeros((2, 4, 4), dtype=np.float32)
+    with pytest.raises(ValueError, match="out of range"):
+        save_quicklook_rgb(x, path="/tmp/bad.png", bands=(0, 1, 2))
