@@ -40,8 +40,8 @@ def checks_enabled(sensor: Any = None) -> bool:
 
 def checks_should_raise(sensor: Any = None) -> bool:
     """Return True if embedders should raise on detected issues."""
-    if _env_flag("RS_EMBED_CHECK_RAISE", "1"):
-        return True
+    if "RS_EMBED_CHECK_RAISE" in os.environ:
+        return _env_flag("RS_EMBED_CHECK_RAISE", "1")
     return bool(getattr(sensor, "check_raise", True))
 
 
