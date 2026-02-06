@@ -143,6 +143,7 @@ get_embedding(
 Computes the embedding for a single ROI.
 
 **Parameters**
+
 - `model`: model ID (see the *Supported Models* page, or use `rs_embed.core.registry.list_models()`)
 - `spatial`: `BBox` or `PointBuffer`
 - `temporal`: `TemporalSpec` or `None`
@@ -152,6 +153,7 @@ Computes the embedding for a single ROI.
 - `device`: `"auto" / "cpu" / "cuda"` (if the model depends on torch)
 
 **Returns**
+
 - `Embedding`
 
 **Example**
@@ -193,10 +195,12 @@ get_embeddings_batch(
 Batch-computes embeddings for multiple ROIs using the same embedder instance (often more efficient than looping over `get_embedding`).
 
 **Parameters**
+
 - `spatials`: a non-empty `List[SpatialSpec]`
 - Others are the same as `get_embedding`
 
 **Returns**
+
 - `List[Embedding]` (same length as `spatials`)
 
 **Example**
@@ -249,6 +253,7 @@ export_batch(
 - `out_path` mode: merge into a single output file (good for fewer points and portability)
 
 **Parameters**
+
 - `spatials`: non-empty list
 - `temporal`: can be `None` (some models don’t require time)
 - `models`: non-empty list of model IDs
@@ -265,6 +270,7 @@ export_batch(
 - `num_workers`: concurrency for GEE patch prefetching (ThreadPool)
 
 **Returns**
+
 - `out_dir` mode: `List[dict]` (manifest for each point)
 - `out_path` mode: `dict` (combined manifest)
 
@@ -357,6 +363,7 @@ inspect_gee_patch(
 Downloads a GEE patch and performs input quality checks (**without running the model**).
 
 **Returns**
+
 - A JSON-serializable dict:
   - `ok`: bool
   - `report`: stats/check report
