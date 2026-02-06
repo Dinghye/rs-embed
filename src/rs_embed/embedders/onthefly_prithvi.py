@@ -290,6 +290,7 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
             output: OutputSpec,
             backend: str,
             device: str = "auto",
+            input_chw: Optional[np.ndarray] = None,
         ) -> Embedding:
             if backend.lower() not in ("gee", "auto"):
                 raise ModelError("prithvi_eo_v2_s2_6b expects backend='gee' (or 'auto').")
@@ -325,15 +326,26 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
             # Fetch S2 6-band patch from GEE
             provider = self._get_provider()
 
-            x_chw = _fetch_s2_prithvi6_chw(
-                provider,
-                spatial=spatial,
-                temporal=t,
-                scale_m=int(sensor.scale_m),
-                cloudy_pct=int(sensor.cloudy_pct),
-                composite=str(sensor.composite),
-                fill_value=float(sensor.fill_value),
-            )
+            # Fetch S2 6-band patch from GEE (optionally reuse pre-fetched raw patch)
+            if input_chw is None:
+                x_chw = _fetch_s2_prithvi6_chw(
+                    provider,
+                    spatial=spatial,
+                    temporal=t,
+                    scale_m=int(sensor.scale_m),
+                    cloudy_pct=int(sensor.cloudy_pct),
+                    composite=str(sensor.composite),
+                    fill_value=float(sensor.fill_value),
+                )
+            else:
+                # input_chw expected to be raw S2 SR values (0..10000) in band order sensor.bands
+                if input_chw.ndim != 3 or input_chw.shape[0] != 6:
+                    raise ModelError(
+                        f"input_chw must be CHW with 6 bands for prithvi, got {getattr(input_chw,'shape',None)}"
+                    )
+                x_chw = input_chw.astype(np.float32) / 10000.0
+                x_chw = np.clip(x_chw, 0.0, 1.0)
+                x_chw = np.nan_to_num(x_chw, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
 
             # Optional: inspect on-the-fly GEE input
             from ..core.input_checks import (

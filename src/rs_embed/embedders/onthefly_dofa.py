@@ -382,7 +382,8 @@ class DOFAEmbedder(EmbedderBase):
         output: OutputSpec,
         backend: str,
         device: str = "auto",
-    ) -> Embedding:
+            input_chw: Optional[np.ndarray] = None,
+        ) -> Embedding:
         backend_l = backend.lower().strip()
         variant = getattr(sensor, "variant", "base") if sensor else "base"
         image_size = 224
@@ -455,20 +456,29 @@ class DOFAEmbedder(EmbedderBase):
                 )
             wavelengths_um = [float(v) for v in wavelengths_um]
 
-            provider = GEEProvider(auto_auth=True)
-            provider.ensure_ready()
+            if input_chw is None:
+                provider = GEEProvider(auto_auth=True)
+                provider.ensure_ready()
 
-            x_chw, gee_meta = _fetch_gee_multiband_sr_chw(
-                provider,
-                spatial,
-                temporal,
-                collection=str(collection),
-                bands=bands,
-                scale_m=scale_m,
-                cloudy_pct=cloudy_pct,
-                composite=composite,
-                default_value=0.0,
-            )
+                x_chw, gee_meta = _fetch_gee_multiband_sr_chw(
+                    provider,
+                    spatial,
+                    temporal,
+                    collection=str(collection),
+                    bands=bands,
+                    scale_m=scale_m,
+                    cloudy_pct=cloudy_pct,
+                    composite=composite,
+                    default_value=0.0,
+                )
+            else:
+                # input_chw expected to be raw SR values (0..10000) in band order `bands`
+                if input_chw.ndim != 3 or int(input_chw.shape[0]) != len(bands):
+                    raise ModelError(
+                        f"input_chw must be CHW with {len(bands)} bands for DOFA, got {getattr(input_chw,'shape',None)}"
+                    )
+                x_chw = np.clip(input_chw.astype(np.float32) / 10000.0, 0.0, 1.0).astype(np.float32)
+                gee_meta = {"raw_chw_shape": tuple(x_chw.shape), "input_override": True}
 
             # Optional: inspect on-the-fly GEE input
             from ..core.input_checks import maybe_inspect_chw, checks_should_raise

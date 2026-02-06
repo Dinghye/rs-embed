@@ -461,6 +461,7 @@ class RemoteCLIPS2RGBEmbedder(EmbedderBase):
             output: OutputSpec,
             backend: str,
             device: str = "auto",
+            input_chw: Optional[np.ndarray] = None,
         ) -> Embedding:
             if backend.lower() != "gee":
                 raise ModelError("remoteclip_s2rgb only supports backend='gee' in v0.1.")
@@ -485,10 +486,18 @@ class RemoteCLIPS2RGBEmbedder(EmbedderBase):
 
             image_size = 224
 
-            # fetch image
-            s2_rgb_chw = _fetch_s2_rgb_chw(
-                provider, spatial, t, scale_m=scale_m, cloudy_pct=cloudy_pct, composite=composite
-            )
+            # fetch image (optionally reuse pre-fetched raw patch)
+            if input_chw is None:
+                s2_rgb_chw = _fetch_s2_rgb_chw(
+                    provider, spatial, t, scale_m=scale_m, cloudy_pct=cloudy_pct, composite=composite
+                )
+            else:
+                # input_chw is expected to be raw S2 SR values in the order (B4,B3,B2)
+                if input_chw.ndim != 3 or input_chw.shape[0] != 3:
+                    raise ModelError(
+                        f"input_chw must be CHW with 3 bands for remoteclip_s2rgb, got {getattr(input_chw,'shape',None)}"
+                    )
+                s2_rgb_chw = np.clip(input_chw.astype(np.float32) / 10000.0, 0.0, 1.0)
 
             # Optional: inspect on-the-fly GEE input
             from ..core.input_checks import (

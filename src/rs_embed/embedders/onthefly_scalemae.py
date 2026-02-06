@@ -14,6 +14,7 @@ from .base import EmbedderBase
 
 from ._vit_mae_utils import (
     fetch_s2_rgb_u8_from_gee,
+    resize_rgb_u8,
     temporal_to_range,
     pool_from_tokens,
     tokens_to_grid_dhw,
@@ -248,6 +249,7 @@ class ScaleMAERGBEmbedder(EmbedderBase):
             output: OutputSpec,
             backend: str,
             device: str = "auto",
+            input_chw: Optional[np.ndarray] = None,
         ) -> Embedding:
             if backend.lower() not in ("gee", "auto"):
                 raise ModelError("scalemae_rgb expects backend='gee' (or 'auto').")
@@ -265,13 +267,26 @@ class ScaleMAERGBEmbedder(EmbedderBase):
             image_size = int(os.environ.get("RS_EMBED_SCALEMAE_IMG", str(self.DEFAULT_IMAGE_SIZE)))
 
             t = temporal_to_range(temporal)
-            rgb_u8 = fetch_s2_rgb_u8_from_gee(
-                spatial=spatial,
-                temporal=t,
-                sensor=sensor,
-                out_size=image_size,
-                provider=self._get_provider(),
-            )
+            # Fetch RGB patch (optionally reuse pre-fetched raw patch)
+            if input_chw is None:
+                rgb_u8 = fetch_s2_rgb_u8_from_gee(
+                    spatial=spatial,
+                    temporal=t,
+                    sensor=sensor,
+                    out_size=image_size,
+                    provider=self._get_provider(),
+                )
+            else:
+                # input_chw expected to be raw S2 SR values in band order (B4,B3,B2)
+                if input_chw.ndim != 3 or input_chw.shape[0] != 3:
+                    raise ModelError(
+                        "input_chw must be CHW with 3 bands for scalemae_rgb, got {shape}".format(
+                            shape=getattr(input_chw, "shape", None),
+                        )
+                    )
+                s2_chw = np.clip(input_chw.astype(np.float32) / 10000.0, 0.0, 1.0)
+                rgb_u8 = (s2_chw.transpose(1, 2, 0) * 255.0).astype(np.uint8)
+                rgb_u8 = resize_rgb_u8(rgb_u8, image_size)
 
             model, wmeta = _load_scalemae(model_id=model_id, device=device)
             dev = wmeta.get("device", device)

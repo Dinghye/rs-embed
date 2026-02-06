@@ -52,7 +52,7 @@ emb = get_embedding(
     backend="local",
 )
 
-print(emb.data.shape)  # (D,)
+print(emb.data.shape)  
 ```
 
 ## Learn More

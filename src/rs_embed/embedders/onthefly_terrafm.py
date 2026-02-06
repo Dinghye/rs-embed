@@ -373,6 +373,7 @@ class TerraFMBEmbedder(EmbedderBase):
             output: OutputSpec,
             backend: str,
             device: str = "auto",
+            input_chw: Optional[np.ndarray] = None,
         ) -> Embedding:
             backend_l = backend.lower()
 
@@ -431,17 +432,43 @@ class TerraFMBEmbedder(EmbedderBase):
 
                 provider = self._get_provider()
 
-                if modality == "s2":
-                    x_chw = _fetch_s2_sr_12_chw(
-                        provider, spatial, temporal, scale_m=scale_m, cloudy_pct=cloudy_pct, composite=composite
-                    )  # [12,H,W]
-                elif modality == "s1":
-                    x_chw = _fetch_s1_vvvh_chw(
-                        provider, spatial, temporal, scale_m=scale_m, orbit=orbit,
-                        use_float_linear=use_float_linear, composite=composite
-                    )  # [2,H,W]
+                if input_chw is None:
+                    if modality == "s2":
+                        x_chw = _fetch_s2_sr_12_chw(
+                            provider, spatial, temporal, scale_m=scale_m, cloudy_pct=cloudy_pct, composite=composite
+                        )  # [12,H,W]
+                    elif modality == "s1":
+                        x_chw = _fetch_s1_vvvh_chw(
+                            provider,
+                            spatial,
+                            temporal,
+                            scale_m=scale_m,
+                            orbit=orbit,
+                            use_float_linear=use_float_linear,
+                            composite=composite,
+                        )  # [2,H,W]
+                    else:
+                        raise ModelError("modality must be 's2' or 's1'.")
                 else:
-                    raise ModelError("modality must be 's2' or 's1'.")
+                    # input_chw is expected to be raw provider values in the order implied by `sensor.bands`
+                    if modality == "s2":
+                        if input_chw.ndim != 3 or int(input_chw.shape[0]) != 12:
+                            raise ModelError(
+                                f"input_chw must be CHW with 12 bands for TerraFM S2, got {getattr(input_chw,'shape',None)}"
+                            )
+                        x_chw = np.clip(input_chw.astype(np.float32) / 10000.0, 0.0, 1.0)
+                    elif modality == "s1":
+                        if input_chw.ndim != 3 or int(input_chw.shape[0]) != 2:
+                            raise ModelError(
+                                f"input_chw must be CHW with 2 bands (VV,VH) for TerraFM S1, got {getattr(input_chw,'shape',None)}"
+                            )
+                        x = input_chw.astype(np.float32)
+                        x = np.log1p(np.maximum(x, 0.0))
+                        denom = np.percentile(x, 99) if np.isfinite(x).all() else 1.0
+                        denom = float(denom) if denom > 0 else 1.0
+                        x_chw = np.clip(x / denom, 0.0, 1.0).astype(np.float32)
+                    else:
+                        raise ModelError("modality must be 's2' or 's1'.")
 
                 # Optional: inspect on-the-fly GEE input
                 from ..core.input_checks import maybe_inspect_chw, checks_should_raise

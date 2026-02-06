@@ -31,7 +31,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 
-from .api import get_embedding
+from .api import get_embedding, _get_embedder_bundle_cached, _sensor_key
 from .core.embedding import Embedding
 from .core.registry import get_embedder_cls
 from .core.specs import OutputSpec, SensorSpec, SpatialSpec, TemporalSpec
@@ -177,6 +177,7 @@ def _embedding_to_numpy(emb: Embedding) -> np.ndarray:
 # Public API
 # -----------------------------------------------------------------------------
 
+
 def export_npz(
     *,
     spatial: SpatialSpec,
@@ -193,170 +194,32 @@ def export_npz(
     save_manifest: bool = True,
     fail_on_bad_input: bool = False,
 ) -> Dict[str, Any]:
-    """Export inputs + embeddings for one spatial/temporal query.
+    """Export inputs + embeddings for one spatial/temporal query as a single `.npz`.
 
-    Parameters
-    ----------
-    spatial, temporal
-        Query area and time window.
-    models
-        List of model IDs to run.
-    out_path
-        Path to the `.npz` file to write. A `.json` manifest will be written
-        next to it if `save_manifest=True`.
-    sensor
-        Optional SensorSpec override applied to *all* models (both for
-        input fetching and embedding computation). If you pass this, make sure
-        it matches each model's expectations.
-    per_model_sensors
-        Optional per-model SensorSpec overrides. Overrides `sensor` for the
-        specified model IDs.
-    save_inputs
-        If True, saves raw GEE patches (CHW) for on-the-fly models.
-    save_embeddings
-        If True, saves embedding arrays for each model.
-    fail_on_bad_input
-        If True, raise if the input inspection report returns ok=False.
-
-    Returns
-    -------
-    dict
-        The JSON-serializable manifest (also written to disk if enabled).
+    This is a thin wrapper over :func:`rs_embed.api.export_batch` (format='npz') and
+    benefits from all the same performance improvements (embedder caching and
+    avoiding duplicate GEE downloads when saving inputs + embeddings).
     """
+    from .api import export_batch
 
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     if not out_path.endswith(".npz"):
         out_path = out_path + ".npz"
 
-    per_model_sensors = per_model_sensors or {}
+    return export_batch(
+        spatials=[spatial],
+        temporal=temporal,
+        models=models,
+        out_path=out_path,
+        backend=backend,
+        device=device,
+        output=output,
+        sensor=sensor,
+        per_model_sensors=per_model_sensors,
+        format="npz",
+        save_inputs=save_inputs,
+        save_embeddings=save_embeddings,
+        save_manifest=save_manifest,
+        fail_on_bad_input=fail_on_bad_input,
+    )
 
-    arrays: Dict[str, np.ndarray] = {}
-    manifest: Dict[str, Any] = {
-        "created_at": _utc_ts(),
-        "backend": backend,
-        "device": device,
-        "models": [],
-        "spatial": _jsonable(spatial),
-        "temporal": _jsonable(temporal),
-        "output": _jsonable(output),
-    }
-
-    # Best-effort package version
-    try:
-        from importlib.metadata import version
-
-        manifest["package_version"] = version("rs-embed")
-    except Exception:
-        manifest["package_version"] = None
-
-    # Cache raw inputs so multiple models sharing the same SensorSpec do not re-download.
-    _input_cache: Dict[str, Tuple[np.ndarray, Dict[str, Any]]] = {}
-
-    for model_id in models:
-        model_entry: Dict[str, Any] = {"model": model_id}
-
-        # Resolve sensor for this model
-        m_sensor = per_model_sensors.get(model_id) or sensor or _default_sensor_for_model(model_id)
-        model_entry["sensor"] = _jsonable(m_sensor)
-
-        # 1) Save raw input patch (on-the-fly only)
-        input_report = None
-        input_key = None
-        if save_inputs and backend.lower() == "gee" and m_sensor is not None:
-            # Use inspect_gee_patch to fetch raw patch and run checks (cached by query + SensorSpec).
-            cache_obj = {
-                'backend': 'gee',
-                'spatial': _jsonable(spatial),
-                'temporal': _jsonable(temporal),
-                'sensor': _jsonable(m_sensor),
-            }
-            cache_key = json.dumps(cache_obj, ensure_ascii=False, sort_keys=True)
-            if cache_key in _input_cache:
-                x_chw, input_report = _input_cache[cache_key]
-            else:
-                insp = inspect_gee_patch(
-                    spatial=spatial,
-                    temporal=temporal,
-                    sensor=m_sensor,
-                    backend='gee',
-                    name=f'input_{_sanitize_key(model_id)}',
-                    value_range=None,
-                    return_array=True,
-                )
-                x_chw = insp.pop('array_chw')
-                input_report = insp
-                _input_cache[cache_key] = (np.asarray(x_chw, dtype=np.float32), input_report)
-
-            input_key = f"input_chw__{_sanitize_key(model_id)}"
-            arrays[input_key] = np.asarray(x_chw, dtype=np.float32)
-
-            model_entry["input"] = {
-                "npz_key": input_key,
-                "dtype": str(arrays[input_key].dtype),
-                "shape": list(arrays[input_key].shape),
-                "sha1": _sha1(arrays[input_key]),
-                "inspection": _jsonable(input_report),
-            }
-
-            if fail_on_bad_input and input_report is not None and (not bool(input_report.get("ok", True))):
-                issues = (input_report.get("report", {}) or {}).get("issues", [])
-                raise RuntimeError(f"Input inspection failed for model={model_id}: {issues}")
-
-        else:
-            model_entry["input"] = None
-
-        # 2) Save embeddings
-        if save_embeddings:
-            emb = get_embedding(
-                model_id,
-                spatial=spatial,
-                temporal=temporal,
-                sensor=m_sensor,
-                output=output,
-                backend=backend,
-                device=device,
-            )
-            e_np = _embedding_to_numpy(emb)
-            emb_key = f"embedding__{_sanitize_key(model_id)}"
-            arrays[emb_key] = e_np
-
-            model_entry["embedding"] = {
-                "npz_key": emb_key,
-                "dtype": str(e_np.dtype),
-                "shape": list(e_np.shape),
-                "sha1": _sha1(e_np),
-            }
-            # Store meta (sanitized)
-            model_entry["meta"] = _jsonable(emb.meta)
-
-        else:
-            model_entry["embedding"] = None
-            model_entry["meta"] = None
-
-        # Include describe() for transparency
-        try:
-            cls = get_embedder_cls(model_id)
-            model_entry["describe"] = _jsonable(cls().describe())
-        except Exception as e:
-            model_entry["describe"] = {"error": repr(e)}
-
-        manifest["models"].append(model_entry)
-
-    # Write npz
-    np.savez_compressed(out_path, **arrays)
-
-    # Write manifest
-    if save_manifest:
-        json_path = os.path.splitext(out_path)[0] + ".json"
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(_jsonable(manifest), f, ensure_ascii=False, indent=2)
-        manifest["manifest_path"] = json_path
-
-    manifest["npz_path"] = out_path
-    manifest["npz_keys"] = sorted(list(arrays.keys()))
-
-    return _jsonable(manifest)
-
-
-# Backwards-compatible alias (internal)
-export_to_npz = export_npz
