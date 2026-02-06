@@ -87,6 +87,56 @@ def _tile_bounds(transform, w: int, h: int) -> Tuple[float, float, float, float]
     return left, bottom, right, top
 
 
+def _reproject_tile(
+    hwc: np.ndarray,
+    src_transform: Any,
+    src_crs: str,
+    dst_crs: str,
+    target_res: Optional[Tuple[float, float]] = None,
+) -> Tuple[np.ndarray, Any]:
+    """Reproject an HWC embedding tile to *dst_crs* via nearest-neighbour.
+
+    If *target_res* is given as ``(pixel_width, pixel_height)`` (both
+    positive), the output is snapped to that resolution so tiles can be
+    mosaicked without sub-pixel drift.
+    """
+    try:
+        from rasterio.warp import reproject, Resampling, calculate_default_transform
+        from rasterio.transform import array_bounds
+    except ImportError as exc:
+        raise ModelError(
+            "Mixed-CRS mosaic requires rasterio.  Install: pip install rasterio"
+        ) from exc
+
+    h, w, d = hwc.shape
+    src_bounds = array_bounds(h, w, src_transform)
+
+    kwargs: Dict[str, Any] = {}
+    if target_res is not None:
+        kwargs["resolution"] = (abs(target_res[0]), abs(target_res[1]))
+
+    dst_transform, dst_w, dst_h = calculate_default_transform(
+        src_crs, dst_crs, w, h, *src_bounds, **kwargs,
+    )
+
+    dst_hwc = np.zeros((dst_h, dst_w, d), dtype=np.float32)
+    for i in range(d):
+        src_band = np.ascontiguousarray(hwc[:, :, i])
+        dst_band = np.zeros((dst_h, dst_w), dtype=np.float32)
+        reproject(
+            source=src_band,
+            destination=dst_band,
+            src_transform=src_transform,
+            src_crs=src_crs,
+            dst_transform=dst_transform,
+            dst_crs=dst_crs,
+            resampling=Resampling.nearest,
+        )
+        dst_hwc[:, :, i] = dst_band
+
+    return dst_hwc, dst_transform
+
+
 def _reproject_bbox_4326_to(tile_crs_str: str, bbox: BBox) -> Tuple[float, float, float, float]:
     # returns (xmin, ymin, xmax, ymax) in tile CRS
     if str(tile_crs_str).upper() in ("EPSG:4326", "WGS84", "CRS:84"):
@@ -111,33 +161,54 @@ def _mosaic_and_crop_strict_roi(
     tiles_rows: list of (year, tile_lon, tile_lat, embedding_array, crs, transform)
     Return cropped CHW + meta.
     """
+    if not tiles_rows:
+        raise ModelError("No tiles fetched; cannot mosaic.")
+
+    # --- detect mixed CRS and choose the most-common one as target ---
+    crs_counts: Dict[str, int] = {}
+    for _, _, _, _, crs, _ in tiles_rows:
+        key = str(crs)
+        crs_counts[key] = crs_counts.get(key, 0) + 1
+    target_crs = max(crs_counts, key=lambda k: crs_counts[k])
+    mixed_crs = len(crs_counts) > 1
+
+    # when CRS differ, lock the target pixel size from a native tile
+    target_res: Optional[Tuple[float, float]] = None
+    if mixed_crs:
+        for _, _, _, _, crs, transform in tiles_rows:
+            if str(crs) == target_crs:
+                target_res = (abs(float(transform.a)), abs(float(transform.e)))
+                break
+
     # normalize + collect tile meta
     hwc_list = []
-    crs0 = None
+    crs0 = target_crs
     a0 = e0 = None
 
     bounds_list = []
     for year, tlon, tlat, emb, crs, transform in tiles_rows:
         _assert_north_up(transform)
         hwc = _to_hwc(emb)
+
+        # reproject tile to target CRS when CRS differ
+        if str(crs) != target_crs:
+            hwc, transform = _reproject_tile(
+                hwc, transform, str(crs), target_crs, target_res=target_res,
+            )
+
         h, w, d = hwc.shape
         left, bottom, right, top = _tile_bounds(transform, w, h)
 
-        if crs0 is None:
-            crs0 = crs
+        if a0 is None:
             a0 = float(transform.a)
             e0 = float(transform.e)
         else:
-            if str(crs) != str(crs0):
-                raise ModelError("Tiles have different CRS; cannot mosaic.")
-            if abs(float(transform.a) - a0) > 1e-12 or abs(float(transform.e) - e0) > 1e-12:
+            # reprojected tiles may have sub-pixel rounding; use 1e-6 tolerance
+            if abs(float(transform.a) - a0) > 1e-6 or abs(float(transform.e) - e0) > 1e-6:
                 raise ModelError("Tiles have different resolution; cannot mosaic without resampling.")
 
         hwc_list.append((hwc, transform, (left, bottom, right, top)))
         bounds_list.append((left, bottom, right, top))
-
-    if crs0 is None:
-        raise ModelError("No tiles fetched; cannot mosaic.")
 
     # global mosaic bounds
     left = min(b[0] for b in bounds_list)
