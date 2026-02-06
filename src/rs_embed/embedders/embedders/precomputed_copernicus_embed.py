@@ -12,7 +12,6 @@ from ..core.specs import BBox, PointBuffer, SpatialSpec, TemporalSpec, SensorSpe
 from .base import EmbedderBase
 from .meta_utils import build_meta
 
-SUPPORTED_YEARS = {2021}
 
 def _buffer_m_to_deg(lat: float, buffer_m: float) -> Tuple[float, float]:
     """
@@ -85,7 +84,20 @@ class CopernicusEmbedder(EmbedderBase):
             ],
         }
 
-    def get_embedding(
+    
+    def __init__(self) -> None:
+        self._ds_cache: Dict[str, Any] = {}
+
+    def _get_dataset(self, *, data_dir: str, download: bool):
+        # TorchGeo dataset does indexing/metadata checks; cache per data_dir.
+        key = f"{data_dir}|download={int(bool(download))}"
+        if key not in self._ds_cache:
+            from torchgeo.datasets import CopernicusEmbed
+            os.makedirs(data_dir, exist_ok=True)
+            self._ds_cache[key] = CopernicusEmbed(paths=data_dir, download=download)
+        return self._ds_cache[key]
+
+def get_embedding(
         self,
         *,
         spatial: SpatialSpec,
@@ -95,18 +107,9 @@ class CopernicusEmbedder(EmbedderBase):
         backend: str,
         device: str = "auto",
     ) -> Embedding:
-
-        if temporal is None:
-            raise ModelError("copernicus_embed requires TemporalSpec.year(YYYY).")
-        if temporal.mode != "year":
-            raise ModelError("copernicus_embed only supports TemporalSpec.year(YYYY).")
-        if temporal.year not in SUPPORTED_YEARS:
-            raise ModelError(
-                f"copernicus_embed only provides embeddings for year(s) {sorted(SUPPORTED_YEARS)}; "
-                f"got {temporal.year}. "
-                f"Tip: use TemporalSpec.year(2021)."
-            )
-    
+        if temporal.year != 2021:
+            raise ModelError("copernicus_embed ignores TemporalSpec; Current only support year '2021'.")
+        
         if backend.lower() not in ("local", "auto"):
             raise ModelError("copernicus_embed is precomputed/local; use backend='local' or 'auto'.")
 
@@ -127,8 +130,7 @@ class CopernicusEmbedder(EmbedderBase):
         download = True  # v0.1 default
         expand_deg = 1.0  # v0.1 default
 
-        os.makedirs(data_dir, exist_ok=True)
-        ds = CopernicusEmbed(paths=data_dir, download=download)
+        ds = self._get_dataset(data_dir=data_dir, download=download)
 
         # Expand bbox to hit a tile (centered)
         minlon, minlat, maxlon, maxlat = bbox.minlon, bbox.minlat, bbox.maxlon, bbox.maxlat

@@ -1,9 +1,12 @@
 from typing import List, Optional
- 
+from threading import RLock
 from .core.embedding import Embedding
 from .core.errors import ModelError
 from .core.registry import get_embedder_cls
 from .core.specs import OutputSpec, SensorSpec, SpatialSpec, TemporalSpec
+
+from functools import lru_cache
+from typing import Tuple, Optional
 
 
 
@@ -44,39 +47,70 @@ def get_embeddings_batch(
     backend: str = "gee",
     device: str = "auto",
 ) -> List[Embedding]:
-    # 1. initial embedder
-    from . import embedders 
-    
-     
     backend_n = backend.lower().strip()
+    model_n = model.lower().strip()
+
     if not isinstance(spatials, list) or len(spatials) == 0:
         raise ModelError("spatials must be a non-empty List[SpatialSpec].")
-    _validate_specs(spatial=spatials[0], temporal=temporal, output=output)  # validate output + temporal once
 
-    
-    
-    
-    cls = get_embedder_cls(model)
-    embedder = cls()
+    # perform a basic verification of the output/temporal data (each spatial data point needs to be verified as well)
+    _validate_specs(spatial=spatials[0], temporal=temporal, output=output)
+    for s in spatials:
+        _validate_specs(spatial=s, temporal=temporal, output=output)
+
+    # Retrieve the cache instance (reusing the same model/backend/device/sensor)
+    sensor_k = _sensor_key(sensor)
+    embedder, lock = _get_embedder_bundle_cached(model_n, backend_n, device, sensor_k)
+
+    # Check only once (describe)
     _assert_supported(embedder, backend=backend_n, output=output, temporal=temporal)
-     
-    
-    # 2. loop over spatials
-    results = []
-    results: List[Embedding] = []
-    for spatial in spatials:
-        _validate_specs(spatial=spatial, temporal=temporal, output=output)
-        emb = embedder.get_embedding(
-            spatial=spatial,
+
+    # Sink into `embedder.get_embeddings_batch()`, and protect the instance-level state with a lock
+    with lock:
+        return embedder.get_embeddings_batch(
+            spatials=spatials,
             temporal=temporal,
             sensor=sensor,
             output=output,
             backend=backend_n,
             device=device,
         )
-        results.append(emb)
-    return results
+    
+    # 2. loop over spatials 
+    # results = []
+    # results: List[Embedding] = []
+    # for spatial in spatials:
+    #     _validate_specs(spatial=spatial, temporal=temporal, output=output)
+    #     emb = embedder.get_embedding(
+    #         spatial=spatial,
+    #         temporal=temporal,
+    #         sensor=sensor,
+    #         output=output,
+    #         backend=backend_n,
+    #         device=device,
+    #     )
+    #     results.append(emb)
+    # return results
 
+
+
+
+def _sensor_key(sensor: Optional[SensorSpec]) -> Tuple:
+    if sensor is None:
+        return ("__none__",)
+    # Select the fields that can determine the behavior of the embedder; do not include objects that cannot be hashed.
+    return (sensor.name, sensor.collection, sensor.bands)
+
+@lru_cache(maxsize=32)
+def _get_embedder_bundle_cached(model: str, backend: str, device: str, sensor_k: Tuple):
+    """
+    Return (embedder instance, instance lock).
+   - lru_cache: Reuse the embedder to avoid redundant loading of models/establishing providers/sessions
+   - lock: If the embedder is not thread-safe internally, use a lock to protect a batch call
+    """
+    cls = get_embedder_cls(model)
+    emb = cls()
+    return emb, RLock()
 
 
 def _validate_specs(*, spatial: SpatialSpec, temporal: Optional[TemporalSpec], output: OutputSpec) -> None:
@@ -120,4 +154,5 @@ def _assert_supported(embedder, *, backend: str, output: OutputSpec, temporal: O
         if "year" in mode_hint and temporal is not None and getattr(temporal, "mode", None) != "year":
             # Only enforce when user provided temporal but it's incompatible.
             raise ModelError(f"Model '{embedder.model_name}' expects TemporalSpec.mode='year' (or None).")
- 
+        
+

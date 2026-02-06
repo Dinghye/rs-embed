@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from functools import lru_cache
 import sys
 from typing import Any, Dict, Optional, Tuple
 
@@ -62,6 +63,48 @@ def _fetch_s2_rgb_chw(
 # ------------------------------------------------------------------------------
 # 2. SkySense 模型加载器 (Wrapper)
 # ------------------------------------------------------------------------------
+
+def _resolve_device(device: str) -> str:
+    if device != "auto":
+        return device
+    try:
+        import torch
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    except Exception:
+        return "cpu"
+
+
+@lru_cache(maxsize=2)
+def _load_skysense_model_cached(config_path: str, checkpoint_path: str, dev: str):
+    try:
+        import torch
+        from mmengine.config import Config
+        from mmengine.runner import load_checkpoint
+        from mmpretrain.models import build_classifier, build_backbone
+    except ImportError as e:
+        raise ModelError("SkySense requires mmengine + mmpretrain + torch. Install deps accordingly.") from e
+
+    cfg = Config.fromfile(config_path)
+    model_cfg = cfg.get("model", cfg)
+    # Try build classifier first, then backbone
+    model = None
+    try:
+        model = build_classifier(model_cfg)
+    except Exception:
+        try:
+            model = build_backbone(model_cfg.get("backbone", model_cfg))
+        except Exception as e:
+            raise ModelError("Failed to build SkySense model from config.") from e
+
+    load_checkpoint(model, checkpoint_path, map_location="cpu")
+    try:
+        model = model.to(dev).eval()
+    except Exception:
+        pass
+
+    meta = {"config_path": config_path, "checkpoint_path": checkpoint_path, "device": dev}
+    return model, meta
+
 def _load_skysense_model(config_path: str, checkpoint_path: str, device: str = "auto"):
     """
     加载 SkySense 模型。依赖 mmcv, mmpretrain 等库。
@@ -139,7 +182,18 @@ class SkySensePlusS2Embedder(EmbedderBase):
             "notes": "Requires 'mmcv' and local SkySense weights. Pass 'config::ckpt' in sensor.collection.",
         }
 
-    def get_embedding(
+    
+    def __init__(self) -> None:
+        self._provider: Optional[GEEProvider] = None
+
+    def _get_provider(self) -> GEEProvider:
+        if self._provider is None:
+            p = GEEProvider(auto_auth=True)
+            p.ensure_ready()
+            self._provider = p
+        return self._provider
+
+def get_embedding(
         self,
         *,
         spatial: SpatialSpec,
@@ -173,8 +227,7 @@ class SkySensePlusS2Embedder(EmbedderBase):
 
         # 2. 获取数据 (GEE)
         t = temporal_to_range(temporal)
-        provider = GEEProvider(auto_auth=True)
-        provider.ensure_ready()
+        provider = self._get_provider()
         
         scale_m = sensor.scale_m if sensor else self.DEFAULT_SCALE
         cloudy_pct = sensor.cloudy_pct if sensor else 30

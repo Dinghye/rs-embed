@@ -22,17 +22,21 @@ class EmbedderBase:
         device: str = "auto",
     ) -> Embedding:
         raise NotImplementedError
-    
+
     def get_embeddings_batch(
         self,
         *,
-        spatials: List[SpatialSpec],
+        spatials: list[SpatialSpec],
         temporal: Optional[TemporalSpec] = None,
         sensor: Optional[SensorSpec] = None,
         output: OutputSpec = OutputSpec.pooled(),
         backend: str = "gee",
         device: str = "auto",
-    ) -> List[Embedding]:
+    ) -> list[Embedding]:
+        """Default batch implementation: loop over spatials.
+
+        Embedders that can do true batching (e.g. torch models) should override.
+        """
         return [
             self.get_embedding(
                 spatial=s,
