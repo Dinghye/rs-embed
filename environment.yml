@@ -78,6 +78,7 @@ dependencies:
       - absl-py==2.3.1
       - aenum==3.1.16
       - affine==2.4.0
+      - netCDF4>=1.6
       - aiohappyeyeballs==2.6.1
       - aiohttp==3.13.3
       - aiosignal==1.4.0
