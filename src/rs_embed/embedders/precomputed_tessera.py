@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, Optional, Tuple, List
 
 import numpy as np
@@ -201,6 +202,7 @@ def _mosaic_and_crop_strict_roi(
 
 @register("tessera")
 class TesseraEmbedder(EmbedderBase):
+    DEFAULT_BATCH_WORKERS = 4
 
     def __init__(self) -> None:
         # Cache GeoTessera instances per cache_dir to avoid repeated index scans.
@@ -209,8 +211,17 @@ class TesseraEmbedder(EmbedderBase):
     def _get_gt(self, cache_dir: str):
         if cache_dir not in self._gt_cache:
             from geotessera import GeoTessera
-            self._gt_cache[cache_dir] = GeoTessera(cache_dir=cache_dir)
+            if cache_dir:
+                self._gt_cache[cache_dir] = GeoTessera(cache_dir=cache_dir)
+            else:
+                self._gt_cache[cache_dir] = GeoTessera()
         return self._gt_cache[cache_dir]
+
+    @staticmethod
+    def _resolve_batch_workers(n_items: int) -> int:
+        v = int(os.environ.get("RS_EMBED_TESSERA_BATCH_WORKERS", str(TesseraEmbedder.DEFAULT_BATCH_WORKERS)))
+        return max(1, min(int(n_items), v))
+
     def get_embedding(
         self,
         *,
@@ -224,11 +235,6 @@ class TesseraEmbedder(EmbedderBase):
         if backend.lower() not in ("local", "auto"):
             raise ModelError("tessera is precomputed; use backend='local' or 'auto'.")
 
-        try:
-            from geotessera import GeoTessera
-        except Exception as e:
-            raise ModelError("Install geotessera: pip install geotessera") from e
-
         bbox = _to_bbox_4326(spatial)
         year = _year_from_temporal(temporal, default_year=2021)
 
@@ -236,7 +242,9 @@ class TesseraEmbedder(EmbedderBase):
         if sensor and isinstance(sensor.collection, str) and sensor.collection.startswith("cache:"):
             cache_dir = sensor.collection.replace("cache:", "", 1).strip() or cache_dir
 
-        gt = GeoTessera(cache_dir=cache_dir) if cache_dir else GeoTessera()
+        # GeoTessera cache keyed by cache_dir path (empty string for default).
+        cache_key = cache_dir or ""
+        gt = self._get_gt(cache_key)
 
         bounds = (bbox.minlon, bbox.minlat, bbox.maxlon, bbox.maxlat)
         tiles = gt.registry.load_blocks_for_region(bounds=bounds, year=int(year))
@@ -279,3 +287,45 @@ class TesseraEmbedder(EmbedderBase):
 
         raise ModelError(f"Unknown output mode: {output.mode}")
 
+    def get_embeddings_batch(
+        self,
+        *,
+        spatials: list[SpatialSpec],
+        temporal: Optional[TemporalSpec] = None,
+        sensor: Optional[SensorSpec] = None,
+        output: OutputSpec = OutputSpec.pooled(),
+        backend: str = "local",
+        device: str = "auto",
+    ) -> list[Embedding]:
+        if not spatials:
+            return []
+
+        n = len(spatials)
+        out: List[Optional[Embedding]] = [None] * n
+
+        def _one(i: int, sp: SpatialSpec) -> Tuple[int, Embedding]:
+            emb = self.get_embedding(
+                spatial=sp,
+                temporal=temporal,
+                sensor=sensor,
+                output=output,
+                backend=backend,
+                device=device,
+            )
+            return i, emb
+
+        mw = self._resolve_batch_workers(n)
+        if mw == 1:
+            for i, sp in enumerate(spatials):
+                _, emb = _one(i, sp)
+                out[i] = emb
+        else:
+            with ThreadPoolExecutor(max_workers=mw) as ex:
+                futs = [ex.submit(_one, i, sp) for i, sp in enumerate(spatials)]
+                for fut in as_completed(futs):
+                    i, emb = fut.result()
+                    out[i] = emb
+
+        if any(e is None for e in out):
+            raise ModelError("tessera batch failed to produce all outputs.")
+        return [e for e in out if e is not None]

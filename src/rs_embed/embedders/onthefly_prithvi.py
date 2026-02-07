@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 import math
 from dataclasses import asdict
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -256,6 +257,7 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
     DEFAULT_IMAGE_SCALE_M = 30  # notebook used 30m
     DEFAULT_CLOUDY_PCT = 30
     DEFAULT_COMPOSITE = "median"
+    DEFAULT_FETCH_WORKERS = 8
 
     def describe(self) -> Dict[str, Any]:
         return {
@@ -281,6 +283,21 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
             self._provider = p
         return self._provider
 
+    def _default_sensor(self) -> SensorSpec:
+        return SensorSpec(
+            collection="COPERNICUS/S2_SR_HARMONIZED",
+            bands=tuple(PRITHVI_S2_BANDS_DST),
+            scale_m=self.DEFAULT_IMAGE_SCALE_M,
+            cloudy_pct=self.DEFAULT_CLOUDY_PCT,
+            composite=self.DEFAULT_COMPOSITE,
+            fill_value=0.0,
+        )
+
+    @staticmethod
+    def _resolve_fetch_workers(n_items: int) -> int:
+        v = int(os.environ.get("RS_EMBED_PRITHVI_FETCH_WORKERS", str(PrithviEOV2S2_6B_Embedder.DEFAULT_FETCH_WORKERS)))
+        return max(1, min(int(n_items), v))
+
     def get_embedding(
             self,
             *,
@@ -297,14 +314,7 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
 
             # Defaults for Prithvi inputs
             if sensor is None:
-                sensor = SensorSpec(
-                    collection="COPERNICUS/S2_SR_HARMONIZED",
-                    bands=tuple(PRITHVI_S2_BANDS_DST),
-                    scale_m=self.DEFAULT_IMAGE_SCALE_M,
-                    cloudy_pct=self.DEFAULT_CLOUDY_PCT,
-                    composite=self.DEFAULT_COMPOSITE,
-                    fill_value=0.0,
-                )
+                sensor = self._default_sensor()
 
             t = temporal_to_range(temporal)  # normalize to range
 
@@ -454,3 +464,70 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
                 return Embedding(data=da, meta=meta)
 
             raise ModelError(f"Unknown output mode: {output.mode}")
+
+    def get_embeddings_batch(
+        self,
+        *,
+        spatials: list[SpatialSpec],
+        temporal: Optional[TemporalSpec] = None,
+        sensor: Optional[SensorSpec] = None,
+        output: OutputSpec = OutputSpec.pooled(),
+        backend: str = "gee",
+        device: str = "auto",
+    ) -> list[Embedding]:
+        if not spatials:
+            return []
+        if backend.lower() not in ("gee", "auto"):
+            raise ModelError("prithvi_eo_v2_s2_6b expects backend='gee' (or 'auto').")
+
+        if sensor is None:
+            sensor = self._default_sensor()
+
+        t = temporal_to_range(temporal)
+        provider = self._get_provider()
+        n = len(spatials)
+        prefetched_raw: List[Optional[np.ndarray]] = [None] * n
+
+        def _fetch_one(i: int, sp: SpatialSpec) -> Tuple[int, np.ndarray]:
+            x_chw = _fetch_s2_prithvi6_chw(
+                provider,
+                spatial=sp,
+                temporal=t,
+                scale_m=int(sensor.scale_m),
+                cloudy_pct=int(sensor.cloudy_pct),
+                composite=str(sensor.composite),
+                fill_value=float(sensor.fill_value),
+            )
+            # get_embedding(input_chw=...) expects raw SR in [0..10000]
+            raw = np.clip(x_chw * 10000.0, 0.0, 10000.0).astype(np.float32)
+            return i, raw
+
+        mw = self._resolve_fetch_workers(n)
+        if mw == 1:
+            for i, sp in enumerate(spatials):
+                ii, raw = _fetch_one(i, sp)
+                prefetched_raw[ii] = raw
+        else:
+            with ThreadPoolExecutor(max_workers=mw) as ex:
+                futs = [ex.submit(_fetch_one, i, sp) for i, sp in enumerate(spatials)]
+                for fut in as_completed(futs):
+                    i, raw = fut.result()
+                    prefetched_raw[i] = raw
+
+        out: List[Embedding] = []
+        for i, sp in enumerate(spatials):
+            raw = prefetched_raw[i]
+            if raw is None:
+                raise ModelError(f"Missing prefetched input at index={i} for prithvi_eo_v2_s2_6b.")
+            out.append(
+                self.get_embedding(
+                    spatial=sp,
+                    temporal=temporal,
+                    sensor=sensor,
+                    output=output,
+                    backend=backend,
+                    device=device,
+                    input_chw=raw,
+                )
+            )
+        return out

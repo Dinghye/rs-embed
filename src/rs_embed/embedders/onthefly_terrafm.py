@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 from typing import Any, Dict, Optional, Tuple, List
 
@@ -165,6 +166,48 @@ def _fetch_s1_vvvh_chw(
     x = np.clip(x / denom, 0.0, 1.0)
 
     return x
+
+
+def _fetch_s1_vvvh_raw_chw(
+    provider: GEEProvider,
+    spatial: SpatialSpec,
+    temporal: TemporalSpec,
+    *,
+    scale_m: int = 10,
+    orbit: Optional[str] = None,
+    use_float_linear: bool = True,
+    composite: str = "median",
+) -> np.ndarray:
+    """Returns raw VV/VH CHW without log/normalization."""
+    import ee
+
+    region = provider.get_region_3857(spatial)
+    collection_id = "COPERNICUS/S1_GRD_FLOAT" if use_float_linear else "COPERNICUS/S1_GRD"
+    col = (
+        ee.ImageCollection(collection_id)
+        .filterDate(temporal.start, temporal.end)
+        .filterBounds(region)
+        .filter(ee.Filter.eq("instrumentMode", "IW"))
+        .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VV"))
+        .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VH"))
+    )
+
+    if orbit:
+        col = col.filter(ee.Filter.eq("orbitProperties_pass", orbit))
+
+    if composite == "median":
+        img = col.median()
+    elif composite == "mosaic":
+        img = col.mosaic()
+    else:
+        raise ModelError(f"Unknown composite='{composite}'. Use 'median' or 'mosaic'.")
+
+    img = img.select(["VV", "VH"]).reproject(crs="EPSG:3857", scale=scale_m)
+    rect = img.sampleRectangle(region=region, defaultValue=0.0).getInfo()
+    props = rect["properties"]
+    vv = np.array(props["VV"], dtype=np.float32)
+    vh = np.array(props["VH"], dtype=np.float32)
+    return np.stack([vv, vh], axis=0).astype(np.float32)
 
 
 # -----------------------------
@@ -331,6 +374,8 @@ class TerraFMBEmbedder(EmbedderBase):
     - OutputSpec.grid():  grid [D, Ht, Wt] (model-native feature map grid)
     """
 
+    DEFAULT_FETCH_WORKERS = 8
+
     def describe(self) -> Dict[str, Any]:
         return {
             "type": "on_the_fly",
@@ -363,6 +408,11 @@ class TerraFMBEmbedder(EmbedderBase):
             p.ensure_ready()
             self._provider = p
         return self._provider
+
+    @staticmethod
+    def _resolve_fetch_workers(n_items: int) -> int:
+        v = int(os.environ.get("RS_EMBED_TERRAFM_FETCH_WORKERS", str(TerraFMBEmbedder.DEFAULT_FETCH_WORKERS)))
+        return max(1, min(int(n_items), v))
 
     def get_embedding(
             self,
@@ -586,3 +636,100 @@ class TerraFMBEmbedder(EmbedderBase):
 
             raise ModelError(f"Unknown output mode: {output.mode}")
 
+    def get_embeddings_batch(
+        self,
+        *,
+        spatials: list[SpatialSpec],
+        temporal: Optional[TemporalSpec] = None,
+        sensor: Optional[SensorSpec] = None,
+        output: OutputSpec = OutputSpec.pooled(),
+        backend: str = "gee",
+        device: str = "auto",
+    ) -> list[Embedding]:
+        if not spatials:
+            return []
+
+        backend_l = backend.lower().strip()
+        if backend_l != "gee":
+            # tensor path stays sequential in v0.1
+            return super().get_embeddings_batch(
+                spatials=spatials,
+                temporal=temporal,
+                sensor=sensor,
+                output=output,
+                backend=backend,
+                device=device,
+            )
+
+        if temporal is None:
+            raise ModelError("terrafm_b_gee requires TemporalSpec.range(start,end).")
+        temporal.validate()
+        if temporal.mode != "range":
+            raise ModelError("terrafm_b_gee requires TemporalSpec.range in v0.1.")
+
+        modality = str(getattr(sensor, "modality", "s2") if sensor else "s2").lower()
+        scale_m = int(getattr(sensor, "scale_m", 10) if sensor else 10)
+        cloudy_pct = int(getattr(sensor, "cloudy_pct", 30) if sensor else 30)
+        composite = str(getattr(sensor, "composite", "median") if sensor else "median")
+        orbit = getattr(sensor, "orbit", None) if sensor else None
+        use_float_linear = bool(getattr(sensor, "use_float_linear", True)) if sensor else True
+
+        provider = self._get_provider()
+        n = len(spatials)
+        prefetched_raw: List[Optional[np.ndarray]] = [None] * n
+
+        def _fetch_one(i: int, sp: SpatialSpec) -> Tuple[int, np.ndarray]:
+            if modality == "s2":
+                x_chw = _fetch_s2_sr_12_chw(
+                    provider,
+                    sp,
+                    temporal,
+                    scale_m=scale_m,
+                    cloudy_pct=cloudy_pct,
+                    composite=composite,
+                )
+                # get_embedding(input_chw=...) expects raw S2 SR in [0..10000]
+                raw = np.clip(x_chw * 10000.0, 0.0, 10000.0).astype(np.float32)
+                return i, raw
+            if modality == "s1":
+                raw = _fetch_s1_vvvh_raw_chw(
+                    provider,
+                    sp,
+                    temporal,
+                    scale_m=scale_m,
+                    orbit=orbit,
+                    use_float_linear=use_float_linear,
+                    composite=composite,
+                )
+                return i, raw
+            raise ModelError("modality must be 's2' or 's1'.")
+
+        mw = self._resolve_fetch_workers(n)
+        if mw == 1:
+            for i, sp in enumerate(spatials):
+                ii, raw = _fetch_one(i, sp)
+                prefetched_raw[ii] = raw
+        else:
+            with ThreadPoolExecutor(max_workers=mw) as ex:
+                futs = [ex.submit(_fetch_one, i, sp) for i, sp in enumerate(spatials)]
+                for fut in as_completed(futs):
+                    i, raw = fut.result()
+                    prefetched_raw[i] = raw
+
+        out: List[Embedding] = []
+        for i, sp in enumerate(spatials):
+            raw = prefetched_raw[i]
+            if raw is None:
+                raise ModelError(f"Missing prefetched input at index={i} for terrafm_b.")
+            out.append(
+                self.get_embedding(
+                    spatial=sp,
+                    temporal=temporal,
+                    sensor=sensor,
+                    output=output,
+                    backend=backend,
+                    device=device,
+                    input_chw=raw,
+                )
+            )
+        return out

@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import xarray as xr
@@ -391,6 +392,8 @@ class RemoteCLIPS2RGBEmbedder(EmbedderBase):
     - OutputSpec.grid(): returns token grid [D, Ht, Wt] (ViT patch grid, NOT pixel grid)
     """
 
+    DEFAULT_FETCH_WORKERS = 8
+
     def describe(self) -> Dict[str, Any]:
         return {
             "type": "on_the_fly",
@@ -451,6 +454,11 @@ class RemoteCLIPS2RGBEmbedder(EmbedderBase):
             pass
         self._model_cache[key] = (model, wmeta)
         return model, wmeta, dev
+
+    @staticmethod
+    def _resolve_fetch_workers(n_items: int) -> int:
+        v = int(os.environ.get("RS_EMBED_REMOTECLIP_FETCH_WORKERS", str(RemoteCLIPS2RGBEmbedder.DEFAULT_FETCH_WORKERS)))
+        return max(1, min(int(n_items), v))
 
     def get_embedding(
             self,
@@ -618,3 +626,75 @@ class RemoteCLIPS2RGBEmbedder(EmbedderBase):
                 return Embedding(data=da, meta=meta)
 
             raise ModelError(f"Unknown output mode: {output.mode}")
+
+    def get_embeddings_batch(
+        self,
+        *,
+        spatials: list[SpatialSpec],
+        temporal: Optional[TemporalSpec] = None,
+        sensor: Optional[SensorSpec] = None,
+        output: OutputSpec = OutputSpec.pooled(),
+        backend: str = "gee",
+        device: str = "auto",
+    ) -> list[Embedding]:
+        if not spatials:
+            return []
+        if backend.lower() != "gee":
+            raise ModelError("remoteclip_s2rgb only supports backend='gee' in v0.1.")
+        if temporal is None:
+            raise ModelError("remoteclip_s2rgb requires TemporalSpec.range(start,end).")
+        temporal.validate()
+        if temporal.mode != "range":
+            raise ModelError("remoteclip_s2rgb requires TemporalSpec.range in v0.1.")
+
+        t = temporal_to_range(temporal)
+        provider = self._get_provider()
+        scale_m = sensor.scale_m if sensor else 10
+        cloudy_pct = sensor.cloudy_pct if sensor else 30
+        composite = sensor.composite if sensor else "median"
+
+        n = len(spatials)
+        prefetched_raw: List[Optional[np.ndarray]] = [None] * n
+
+        def _fetch_one(i: int, sp: SpatialSpec) -> Tuple[int, np.ndarray]:
+            s2_rgb_chw = _fetch_s2_rgb_chw(
+                provider,
+                sp,
+                t,
+                scale_m=scale_m,
+                cloudy_pct=cloudy_pct,
+                composite=composite,
+            )
+            # get_embedding(input_chw=...) expects raw SR in [0..10000]
+            raw = np.clip(s2_rgb_chw * 10000.0, 0.0, 10000.0).astype(np.float32)
+            return i, raw
+
+        mw = self._resolve_fetch_workers(n)
+        if mw == 1:
+            for i, sp in enumerate(spatials):
+                ii, raw = _fetch_one(i, sp)
+                prefetched_raw[ii] = raw
+        else:
+            with ThreadPoolExecutor(max_workers=mw) as ex:
+                futs = [ex.submit(_fetch_one, i, sp) for i, sp in enumerate(spatials)]
+                for fut in as_completed(futs):
+                    i, raw = fut.result()
+                    prefetched_raw[i] = raw
+
+        out: List[Embedding] = []
+        for i, sp in enumerate(spatials):
+            raw = prefetched_raw[i]
+            if raw is None:
+                raise ModelError(f"Missing prefetched input at index={i} for remoteclip_s2rgb.")
+            out.append(
+                self.get_embedding(
+                    spatial=sp,
+                    temporal=temporal,
+                    sensor=sensor,
+                    output=output,
+                    backend=backend,
+                    device=device,
+                    input_chw=raw,
+                )
+            )
+        return out

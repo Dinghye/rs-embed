@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Dict, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -66,6 +67,8 @@ class CopernicusEmbedder(EmbedderBase):
       - OutputSpec.grid():   xarray.DataArray (d,y,x) from CHW
     """
 
+    DEFAULT_BATCH_WORKERS = 4
+
     def describe(self) -> Dict[str, Any]:
         return {
             "type": "precomputed",
@@ -98,6 +101,11 @@ class CopernicusEmbedder(EmbedderBase):
             os.makedirs(data_dir, exist_ok=True)
             self._ds_cache[key] = CopernicusEmbed(paths=data_dir, download=download)
         return self._ds_cache[key]
+
+    @staticmethod
+    def _resolve_batch_workers(n_items: int) -> int:
+        v = int(os.environ.get("RS_EMBED_COPERNICUS_BATCH_WORKERS", str(CopernicusEmbedder.DEFAULT_BATCH_WORKERS)))
+        return max(1, min(int(n_items), v))
 
     def get_embedding(
             self,
@@ -200,3 +208,46 @@ class CopernicusEmbedder(EmbedderBase):
                 return Embedding(data=da, meta=meta)
 
             raise ModelError(f"Unknown output mode: {output.mode}")
+
+    def get_embeddings_batch(
+        self,
+        *,
+        spatials: list[SpatialSpec],
+        temporal: Optional[TemporalSpec] = None,
+        sensor: Optional[SensorSpec] = None,
+        output: OutputSpec = OutputSpec.pooled(),
+        backend: str = "gee",
+        device: str = "auto",
+    ) -> list[Embedding]:
+        if not spatials:
+            return []
+
+        n = len(spatials)
+        out: List[Optional[Embedding]] = [None] * n
+
+        def _one(i: int, sp: SpatialSpec) -> Tuple[int, Embedding]:
+            emb = self.get_embedding(
+                spatial=sp,
+                temporal=temporal,
+                sensor=sensor,
+                output=output,
+                backend=backend,
+                device=device,
+            )
+            return i, emb
+
+        mw = self._resolve_batch_workers(n)
+        if mw == 1:
+            for i, sp in enumerate(spatials):
+                _, emb = _one(i, sp)
+                out[i] = emb
+        else:
+            with ThreadPoolExecutor(max_workers=mw) as ex:
+                futs = [ex.submit(_one, i, sp) for i, sp in enumerate(spatials)]
+                for fut in as_completed(futs):
+                    i, emb = fut.result()
+                    out[i] = emb
+
+        if any(e is None for e in out):
+            raise ModelError("copernicus_embed batch failed to produce all outputs.")
+        return [e for e in out if e is not None]

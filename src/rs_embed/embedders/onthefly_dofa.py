@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import math
+import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, Optional, Tuple, List
 
 import numpy as np
@@ -187,55 +189,15 @@ def _load_dofa_model_cached(variant: str, dev: str):
     except Exception as e:
         raise ModelError("DOFA requires torchgeo. Install: pip install torchgeo") from e
 
-    variant_l = str(variant).lower()
+    variant_l = str(variant).lower().strip()
     if variant_l in ("base", "b"):
-        weights = DOFABase16_Weights.DEFAULT
+        weights = DOFABase16_Weights.DOFA_MAE
         model = dofa_base_patch16_224(weights=weights)
     elif variant_l in ("large", "l"):
-        weights = DOFALarge16_Weights.DEFAULT
+        weights = DOFALarge16_Weights.DOFA_MAE
         model = dofa_large_patch16_224(weights=weights)
     else:
         raise ModelError(f"Unknown DOFA variant='{variant}' (expected 'base' or 'large').")
-
-    try:
-        model = model.to(dev).eval()
-    except Exception:
-        pass
-
-    meta = {"variant": variant_l, "device": dev}
-    return model, meta
-
-def _load_dofa_model(
-    *,
-    variant: str = "base",
-    device: str = "auto",
-) -> Tuple[Any, Dict[str, Any]]:
-    try:
-        import torch
-        from torchgeo.models import (
-            DOFABase16_Weights,
-            DOFALarge16_Weights,
-            dofa_base_patch16_224,
-            dofa_large_patch16_224,
-        )
-    except Exception as e:
-        raise ModelError("DOFA requires torchgeo. Install: pip install torchgeo") from e
-
-    dev = _auto_device(device)
-    variant_l = str(variant).lower().strip()
-
-    if variant_l == "base":
-        weights = DOFABase16_Weights.DOFA_MAE
-        model = dofa_base_patch16_224(weights=weights)
-        weight_url = weights.url
-        weight_meta = weights.meta
-    elif variant_l == "large":
-        weights = DOFALarge16_Weights.DOFA_MAE
-        model = dofa_large_patch16_224(weights=weights)
-        weight_url = weights.url
-        weight_meta = weights.meta
-    else:
-        raise ModelError("DOFA variant must be 'base' or 'large'.")
 
     model = model.to(dev).eval()
 
@@ -252,15 +214,25 @@ def _load_dofa_model(
 
     meta = {
         "variant": variant_l,
-        "weights_url": str(weight_url),
-        "weights_meta": dict(weight_meta) if isinstance(weight_meta, dict) else str(weight_meta),
+        "device": dev,
         "device_resolved": dev,
+        "weights_url": str(weights.url),
+        "weights_meta": dict(weights.meta) if isinstance(weights.meta, dict) else str(weights.meta),
         "img_size": int(getattr(model, "img_size", 224)),
         "patch_size": int(getattr(model, "patch_size", 16)),
         "embed_dim": int(getattr(model, "embed_dim", -1)),
         "global_pool": bool(getattr(model, "global_pool", True)),
     }
     return model, meta
+
+def _load_dofa_model(
+    *,
+    variant: str = "base",
+    device: str = "auto",
+) -> Tuple[Any, Dict[str, Any]]:
+    dev = _auto_device(device)
+    variant_l = str(variant).lower().strip()
+    return _load_dofa_model_cached(variant_l, dev)
 
 
 def _dofa_forward_tokens_and_pooled(
@@ -339,6 +311,8 @@ class DOFAEmbedder(EmbedderBase):
       - OutputSpec.grid():   (D, Ht, Wt) token grid, usually 14x14 for 224/patch16
     """
 
+    DEFAULT_FETCH_WORKERS = 8
+
     def describe(self) -> Dict[str, Any]:
         return {
             "type": "on_the_fly",
@@ -372,6 +346,22 @@ class DOFAEmbedder(EmbedderBase):
             p.ensure_ready()
             self._provider = p
         return self._provider
+
+    @staticmethod
+    def _default_sensor() -> SensorSpec:
+        return SensorSpec(
+            collection="COPERNICUS/S2_SR_HARMONIZED",
+            bands=tuple(_S2_SR_12_BANDS),
+            scale_m=10,
+            cloudy_pct=30,
+            composite="median",
+            fill_value=0.0,
+        )
+
+    @staticmethod
+    def _resolve_fetch_workers(n_items: int) -> int:
+        v = int(os.environ.get("RS_EMBED_DOFA_FETCH_WORKERS", str(DOFAEmbedder.DEFAULT_FETCH_WORKERS)))
+        return max(1, min(int(n_items), v))
 
     def get_embedding(
         self,
@@ -457,8 +447,7 @@ class DOFAEmbedder(EmbedderBase):
             wavelengths_um = [float(v) for v in wavelengths_um]
 
             if input_chw is None:
-                provider = GEEProvider(auto_auth=True)
-                provider.ensure_ready()
+                provider = self._get_provider()
 
                 x_chw, gee_meta = _fetch_gee_multiband_sr_chw(
                     provider,
@@ -564,3 +553,90 @@ class DOFAEmbedder(EmbedderBase):
             return Embedding(data=da, meta=meta)
 
         raise ModelError(f"Unknown output mode: {output.mode}")
+
+    def get_embeddings_batch(
+        self,
+        *,
+        spatials: list[SpatialSpec],
+        temporal: Optional[TemporalSpec] = None,
+        sensor: Optional[SensorSpec] = None,
+        output: OutputSpec = OutputSpec.pooled(),
+        backend: str = "gee",
+        device: str = "auto",
+    ) -> list[Embedding]:
+        if not spatials:
+            return []
+
+        backend_l = backend.lower().strip()
+        if backend_l != "gee":
+            # tensor path stays sequential in v0.1
+            return super().get_embeddings_batch(
+                spatials=spatials,
+                temporal=temporal,
+                sensor=sensor,
+                output=output,
+                backend=backend,
+                device=device,
+            )
+        if temporal is None:
+            raise ModelError("dofa backend='gee' requires TemporalSpec.range(start,end).")
+        temporal.validate()
+        if temporal.mode != "range":
+            raise ModelError("dofa backend='gee' requires TemporalSpec.range in v0.1.")
+
+        ss = sensor or self._default_sensor()
+        collection = str(getattr(ss, "collection", "COPERNICUS/S2_SR_HARMONIZED"))
+        bands = list(getattr(ss, "bands", _S2_SR_12_BANDS))
+        scale_m = int(getattr(ss, "scale_m", 10))
+        cloudy_pct = int(getattr(ss, "cloudy_pct", 30))
+        composite = str(getattr(ss, "composite", "median"))
+
+        provider = self._get_provider()
+        n = len(spatials)
+        prefetched_raw: List[Optional[np.ndarray]] = [None] * n
+
+        def _fetch_one(i: int, sp: SpatialSpec) -> Tuple[int, np.ndarray]:
+            x_chw, _ = _fetch_gee_multiband_sr_chw(
+                provider,
+                sp,
+                temporal,
+                collection=collection,
+                bands=bands,
+                scale_m=scale_m,
+                cloudy_pct=cloudy_pct,
+                composite=composite,
+                default_value=0.0,
+            )
+            # get_embedding(input_chw=...) expects raw SR in [0..10000]
+            raw = np.clip(x_chw * 10000.0, 0.0, 10000.0).astype(np.float32)
+            return i, raw
+
+        mw = self._resolve_fetch_workers(n)
+        if mw == 1:
+            for i, sp in enumerate(spatials):
+                ii, raw = _fetch_one(i, sp)
+                prefetched_raw[ii] = raw
+        else:
+            with ThreadPoolExecutor(max_workers=mw) as ex:
+                futs = [ex.submit(_fetch_one, i, sp) for i, sp in enumerate(spatials)]
+                for fut in as_completed(futs):
+                    i, raw = fut.result()
+                    prefetched_raw[i] = raw
+
+        out: List[Embedding] = []
+        for i, sp in enumerate(spatials):
+            raw = prefetched_raw[i]
+            if raw is None:
+                raise ModelError(f"Missing prefetched input at index={i} for dofa.")
+            out.append(
+                self.get_embedding(
+                    spatial=sp,
+                    temporal=temporal,
+                    sensor=ss,
+                    output=output,
+                    backend=backend,
+                    device=device,
+                    input_chw=raw,
+                )
+            )
+        return out

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
-from typing import Any, Dict, Optional, Tuple, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -218,6 +219,7 @@ class ScaleMAERGBEmbedder(EmbedderBase):
 
     DEFAULT_MODEL_ID = "MVRL/scalemae-vitlarge-800"
     DEFAULT_IMAGE_SIZE = 224
+    DEFAULT_FETCH_WORKERS = 8
 
     def describe(self) -> Dict[str, Any]:
         return {
@@ -240,6 +242,21 @@ class ScaleMAERGBEmbedder(EmbedderBase):
             self._provider = p
         return self._provider
 
+    @staticmethod
+    def _default_sensor() -> SensorSpec:
+        return SensorSpec(
+            collection="COPERNICUS/S2_SR_HARMONIZED",
+            bands=("B4", "B3", "B2"),
+            scale_m=10,
+            cloudy_pct=30,
+            composite="median",
+        )
+
+    @staticmethod
+    def _resolve_fetch_workers(n_items: int) -> int:
+        v = int(os.environ.get("RS_EMBED_SCALEMAE_FETCH_WORKERS", str(ScaleMAERGBEmbedder.DEFAULT_FETCH_WORKERS)))
+        return max(1, min(int(n_items), v))
+
     def get_embedding(
             self,
             *,
@@ -255,13 +272,7 @@ class ScaleMAERGBEmbedder(EmbedderBase):
                 raise ModelError("scalemae_rgb expects backend='gee' (or 'auto').")
 
             if sensor is None:
-                sensor = SensorSpec(
-                    collection="COPERNICUS/S2_SR_HARMONIZED",
-                    bands=("B4", "B3", "B2"),
-                    scale_m=10,
-                    cloudy_pct=30,
-                    composite="median",
-                )
+                sensor = self._default_sensor()
 
             model_id = os.environ.get("RS_EMBED_SCALEMAE_ID", self.DEFAULT_MODEL_ID)
             image_size = int(os.environ.get("RS_EMBED_SCALEMAE_IMG", str(self.DEFAULT_IMAGE_SIZE)))
@@ -346,3 +357,119 @@ class ScaleMAERGBEmbedder(EmbedderBase):
                 return Embedding(data=da, meta=meta)
 
             raise ModelError(f"Unknown output mode: {output.mode}")
+
+    def get_embeddings_batch(
+        self,
+        *,
+        spatials: list[SpatialSpec],
+        temporal: Optional[TemporalSpec] = None,
+        sensor: Optional[SensorSpec] = None,
+        output: OutputSpec = OutputSpec.pooled(),
+        backend: str = "gee",
+        device: str = "auto",
+    ) -> list[Embedding]:
+        if not spatials:
+            return []
+        if backend.lower() not in ("gee", "auto"):
+            raise ModelError("scalemae_rgb expects backend='gee' (or 'auto').")
+
+        if sensor is None:
+            sensor = self._default_sensor()
+
+        model_id = os.environ.get("RS_EMBED_SCALEMAE_ID", self.DEFAULT_MODEL_ID)
+        image_size = int(os.environ.get("RS_EMBED_SCALEMAE_IMG", str(self.DEFAULT_IMAGE_SIZE)))
+        t = temporal_to_range(temporal)
+
+        provider = self._get_provider()
+        n = len(spatials)
+        rgb_u8_all: List[Optional[np.ndarray]] = [None] * n
+
+        def _fetch_one(i: int, sp: SpatialSpec) -> Tuple[int, np.ndarray]:
+            rgb_u8 = fetch_s2_rgb_u8_from_gee(
+                spatial=sp,
+                temporal=t,
+                sensor=sensor,
+                out_size=image_size,
+                provider=provider,
+            )
+            return i, rgb_u8
+
+        mw = self._resolve_fetch_workers(n)
+        if mw == 1:
+            for i, sp in enumerate(spatials):
+                ii, rgb = _fetch_one(i, sp)
+                rgb_u8_all[ii] = rgb
+        else:
+            with ThreadPoolExecutor(max_workers=mw) as ex:
+                futs = [ex.submit(_fetch_one, i, sp) for i, sp in enumerate(spatials)]
+                for fut in as_completed(futs):
+                    i, rgb = fut.result()
+                    rgb_u8_all[i] = rgb
+
+        model, wmeta = _load_scalemae(model_id=model_id, device=device)
+        dev = wmeta.get("device", device)
+
+        out: List[Embedding] = []
+        for i, sp in enumerate(spatials):
+            rgb_u8 = rgb_u8_all[i]
+            if rgb_u8 is None:
+                raise ModelError(f"Missing prefetched patch at index={i} for scalemae_rgb.")
+            o, extra = _scalemae_forward_tokens_or_vec(
+                model,
+                rgb_u8,
+                image_size=image_size,
+                device=dev,
+                input_res_m=float(sensor.scale_m),
+            )
+
+            meta = base_meta(
+                model_name=self.model_name,
+                hf_id=model_id,
+                backend="gee",
+                image_size=image_size,
+                sensor=sensor,
+                temporal=t,
+                source=sensor.collection,
+                extra={"used_scale_m": float(sensor.scale_m), **extra, "out_shape": tuple(o.shape)},
+            )
+
+            if output.mode == "pooled":
+                if o.ndim == 2:
+                    vec, cls_removed = pool_from_tokens(o, output.pooling)
+                    meta.update({"pooling": f"patch_{output.pooling}", "cls_removed": bool(cls_removed)})
+                    out.append(Embedding(data=vec, meta=meta))
+                elif o.ndim == 1:
+                    meta.update({"pooling": "model_pooled", "cls_removed": False})
+                    out.append(Embedding(data=o.astype(np.float32), meta=meta))
+                else:
+                    raise ModelError(f"Unexpected shape for pooled: {o.shape}")
+                continue
+
+            if output.mode == "grid":
+                if o.ndim != 2:
+                    raise ModelError(
+                        "grid output requires token sequence [N,D]. "
+                        f"Got {o.shape} (tokens_kind={meta.get('tokens_kind')})."
+                    )
+
+                grid, (h, w), cls_removed = tokens_to_grid_dhw(o)
+                meta.update({"grid_hw": (h, w), "grid_kind": "patch_tokens", "cls_removed": bool(cls_removed)})
+
+                try:
+                    import xarray as xr
+                except Exception as e:
+                    raise ModelError("grid output requires xarray. Install: pip install xarray") from e
+
+                da = xr.DataArray(
+                    grid,
+                    dims=("d", "y", "x"),
+                    coords={"d": np.arange(grid.shape[0]), "y": np.arange(h), "x": np.arange(w)},
+                    name="embedding",
+                    attrs=meta,
+                )
+                out.append(Embedding(data=da, meta=meta))
+                continue
+
+            raise ModelError(f"Unknown output mode: {output.mode}")
+
+        return out

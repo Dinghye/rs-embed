@@ -1,5 +1,7 @@
 from __future__ import annotations
-from typing import Any, Dict, Optional, Tuple
+import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import xarray as xr
@@ -19,6 +21,8 @@ class GSEAnnualEmbedder(EmbedderBase):
     Precomputed embeddings on GEE:
       ImageCollection("GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL")
     """
+
+    DEFAULT_BATCH_WORKERS = 4
 
     def describe(self) -> Dict[str, Any]:
         return {
@@ -41,6 +45,11 @@ class GSEAnnualEmbedder(EmbedderBase):
             self._provider = p
         return self._provider
 
+    @staticmethod
+    def _resolve_batch_workers(n_items: int) -> int:
+        v = int(os.environ.get("RS_EMBED_GSE_BATCH_WORKERS", str(GSEAnnualEmbedder.DEFAULT_BATCH_WORKERS)))
+        return max(1, min(int(n_items), v))
+
     def get_embedding(
             self,
             *,
@@ -60,7 +69,7 @@ class GSEAnnualEmbedder(EmbedderBase):
                 raise ModelError("gse_annual only supports TemporalSpec.year in v0.1.")
 
             import ee
-            provider = GEEProvider(auto_auth=True)
+            provider = self._get_provider()
             region = provider.get_region_3857(spatial)
             # debug-only: avoid stdout in library code
 
@@ -105,3 +114,48 @@ class GSEAnnualEmbedder(EmbedderBase):
                 attrs=meta,
             )
             return Embedding(data=da, meta=meta)
+
+    def get_embeddings_batch(
+        self,
+        *,
+        spatials: list[SpatialSpec],
+        temporal: Optional[TemporalSpec] = None,
+        sensor: Optional[SensorSpec] = None,
+        output: OutputSpec = OutputSpec.pooled(),
+        backend: str = "gee",
+        device: str = "auto",
+    ) -> list[Embedding]:
+        if not spatials:
+            return []
+        if backend.lower() != "gee":
+            raise ModelError("gse_annual only supports backend='gee' in v0.1.")
+
+        n = len(spatials)
+        out: List[Optional[Embedding]] = [None] * n
+
+        def _one(i: int, sp: SpatialSpec) -> Tuple[int, Embedding]:
+            emb = self.get_embedding(
+                spatial=sp,
+                temporal=temporal,
+                sensor=sensor,
+                output=output,
+                backend=backend,
+                device=device,
+            )
+            return i, emb
+
+        mw = self._resolve_batch_workers(n)
+        if mw == 1:
+            for i, sp in enumerate(spatials):
+                _, emb = _one(i, sp)
+                out[i] = emb
+        else:
+            with ThreadPoolExecutor(max_workers=mw) as ex:
+                futs = [ex.submit(_one, i, sp) for i, sp in enumerate(spatials)]
+                for fut in as_completed(futs):
+                    i, emb = fut.result()
+                    out[i] = emb
+
+        if any(e is None for e in out):
+            raise ModelError("gse_annual batch failed to produce all outputs.")
+        return [e for e in out if e is not None]
