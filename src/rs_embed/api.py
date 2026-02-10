@@ -1,19 +1,24 @@
 from __future__ import annotations
 
-import datetime as _dt
-import hashlib
-import json
 import os
-import re
-from dataclasses import asdict, is_dataclass
 from functools import lru_cache
 from threading import RLock
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+from .core.export_helpers import (
+    default_sensor_for_model as _default_sensor_for_model,
+    embedding_to_numpy as _embedding_to_numpy,
+    jsonable as _jsonable,
+    sanitize_key as _sanitize_key,
+    sensor_cache_key as _sensor_cache_key,
+    sha1 as _sha1,
+    utc_ts as _utc_ts,
+)
+from .core.gee_image import build_gee_image as _build_gee_image
 from .core.embedding import Embedding
-from .core.errors import ModelError, ProviderError
+from .core.errors import ModelError
 from .core.registry import get_embedder_cls
 from .core.specs import OutputSpec, SensorSpec, SpatialSpec, TemporalSpec
 from .providers.gee import GEEProvider
@@ -363,155 +368,6 @@ def _assert_supported(embedder, *, backend: str, output: OutputSpec, temporal: O
             raise ModelError(f"Model '{embedder.model_name}' expects TemporalSpec.mode='year' (or None).")
 
 
-# -----------------------------------------------------------------------------
-# Internal: export helpers (npz)
-# -----------------------------------------------------------------------------
-
-def _utc_ts() -> str:
-    return _dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
-
-
-def _sanitize_key(s: str) -> str:
-    s = re.sub(r"[^0-9a-zA-Z_]+", "_", s)
-    s = re.sub(r"_+", "_", s).strip("_")
-    return s or "item"
-
-
-def _sha1(arr: np.ndarray, max_bytes: int = 2_000_000) -> str:
-    h = hashlib.sha1()
-    h.update(str(arr.dtype).encode("utf-8"))
-    h.update(str(arr.shape).encode("utf-8"))
-    b = arr.tobytes(order="C")
-    if len(b) > max_bytes:
-        b = b[:max_bytes]
-    h.update(b)
-    return h.hexdigest()
-
-
-def _jsonable(obj: Any) -> Any:
-    if obj is None:
-        return None
-    if isinstance(obj, (str, int, float, bool)):
-        return obj
-    if isinstance(obj, (list, tuple)):
-        return [_jsonable(x) for x in obj]
-    if isinstance(obj, dict):
-        return {str(k): _jsonable(v) for k, v in obj.items()}
-    if isinstance(obj, (np.integer, np.floating, np.bool_)):
-        return obj.item()
-    if isinstance(obj, np.ndarray):
-        return {
-            "__ndarray__": True,
-            "dtype": str(obj.dtype),
-            "shape": list(obj.shape),
-            "min": float(np.nanmin(obj)) if obj.size else None,
-            "max": float(np.nanmax(obj)) if obj.size else None,
-        }
-    if is_dataclass(obj):
-        return _jsonable(asdict(obj))
-    try:
-        import xarray as xr
-        if isinstance(obj, xr.DataArray):
-            return {"__xarray__": True, "dtype": str(obj.dtype), "shape": list(obj.shape), "dims": list(obj.dims)}
-    except Exception:
-        pass
-    return repr(obj)
-
-
-def _embedding_to_numpy(emb: Embedding) -> np.ndarray:
-    if isinstance(emb.data, np.ndarray):
-        return emb.data.astype(np.float32, copy=False)
-    try:
-        import xarray as xr
-        if isinstance(emb.data, xr.DataArray):
-            return np.asarray(emb.data.values, dtype=np.float32)
-    except Exception:
-        pass
-    return np.asarray(emb.data, dtype=np.float32)
-
-
-def _default_sensor_for_model(model_id: str) -> Optional[SensorSpec]:
-    cls = get_embedder_cls(model_id)
-    desc = cls().describe() or {}
-    typ = str(desc.get("type", "")).lower()
-    if "precomputed" in typ:
-        return None
-
-    inputs = desc.get("inputs")
-    defaults = desc.get("defaults", {}) or {}
-
-    def _mk(collection: str, bands: Iterable[str]) -> SensorSpec:
-        return SensorSpec(
-            collection=str(collection),
-            bands=tuple(str(b) for b in bands),
-            scale_m=int(defaults.get("scale_m", 10)),
-            cloudy_pct=int(defaults.get("cloudy_pct", 30)),
-            composite=str(defaults.get("composite", "median")),
-            fill_value=float(defaults.get("fill_value", 0.0)),
-        )
-
-    if isinstance(inputs, dict) and "collection" in inputs and "bands" in inputs:
-        return _mk(inputs["collection"], inputs["bands"])
-    if isinstance(inputs, dict) and "s2_sr" in inputs:
-        s2 = inputs["s2_sr"]
-        if isinstance(s2, dict) and "collection" in s2 and "bands" in s2:
-            return _mk(s2["collection"], s2["bands"])
-    if "input_bands" in desc:
-        bands = desc["input_bands"]
-        collection = "COPERNICUS/S2_SR_HARMONIZED"
-        return _mk(collection, bands)
-
-    return None
-
-
-def _sensor_cache_key(sensor: SensorSpec) -> str:
-    # A stable key for caching across models/points within a run.
-    obj = {
-        "collection": sensor.collection,
-        "bands": list(sensor.bands),
-        "scale_m": int(sensor.scale_m),
-        "cloudy_pct": int(sensor.cloudy_pct),
-        "fill_value": float(sensor.fill_value),
-        "composite": str(sensor.composite),
-    }
-    return _sanitize_key(hashlib.sha1(json.dumps(obj, sort_keys=True).encode("utf-8")).hexdigest()[:12])
-
-
-def _build_gee_image(*, sensor: SensorSpec, temporal: Optional[TemporalSpec], region: Any) -> Any:
-    import ee
-
-    temporal_range: Optional[Tuple[str, str]] = None
-    if temporal is not None:
-        temporal.validate()
-        if temporal.mode == "range":
-            temporal_range = (temporal.start, temporal.end)
-        elif temporal.mode == "year":
-            y = int(temporal.year)
-            temporal_range = (f"{y}-01-01", f"{y+1}-01-01")
-        else:
-            raise ModelError(f"Unknown TemporalSpec mode: {temporal.mode}")
-
-    try:
-        ic = ee.ImageCollection(sensor.collection).filterBounds(region)
-        if temporal_range is not None:
-            ic = ic.filterDate(temporal_range[0], temporal_range[1])
-        if sensor.cloudy_pct is not None:
-            try:
-                ic = ic.filter(ee.Filter.lte("CLOUDY_PIXEL_PERCENTAGE", int(sensor.cloudy_pct)))
-            except Exception:
-                pass
-        if sensor.composite == "median":
-            img = ic.median()
-        elif sensor.composite == "mosaic":
-            img = ic.mosaic()
-        else:
-            img = ic.median()
-    except Exception:
-        img = ee.Image(sensor.collection)
-
-    return img
-
-
 def _fetch_gee_patch_raw(provider: GEEProvider, *, spatial: SpatialSpec, temporal: Optional[TemporalSpec], sensor: SensorSpec) -> np.ndarray:
     region = provider.get_region_3857(spatial)
     img = _build_gee_image(sensor=sensor, temporal=temporal, region=region)
@@ -710,6 +566,7 @@ def _export_combined_npz(
     input_reports: Dict[Tuple[int, str], Dict[str, Any]] = {}
     if provider is not None:
         tasks: List[Tuple[int, str, SensorSpec]] = []
+        sensor_models: Dict[str, List[str]] = {}
         seen: set[Tuple[int, str]] = set()
         for i, sp in enumerate(spatials):
             for m in models:
@@ -717,6 +574,7 @@ def _export_combined_npz(
                 if sspec is None or "precomputed" in (model_type.get(m) or ""):
                     continue
                 skey = _sensor_cache_key(sspec)
+                sensor_models.setdefault(skey, []).append(m)
                 key = (i, skey)
                 if key in seen:
                     continue
@@ -733,6 +591,12 @@ def _export_combined_npz(
             futs = [ex.submit(_fetch_one, i, sk, ss) for (i, sk, ss) in tasks]
             for fut in as_completed(futs):
                 i, skey, x, rep = fut.result()
+                if fail_on_bad_input and (not bool(rep.get("ok", True))):
+                    issues = (rep.get("report", {}) or {}).get("issues", [])
+                    mlist = sorted(set(sensor_models.get(skey, [])))
+                    raise RuntimeError(
+                        f"Input inspection failed for index={i}, models={mlist}: {issues}"
+                    )
                 inputs_cache[(i, skey)] = x
                 input_reports[(i, skey)] = rep
 

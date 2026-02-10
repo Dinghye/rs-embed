@@ -282,3 +282,54 @@ def test_export_batch_netcdf_combined(tmp_path, monkeypatch):
     assert "embeddings__dummy_comb" in ds.data_vars
     assert ds["embeddings__dummy_comb"].shape == (2, 2)  # (point, dim)
     ds.close()
+
+
+def test_export_batch_combined_fail_on_bad_input(tmp_path, monkeypatch):
+    class DummyBad:
+        def describe(self):
+            return {
+                "type": "onthefly",
+                "inputs": {"collection": "C", "bands": ["B1"]},
+                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+            }
+
+        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+            return Embedding(data=np.array([1.0], dtype=np.float32), meta={})
+
+    registry.register("dummy_bad")(DummyBad)
+
+    import rs_embed.api as api
+
+    class DummyProvider:
+        def __init__(self, *a, **kw):
+            pass
+
+        def ensure_ready(self):
+            return None
+
+    monkeypatch.setattr(api, "GEEProvider", DummyProvider)
+    monkeypatch.setattr(
+        api,
+        "_fetch_gee_patch_raw",
+        lambda prov, *, spatial, temporal, sensor: np.zeros((1, 2, 2), dtype=np.float32),
+    )
+    monkeypatch.setattr(
+        api,
+        "_inspect_input_raw",
+        lambda x, *, sensor, name: {"ok": False, "report": {"issues": ["all fill"]}},
+    )
+    api._get_embedder_bundle_cached.cache_clear()
+
+    with pytest.raises(RuntimeError, match="Input inspection failed"):
+        api.export_batch(
+            spatials=[PointBuffer(lon=0, lat=0, buffer_m=10)],
+            temporal=TemporalSpec.year(2022),
+            models=["dummy_bad"],
+            out_path=str(tmp_path / "bad.npz"),
+            backend="gee",
+            output=OutputSpec.pooled(),
+            sensor=SensorSpec(collection="C", bands=("B1",)),
+            save_inputs=True,
+            save_embeddings=False,
+            fail_on_bad_input=True,
+        )

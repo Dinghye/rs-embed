@@ -337,3 +337,11 @@ def test_save_quicklook_rgb_band_out_of_range():
     x = np.zeros((2, 4, 4), dtype=np.float32)
     with pytest.raises(ValueError, match="out of range"):
         save_quicklook_rgb(x, path="/tmp/bad.png", bands=(0, 1, 2))
+
+
+def test_save_quicklook_rgb_supports_vmin_vmax(tmp_path):
+    x = np.random.default_rng(21).random((3, 16, 16)).astype(np.float32)
+    out = str(tmp_path / "ql_vmin_vmax.png")
+    save_quicklook_rgb(x, path=out, vmin=0.0, vmax=1.0)
+    import os
+    assert os.path.isfile(out)

@@ -153,97 +153,38 @@ def inspect_chw(
     report["band_mean"] = [float(v) for v in bmean]
     report["band_std"] = [float(v) for v in bstd]
 
-    # Robust distribution summaries (useful for catching saturation, empty patches, or scaling issues)
-    if quantiles:
-        try:
-            qs = tuple(float(q) for q in quantiles)
-            qv = np.nanquantile(xf2, qs, axis=(1, 2))  # [Q, C]
-            # Store as a dict of per-band lists, keyed by quantile
-            report["band_quantiles"] = {
-                f"p{int(round(q*100)):02d}": [float(v) for v in qv[i]] for i, q in enumerate(qs)
-            }
-        except Exception as e:
-            # Quantiles are non-critical; keep running.
-            report.setdefault("warnings", [])
-            report["warnings"].append(f"{name}: failed to compute quantiles: {e!r}")
-
-    # Optional per-band histograms (kept compact; mainly for debugging)
-    if int(hist_bins) > 0 and c <= int(max_bands_for_hist):
-        try:
-            # Clip hist range if requested; otherwise infer from robust quantiles when possible.
-            hr = None
-            if hist_clip_range is not None:
-                hr = (float(hist_clip_range[0]), float(hist_clip_range[1]))
-            elif "band_quantiles" in report:
-                # Use p01..p99 if present to avoid extreme outliers dominating bins
-                qd = report["band_quantiles"]
-                # fall back gracefully if keys differ
-                lo_key = next((k for k in ("p01", "p00") if k in qd), None)
-                hi_key = next((k for k in ("p99", "p100") if k in qd), None)
-                if lo_key and hi_key:
-                    lo = float(np.nanmin(qd[lo_key]))
-                    hi = float(np.nanmax(qd[hi_key]))
-                    if np.isfinite(lo) and np.isfinite(hi) and hi > lo:
-                        hr = (lo, hi)
-
-            # Compute shared bin edges across bands for easy comparison
-            if hr is None:
-                glo = float(np.nanmin(bmin))
-                ghi = float(np.nanmax(bmax))
-                if np.isfinite(glo) and np.isfinite(ghi) and ghi > glo:
-                    hr = (glo, ghi)
-
-            if hr is not None:
-                edges = np.linspace(hr[0], hr[1], int(hist_bins) + 1, dtype=np.float32)
-                counts = []
-                for bi in range(c):
-                    v = xf2[bi].ravel()
-                    v = v[np.isfinite(v)]
-                    if v.size == 0:
-                        counts.append([0] * int(hist_bins))
-                        continue
-                    h, _ = np.histogram(v, bins=edges)
-                    counts.append([int(x) for x in h.tolist()])
-
-                report["hist"] = {
-                    "bins": [float(x) for x in edges.tolist()],
-                    "counts": counts,
-                    "range": [float(hr[0]), float(hr[1])],
-                }
-        except Exception as e:
-            report.setdefault("warnings", [])
-            report["warnings"].append(f"{name}: failed to compute histogram: {e!r}")
-
-    # Per-band quantiles (cheap + very diagnostic)
+    # Quantiles (computed once; export both legacy and compact fields).
     qs = tuple(float(q) for q in quantiles) if quantiles else ()
+    qv = None
     if qs:
         try:
             qv = np.nanquantile(xf2, qs, axis=(1, 2))  # [Q, C]
+            report["band_quantiles"] = {
+                f"p{int(round(q * 100)):02d}": [float(v) for v in qv[i]]
+                for i, q in enumerate(qs)
+            }
             for qi, q in enumerate(qs):
                 key = f"band_p{int(round(q * 100)):02d}"
                 report[key] = [float(v) for v in qv[qi]]
             report["quantiles"] = list(qs)
         except Exception as e:
-            # Don't fail inspection due to quantile issues
-            report.setdefault("warnings", []).append(f"{name}: quantiles failed: {e!r}")
+            report.setdefault("warnings", []).append(f"{name}: failed to compute quantiles: {e!r}")
 
-    # Per-band histograms (optional; keep compact)
-    # We store one shared set of bin edges + per-band counts.
+    # Histograms (computed once; export both legacy and compact fields).
     if int(hist_bins) > 0 and c <= int(max_bands_for_hist):
         try:
-            # Determine histogram range
             if hist_clip_range is not None:
                 h_lo, h_hi = float(hist_clip_range[0]), float(hist_clip_range[1])
             elif value_range is not None:
                 h_lo, h_hi = float(value_range[0]), float(value_range[1])
+            elif isinstance(qv, np.ndarray) and qv.size > 0:
+                lo_vals = qv[0]
+                hi_vals = qv[-1]
+                h_lo = float(np.nanmin(lo_vals))
+                h_hi = float(np.nanmax(hi_vals))
             else:
-                # Robust range based on quantiles if available
-                if "band_p01" in report and "band_p99" in report:
-                    h_lo = float(np.nanmin(np.array(report["band_p01"], dtype=np.float32)))
-                    h_hi = float(np.nanmax(np.array(report["band_p99"], dtype=np.float32)))
-                else:
-                    h_lo = float(np.nanmin(bmin))
-                    h_hi = float(np.nanmax(bmax))
+                h_lo = float(np.nanmin(bmin))
+                h_hi = float(np.nanmax(bmax))
 
             if not np.isfinite(h_lo) or not np.isfinite(h_hi) or (h_hi <= h_lo):
                 raise ValueError(f"bad hist range ({h_lo},{h_hi})")
@@ -259,9 +200,16 @@ def inspect_chw(
                 h, _ = np.histogram(v, bins=edges)
                 counts.append([int(x) for x in h])
 
+            # Current compact fields
             report["hist_bins"] = [float(x) for x in edges]
             report["band_hist"] = counts
             report["hist_range"] = [float(h_lo), float(h_hi)]
+            # Backward-compatible structure
+            report["hist"] = {
+                "bins": report["hist_bins"],
+                "counts": counts,
+                "range": report["hist_range"],
+            }
         except Exception as e:
             report.setdefault("warnings", []).append(f"{name}: histogram failed: {e!r}")
 
@@ -351,6 +299,8 @@ def save_quicklook_rgb(
     bands=(0, 1, 2),
     pmin: float = 2.0,
     pmax: float = 98.0,
+    vmin: Optional[float] = None,
+    vmax: Optional[float] = None,
 ) -> None:
     import os
     import numpy as np
@@ -365,17 +315,23 @@ def save_quicklook_rgb(
 
     rgb = np.stack([x_chw[r], x_chw[g], x_chw[b]], axis=-1).astype(np.float32)
 
-    # 关键：把 NaN/Inf 先处理掉（否则后面 clip 也没用）
+    # Clean non-finite values before stretching.
     rgb = np.nan_to_num(rgb, nan=0.0, posinf=0.0, neginf=0.0)
 
-    # 分位数拉伸（对每个通道分别拉伸更稳）
     out = np.empty_like(rgb)
-    for ch in range(3):
-        lo, hi = np.percentile(rgb[..., ch], (pmin, pmax))
-        if hi <= lo + 1e-6:
-            out[..., ch] = 0.0
-        else:
-            out[..., ch] = (rgb[..., ch] - lo) / (hi - lo)
+    if vmin is not None and vmax is not None:
+        lo = float(vmin)
+        hi = float(vmax)
+        scale = max(hi - lo, 1e-6)
+        out = (rgb - lo) / scale
+    else:
+        # Robust percentile stretch per channel.
+        for ch in range(3):
+            lo, hi = np.percentile(rgb[..., ch], (pmin, pmax))
+            if hi <= lo + 1e-6:
+                out[..., ch] = 0.0
+            else:
+                out[..., ch] = (rgb[..., ch] - lo) / (hi - lo)
     out = np.clip(out, 0.0, 1.0)
 
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
@@ -385,35 +341,3 @@ def save_quicklook_rgb(
     plt.tight_layout(pad=0)
     plt.savefig(path, dpi=200, bbox_inches="tight", pad_inches=0)
     plt.close()
-
-# def save_quicklook_rgb(
-#     x_chw: np.ndarray,
-#     *,
-#     path: str,
-#     bands: Tuple[int, int, int] = (0, 1, 2),
-#     vmin: float = 0.0,
-#     vmax: float = 1.0,
-# ) -> None:
-#     """Save a simple RGB quicklook PNG/JPG using matplotlib.
-
-#     This is optional and only used when a save_dir is configured.
-#     """
-#     import matplotlib.pyplot as plt
-
-#     if x_chw.ndim != 3:
-#         raise ValueError(f"Expected CHW, got {x_chw.shape}")
-#     c, h, w = x_chw.shape
-#     r, g, b = bands
-#     if max(r, g, b) >= c:
-#         raise ValueError(f"bands={bands} out of range for C={c}")
-
-#     rgb = np.stack([x_chw[r], x_chw[g], x_chw[b]], axis=-1).astype(np.float32)
-#     rgb = np.clip((rgb - vmin) / max(vmax - vmin, 1e-6), 0.0, 1.0)
-
-#     os.makedirs(os.path.dirname(path), exist_ok=True)
-#     plt.figure()
-#     plt.imshow(rgb)
-#     plt.axis("off")
-#     plt.tight_layout(pad=0)
-#     plt.savefig(path, dpi=200, bbox_inches="tight", pad_inches=0)
-#     plt.close()

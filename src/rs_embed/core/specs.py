@@ -1,6 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Literal, Optional, Sequence, Tuple
+from datetime import date
+from typing import Literal, Optional, Tuple
 
 from .errors import SpecError
 
@@ -54,9 +55,22 @@ class TemporalSpec:
         if self.mode == "year":
             if self.year is None:
                 raise SpecError("TemporalSpec.year requires year.")
+            try:
+                y = int(self.year)
+            except Exception as e:
+                raise SpecError("TemporalSpec.year requires an integer year.") from e
+            if y < 1 or y > 9999:
+                raise SpecError("TemporalSpec.year must be in [1, 9999].")
         elif self.mode == "range":
             if not self.start or not self.end:
                 raise SpecError("TemporalSpec.range requires start and end.")
+            try:
+                start_d = date.fromisoformat(str(self.start))
+                end_d = date.fromisoformat(str(self.end))
+            except Exception as e:
+                raise SpecError("TemporalSpec.range expects ISO dates 'YYYY-MM-DD'.") from e
+            if start_d >= end_d:
+                raise SpecError("TemporalSpec.range requires start < end.")
         else:
             raise SpecError(f"Unknown TemporalSpec mode: {self.mode}")
 

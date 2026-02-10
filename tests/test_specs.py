@@ -121,6 +121,24 @@ def test_temporal_spec_invalid_mode():
         ts.validate()
 
 
+def test_temporal_spec_range_bad_date_format():
+    ts = TemporalSpec.range("2022/01/01", "2022-06-01")
+    with pytest.raises(SpecError, match="ISO dates"):
+        ts.validate()
+
+
+def test_temporal_spec_range_start_must_be_before_end():
+    ts = TemporalSpec.range("2022-06-01", "2022-06-01")
+    with pytest.raises(SpecError, match="start < end"):
+        ts.validate()
+
+
+def test_temporal_spec_year_out_of_range():
+    ts = TemporalSpec.year(0)
+    with pytest.raises(SpecError, match="\\[1, 9999\\]"):
+        ts.validate()
+
+
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -183,5 +201,4 @@ def test_sensor_spec_custom():
     assert s.check_input is True
     assert s.check_raise is False
     assert s.check_save_dir == "/tmp/out"
-
 

@@ -168,6 +168,8 @@ def main(argv: Optional[list[str]] = None) -> None:
         spatial = _parse_spatial(args)
         temporal = _parse_temporal(args)
         value_range = _parse_value_range(args.value_range)
+        if value_range is not None:
+            raise SystemExit("--value-range is currently supported only for inspect-gee.")
 
         output = OutputSpec.pooled(pooling=args.pooling) if args.output == "pooled" else OutputSpec.grid()
 
@@ -191,14 +193,13 @@ def main(argv: Optional[list[str]] = None) -> None:
             models=args.models,
             spatial=spatial,
             temporal=temporal,
-            sensor_override=sensor_override,
+            sensor=sensor_override,
             output=output,
             backend=args.backend,
             device=args.device,
-            value_range=value_range,
             save_inputs=not args.no_inputs,
             save_embeddings=not args.no_embeddings,
-            save_json=not args.no_json,
+            save_manifest=not args.no_json,
             fail_on_bad_input=args.fail_on_bad_input,
         )
 

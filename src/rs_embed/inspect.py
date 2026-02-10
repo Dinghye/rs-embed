@@ -9,68 +9,15 @@ Currently we support Google Earth Engine (backend="gee").
 """
 
 from dataclasses import asdict
-from typing import Any, Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 
-from .core.errors import ProviderError, SpecError
+from .core.errors import ProviderError
+from .core.gee_image import build_gee_image as _build_gee_image
 from .core.input_checks import inspect_chw, checks_save_dir, save_quicklook_rgb
 from .core.specs import SensorSpec, SpatialSpec, TemporalSpec
 from .providers.gee import GEEProvider
-
-
-def _build_gee_image(*, sensor: SensorSpec, temporal: Optional[TemporalSpec], region: Optional[Any] = None) -> Any:
-    """Build an ee.Image from SensorSpec/TemporalSpec.
-
-    Notes
-    -----
-    - If `sensor.collection` is an ImageCollection, we filter it and composite.
-    - If it's a single Image ID, we fall back to ee.Image.
-    - Cloud filtering is best-effort: we apply it when the common
-      'CLOUDY_PIXEL_PERCENTAGE' property is present.
-    """
-    import ee
-
-    temporal_range: Optional[Tuple[str, str]] = None
-    if temporal is not None:
-        temporal.validate()
-        if temporal.mode == "range":
-            temporal_range = (temporal.start, temporal.end)
-        elif temporal.mode == "year":
-            y = int(temporal.year)
-            temporal_range = (f"{y}-01-01", f"{y+1}-01-01")
-        else:
-            raise SpecError(f"Unknown TemporalSpec mode: {temporal.mode}")
-
-    # Try collection first
-    try:
-        ic = ee.ImageCollection(sensor.collection)
-        if region is not None:
-            ic = ic.filterBounds(region)
-        if temporal_range is not None:
-            ic = ic.filterDate(temporal_range[0], temporal_range[1])
-
-        # Best-effort cloud filter (common on Sentinel-2)
-        if sensor.cloudy_pct is not None:
-            try:
-                ic = ic.filter(ee.Filter.lte("CLOUDY_PIXEL_PERCENTAGE", int(sensor.cloudy_pct)))
-            except Exception:
-                pass
-
-        if sensor.composite == "median":
-            img = ic.median()
-        elif sensor.composite == "mosaic":
-            img = ic.mosaic()
-        else:
-            img = ic.median()
-
-    except Exception:
-        # Fall back to a single image id / asset id
-        img = ee.Image(sensor.collection)
-
-    # Band selection is explicit (helps catch typos early)
-    # img = img.select(list(sensor.bands))
-    return img
 
 
 def inspect_gee_patch(
@@ -100,8 +47,6 @@ def inspect_gee_patch(
     provider = GEEProvider(auto_auth=True)
     provider.ensure_ready()
 
-    import ee
-
     region = provider.get_region_3857(spatial)
     img = _build_gee_image(sensor=sensor, temporal=temporal, region=region)
 
@@ -111,15 +56,8 @@ def inspect_gee_patch(
         region=region,
         scale_m=int(sensor.scale_m),
         fill_value=float(sensor.fill_value),
-        collection=sensor.collection,   
+        collection=sensor.collection,
     )
-    # x_chw = provider.fetch_array_chw(
-    #     image=img,
-    #     bands=sensor.bands,
-    #     region=region,
-    #     scale_m=int(sensor.scale_m),
-    #     fill_value=float(sensor.fill_value),
-    # )
 
     report = inspect_chw(
         x_chw,

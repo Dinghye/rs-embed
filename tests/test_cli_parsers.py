@@ -255,3 +255,64 @@ def test_export_npz_custom_backend_device():
     )
     assert args.backend == "local"
     assert args.device == "cpu"
+
+
+def test_cli_main_export_npz_maps_args(monkeypatch, capsys):
+    captured = {}
+
+    def _fake_export_npz(**kwargs):
+        captured.update(kwargs)
+        return {"ok": True}
+
+    monkeypatch.setattr(cli, "export_npz", _fake_export_npz)
+
+    cli.main(
+        [
+            "export-npz",
+            "--models",
+            "tessera",
+            "--out",
+            "/tmp/out.npz",
+            "--bbox",
+            "0",
+            "0",
+            "1",
+            "1",
+            "--collection",
+            "COPERNICUS/S2_SR_HARMONIZED",
+            "--bands",
+            "B4,B3,B2",
+            "--no-json",
+            "--fail-on-bad-input",
+        ]
+    )
+
+    assert captured["models"] == ["tessera"]
+    assert captured["save_manifest"] is False
+    assert captured["fail_on_bad_input"] is True
+    assert captured["sensor"] is not None
+    assert captured["sensor"].collection == "COPERNICUS/S2_SR_HARMONIZED"
+    assert captured["sensor"].bands == ("B4", "B3", "B2")
+
+    stdout = capsys.readouterr().out
+    assert '"ok": true' in stdout.lower()
+
+
+def test_cli_main_export_npz_value_range_rejected():
+    with pytest.raises(SystemExit, match="supported only for inspect-gee"):
+        cli.main(
+            [
+                "export-npz",
+                "--models",
+                "tessera",
+                "--out",
+                "/tmp/out.npz",
+                "--bbox",
+                "0",
+                "0",
+                "1",
+                "1",
+                "--value-range",
+                "0,1",
+            ]
+        )
