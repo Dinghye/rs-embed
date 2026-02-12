@@ -86,6 +86,8 @@ export_batch(
     save_embeddings=True,
     chunk_size=32,
     num_workers=8,
+    resume=True,
+    show_progress=True,
 )
 ```
 
@@ -99,6 +101,7 @@ rs-embed supports pluggable backends. In most setups:
     For large exports, tune:
     - `chunk_size`: how many ROIs per chunk (controls memory peak)
     - `num_workers`: how many concurrent fetch workers (controls IO parallelism)
+    - `resume=True`: skip files already exported in previous runs
 
 
 ## Export Formats

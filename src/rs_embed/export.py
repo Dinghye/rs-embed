@@ -35,6 +35,9 @@ def export_npz(
     save_embeddings: bool = True,
     save_manifest: bool = True,
     fail_on_bad_input: bool = False,
+    continue_on_error: bool = False,
+    max_retries: int = 0,
+    retry_backoff_s: float = 0.0,
 ) -> Dict[str, Any]:
     """Export inputs + embeddings for one spatial query to a single `.npz`."""
     from .api import export_batch
@@ -58,4 +61,7 @@ def export_npz(
         save_embeddings=save_embeddings,
         save_manifest=save_manifest,
         fail_on_bad_input=fail_on_bad_input,
+        continue_on_error=continue_on_error,
+        max_retries=max_retries,
+        retry_backoff_s=retry_backoff_s,
     )

@@ -244,6 +244,8 @@ export_batch(
     fail_on_bad_input: bool = False,
     chunk_size: int = 16,
     num_workers: int = 8,
+    resume: bool = False,
+    show_progress: bool = True,
 ) -> Any
 ```
 
@@ -268,6 +270,8 @@ export_batch(
 - `fail_on_bad_input`: whether to raise immediately if input checks fail
 - `chunk_size`: process points in chunks (controls memory/throughput)
 - `num_workers`: concurrency for GEE patch prefetching (ThreadPool)
+- `resume`: skip already-exported outputs and continue from remaining items
+- `show_progress`: show progress during batch export
 
 **Returns**
 

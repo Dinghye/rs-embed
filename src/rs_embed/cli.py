@@ -135,6 +135,23 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="If input checks fail, stop and raise instead of exporting.",
     )
+    ex.add_argument(
+        "--continue-on-error",
+        action="store_true",
+        help="Keep exporting remaining models/items when one fails.",
+    )
+    ex.add_argument(
+        "--max-retries",
+        type=int,
+        default=0,
+        help="Retry count for network fetch / inference / write failures.",
+    )
+    ex.add_argument(
+        "--retry-backoff-s",
+        type=float,
+        default=0.0,
+        help="Base backoff seconds between retries (exponential).",
+    )
 
     return p
 
@@ -201,6 +218,9 @@ def main(argv: Optional[list[str]] = None) -> None:
             save_embeddings=not args.no_embeddings,
             save_manifest=not args.no_json,
             fail_on_bad_input=args.fail_on_bad_input,
+            continue_on_error=args.continue_on_error,
+            max_retries=args.max_retries,
+            retry_backoff_s=args.retry_backoff_s,
         )
 
         json.dump(manifest, sys.stdout, ensure_ascii=False, indent=2)

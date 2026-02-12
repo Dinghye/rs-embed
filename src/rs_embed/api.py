@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
 import os
+import sys
+import time
 from functools import lru_cache
 from threading import RLock
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
 
 import numpy as np
 
@@ -22,6 +25,141 @@ from .core.errors import ModelError
 from .core.registry import get_embedder_cls
 from .core.specs import OutputSpec, SensorSpec, SpatialSpec, TemporalSpec
 from .providers.gee import GEEProvider
+
+_T = TypeVar("_T")
+
+
+# -----------------------------------------------------------------------------
+# Internal: progress + resume helpers
+# -----------------------------------------------------------------------------
+
+class _NoOpProgress:
+    def update(self, n: int = 1) -> None:
+        _ = n
+
+    def close(self) -> None:
+        return None
+
+
+class _SimpleProgress:
+    """Minimal fallback progress indicator when tqdm is unavailable."""
+
+    def __init__(self, *, total: int, desc: str):
+        self.total = max(0, int(total))
+        self.desc = desc
+        self.done = 0
+        self._last_pct = -1
+
+    def update(self, n: int = 1) -> None:
+        if self.total <= 0:
+            return
+        self.done = min(self.total, self.done + max(0, int(n)))
+        pct = int((100 * self.done) / self.total)
+        if pct == self._last_pct and self.done < self.total:
+            return
+        self._last_pct = pct
+
+        width = 24
+        fill = int((width * self.done) / self.total)
+        bar = ("#" * fill) + ("." * (width - fill))
+        sys.stderr.write(f"\r{self.desc} [{bar}] {self.done}/{self.total} ({pct:3d}%)")
+        if self.done >= self.total:
+            sys.stderr.write("\n")
+        sys.stderr.flush()
+
+    def close(self) -> None:
+        if self.total > 0 and self.done < self.total:
+            sys.stderr.write("\n")
+            sys.stderr.flush()
+
+
+def _create_progress(*, enabled: bool, total: int, desc: str, unit: str = "item") -> Any:
+    if (not enabled) or int(total) <= 0:
+        return _NoOpProgress()
+
+    try:
+        from tqdm.auto import tqdm
+
+        return tqdm(total=int(total), desc=desc, unit=unit, leave=False)
+    except Exception:
+        return _SimpleProgress(total=int(total), desc=desc)
+
+
+def _load_json_dict(path: str) -> Optional[Dict[str, Any]]:
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        if isinstance(payload, dict):
+            return payload
+    except Exception:
+        return None
+    return None
+
+
+def _point_resume_manifest(
+    *,
+    point_index: int,
+    spatial: SpatialSpec,
+    temporal: Optional[TemporalSpec],
+    output: OutputSpec,
+    backend: str,
+    device: str,
+    out_file: str,
+) -> Dict[str, Any]:
+    json_path = os.path.splitext(out_file)[0] + ".json"
+    manifest = _load_json_dict(json_path)
+    if manifest is None:
+        manifest = {
+            "created_at": _utc_ts(),
+            "point_index": int(point_index),
+            "status": "skipped",
+            "stage": "resume",
+            "reason": "output_exists",
+            "backend": backend,
+            "device": device,
+            "models": [],
+            "spatial": _jsonable(spatial),
+            "temporal": _jsonable(temporal),
+            "output": _jsonable(output),
+        }
+    manifest["resume_skipped"] = True
+    manifest["resume_output_path"] = out_file
+    manifest.setdefault("point_index", int(point_index))
+    manifest.setdefault("status", "ok")
+    return manifest
+
+
+def _combined_resume_manifest(
+    *,
+    spatials: List[SpatialSpec],
+    temporal: Optional[TemporalSpec],
+    output: OutputSpec,
+    backend: str,
+    device: str,
+    out_file: str,
+) -> Dict[str, Any]:
+    json_path = os.path.splitext(out_file)[0] + ".json"
+    manifest = _load_json_dict(json_path)
+    if manifest is None:
+        manifest = {
+            "created_at": _utc_ts(),
+            "status": "skipped",
+            "stage": "resume",
+            "reason": "output_exists",
+            "backend": backend,
+            "device": device,
+            "n_items": len(spatials),
+            "temporal": _jsonable(temporal),
+            "output": _jsonable(output),
+            "spatials": [_jsonable(s) for s in spatials],
+            "models": [],
+        }
+    manifest["resume_skipped"] = True
+    manifest["resume_output_path"] = out_file
+    manifest.setdefault("status", "ok")
+    return manifest
 
 
 # -----------------------------------------------------------------------------
@@ -134,6 +272,13 @@ def export_batch(
     fail_on_bad_input: bool = False,
     chunk_size: int = 16,
     num_workers: int = 8,
+    continue_on_error: bool = False,
+    max_retries: int = 0,
+    retry_backoff_s: float = 0.0,
+    async_write: bool = True,
+    writer_workers: int = 2,
+    resume: bool = False,
+    show_progress: bool = True,
 ) -> Any:
     """Export inputs + embeddings for many spatials and many models.
 
@@ -141,9 +286,8 @@ def export_batch(
 
     - Accept any SpatialSpec list (like get_embeddings_batch).
     - Reuse cached embedder instances to avoid re-loading models/providers.
-    - When `save_inputs=True` and `save_embeddings=True` (and backend is GEE),
-      prefetch the raw GEE patch once and pass it to embedders via `input_chw`
-      to avoid downloading the same patch twice.
+    - For GEE backends, prefetch raw inputs once per (point, sensor) and reuse
+      them for input export and embedding inference.
     """
     from . import embedders  # noqa: F401 (ensure registration)
 
@@ -162,6 +306,7 @@ def export_batch(
     from .writers import SUPPORTED_FORMATS, get_extension
     if fmt not in SUPPORTED_FORMATS:
         raise ModelError(f"Unsupported export format: {format!r}. Supported: {SUPPORTED_FORMATS}.")
+    ext = get_extension(fmt)
 
     # validate specs early
     _validate_specs(spatial=spatials[0], temporal=temporal, output=output)
@@ -190,6 +335,16 @@ def export_batch(
 
     # combined mode
     if out_path is not None:
+        out_file = out_path if out_path.endswith(ext) else (out_path + ext)
+        if bool(resume) and os.path.exists(out_file):
+            return _combined_resume_manifest(
+                spatials=spatials,
+                temporal=temporal,
+                output=output,
+                backend=backend_n,
+                device=device,
+                out_file=out_file,
+            )
         return _export_combined_npz(
             spatials=spatials,
             temporal=temporal,
@@ -206,6 +361,10 @@ def export_batch(
             fail_on_bad_input=fail_on_bad_input,
             num_workers=num_workers,
             fmt=fmt,
+            continue_on_error=continue_on_error,
+            max_retries=max_retries,
+            retry_backoff_s=retry_backoff_s,
+            show_progress=show_progress,
         )
 
     # per-item mode (out_dir)
@@ -216,88 +375,236 @@ def export_batch(
     if len(names) != len(spatials):
         raise ModelError("names must have the same length as spatials.")
 
-    # When saving inputs + embeddings for on-the-fly models on GEE, prefetch so we don't download twice.
-    need_prefetch = bool(save_inputs) and backend_n == "gee"
-    pass_input_into_embedder = bool(save_inputs and save_embeddings and backend_n == "gee")
-
-    provider: Optional[GEEProvider] = None
-    if need_prefetch:
-        provider = GEEProvider(auto_auth=True)
-        provider.ensure_ready()
+    n = len(spatials)
+    progress = _create_progress(
+        enabled=bool(show_progress),
+        total=n,
+        desc="export_batch",
+        unit="point",
+    )
 
     manifests: List[Dict[str, Any]] = []
-
-    n = len(spatials)
-    csize = max(1, int(chunk_size))
-    for chunk_start in range(0, n, csize):
-        chunk_end = min(n, chunk_start + csize)
-        idxs = list(range(chunk_start, chunk_end))
-
-        # (i, sensor_cache_key) -> input_chw
-        inputs_cache: Dict[Tuple[int, str], np.ndarray] = {}
-        input_reports: Dict[Tuple[int, str], Dict[str, Any]] = {}
-
-        if need_prefetch and provider is not None:
-            tasks: List[Tuple[int, str, SensorSpec]] = []
-            seen: set[Tuple[int, str]] = set()
-            for i in idxs:
-                for m in models:
-                    sspec = resolved_sensor.get(m)
-                    if sspec is None:
-                        continue
-                    if "precomputed" in (model_type.get(m) or ""):
-                        continue
-                    skey = _sensor_cache_key(sspec)
-                    key = (i, skey)
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    tasks.append((i, skey, sspec))
-
-            if tasks:
-                from concurrent.futures import ThreadPoolExecutor, as_completed
-
-                def _fetch_one(ii: int, sk: str, ss: SensorSpec):
-                    assert provider is not None
-                    x = _fetch_gee_patch_raw(provider, spatial=spatials[ii], temporal=temporal, sensor=ss)
-                    rep = _inspect_input_raw(x, sensor=ss, name=f"gee_input_{sk}")
-                    return ii, sk, x, rep
-
-                mw = max(1, int(num_workers))
-                with ThreadPoolExecutor(max_workers=mw) as ex:
-                    futs = [ex.submit(_fetch_one, ii, sk, ss) for (ii, sk, ss) in tasks]
-                    for fut in as_completed(futs):
-                        ii, sk, x, rep = fut.result()
-                        inputs_cache[(ii, sk)] = x
-                        input_reports[(ii, sk)] = rep
-
-        # export each point in chunk
-        ext = get_extension(fmt)
-        for i in idxs:
+    pending_idxs: List[int] = []
+    try:
+        for i in range(n):
             out_file = os.path.join(out_dir, f"{names[i]}{ext}")
-            mani = _export_one_point_npz(
-                point_index=i,
-                spatial=spatials[i],
-                temporal=temporal,
-                models=models,
-                out_path=out_file,
-                backend=backend_n,
-                device=device,
-                output=output,
-                resolved_sensor=resolved_sensor,
-                model_type=model_type,
-                inputs_cache=inputs_cache,
-                input_reports=input_reports,
-                pass_input_into_embedder=pass_input_into_embedder,
-                save_inputs=save_inputs,
-                save_embeddings=save_embeddings,
-                save_manifest=save_manifest,
-                fail_on_bad_input=fail_on_bad_input,
-                fmt=fmt,
-            )
-            manifests.append(mani)
+            if bool(resume) and os.path.exists(out_file):
+                manifests.append(
+                    _point_resume_manifest(
+                        point_index=i,
+                        spatial=spatials[i],
+                        temporal=temporal,
+                        output=output,
+                        backend=backend_n,
+                        device=device,
+                        out_file=out_file,
+                    )
+                )
+                progress.update(1)
+            else:
+                pending_idxs.append(i)
 
-    return manifests
+        if not pending_idxs:
+            manifests.sort(key=lambda x: int(x.get("point_index", -1)))
+            return manifests
+
+        # For GEE, prefetch once and reuse for export and/or embedding inference.
+        need_prefetch = backend_n == "gee" and bool(save_inputs or save_embeddings) and bool(pending_idxs)
+        pass_input_into_embedder = backend_n == "gee" and bool(save_embeddings)
+
+        provider: Optional[GEEProvider] = None
+        if need_prefetch:
+            provider = GEEProvider(auto_auth=True)
+            _run_with_retry(
+                lambda: provider.ensure_ready(),
+                retries=max_retries,
+                backoff_s=retry_backoff_s,
+            )
+
+        csize = max(1, int(chunk_size))
+        for chunk_start in range(0, len(pending_idxs), csize):
+            idxs = pending_idxs[chunk_start: chunk_start + csize]
+
+            # (i, sensor_cache_key) -> input_chw
+            inputs_cache: Dict[Tuple[int, str], np.ndarray] = {}
+            input_reports: Dict[Tuple[int, str], Dict[str, Any]] = {}
+            prefetch_errors: Dict[Tuple[int, str], str] = {}
+
+            if need_prefetch and provider is not None:
+                tasks: List[Tuple[int, str, SensorSpec]] = []
+                seen: set[Tuple[int, str]] = set()
+                for i in idxs:
+                    for m in models:
+                        sspec = resolved_sensor.get(m)
+                        if sspec is None:
+                            continue
+                        if "precomputed" in (model_type.get(m) or ""):
+                            continue
+                        skey = _sensor_cache_key(sspec)
+                        key = (i, skey)
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        tasks.append((i, skey, sspec))
+
+                if tasks:
+                    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+                    def _fetch_one(ii: int, sk: str, ss: SensorSpec):
+                        assert provider is not None
+                        x = _run_with_retry(
+                            lambda: _fetch_gee_patch_raw(provider, spatial=spatials[ii], temporal=temporal, sensor=ss),
+                            retries=max_retries,
+                            backoff_s=retry_backoff_s,
+                        )
+                        rep = _inspect_input_raw(x, sensor=ss, name=f"gee_input_{sk}")
+                        return ii, sk, x, rep
+
+                    mw = max(1, int(num_workers))
+                    with ThreadPoolExecutor(max_workers=mw) as ex:
+                        fut_map = {ex.submit(_fetch_one, ii, sk, ss): (ii, sk) for (ii, sk, ss) in tasks}
+                        for fut in as_completed(fut_map):
+                            ii, sk = fut_map[fut]
+                            try:
+                                ii, sk, x, rep = fut.result()
+                            except Exception as e:
+                                if not continue_on_error:
+                                    raise
+                                prefetch_errors[(ii, sk)] = repr(e)
+                                continue
+                            if fail_on_bad_input and (not bool(rep.get("ok", True))):
+                                issues = (rep.get("report", {}) or {}).get("issues", [])
+                                err = RuntimeError(f"Input inspection failed for index={ii}, sensor={sk}: {issues}")
+                                if not continue_on_error:
+                                    raise err
+                                prefetch_errors[(ii, sk)] = repr(err)
+                                continue
+                            inputs_cache[(ii, sk)] = x
+                            input_reports[(ii, sk)] = rep
+
+            # export each point in chunk
+            writer_async = bool(async_write)
+            writer_mw = max(1, int(writer_workers))
+            write_futs = []
+            writer_ex = None
+            if writer_async:
+                from concurrent.futures import ThreadPoolExecutor
+                writer_ex = ThreadPoolExecutor(max_workers=writer_mw)
+            for i in idxs:
+                out_file = os.path.join(out_dir, f"{names[i]}{ext}")
+                try:
+                    arrays, manifest = _build_one_point_payload(
+                        point_index=i,
+                        spatial=spatials[i],
+                        temporal=temporal,
+                        models=models,
+                        backend=backend_n,
+                        device=device,
+                        output=output,
+                        resolved_sensor=resolved_sensor,
+                        model_type=model_type,
+                        inputs_cache=inputs_cache,
+                        input_reports=input_reports,
+                        prefetch_errors=prefetch_errors,
+                        pass_input_into_embedder=pass_input_into_embedder,
+                        save_inputs=save_inputs,
+                        save_embeddings=save_embeddings,
+                        fail_on_bad_input=fail_on_bad_input,
+                        continue_on_error=continue_on_error,
+                        max_retries=max_retries,
+                        retry_backoff_s=retry_backoff_s,
+                    )
+                except Exception as e:
+                    if not continue_on_error:
+                        if writer_ex is not None:
+                            writer_ex.shutdown(wait=False)
+                        raise
+                    manifests.append(
+                        _point_failure_manifest(
+                            point_index=i,
+                            spatial=spatials[i],
+                            temporal=temporal,
+                            output=output,
+                            backend=backend_n,
+                            device=device,
+                            stage="build",
+                            error=e,
+                        )
+                    )
+                    progress.update(1)
+                    continue
+
+                if writer_ex is not None:
+                    fut = writer_ex.submit(
+                        _write_one_payload,
+                        out_path=out_file,
+                        arrays=arrays,
+                        manifest=manifest,
+                        save_manifest=save_manifest,
+                        fmt=fmt,
+                        max_retries=max_retries,
+                        retry_backoff_s=retry_backoff_s,
+                    )
+                    write_futs.append((i, fut))
+                else:
+                    try:
+                        mani = _write_one_payload(
+                            out_path=out_file,
+                            arrays=arrays,
+                            manifest=manifest,
+                            save_manifest=save_manifest,
+                            fmt=fmt,
+                            max_retries=max_retries,
+                            retry_backoff_s=retry_backoff_s,
+                        )
+                    except Exception as e:
+                        if not continue_on_error:
+                            raise
+                        mani = _point_failure_manifest(
+                            point_index=i,
+                            spatial=spatials[i],
+                            temporal=temporal,
+                            output=output,
+                            backend=backend_n,
+                            device=device,
+                            stage="write",
+                            error=e,
+                        )
+                    manifests.append(mani)
+                    progress.update(1)
+
+            if writer_ex is not None:
+                from concurrent.futures import as_completed
+                try:
+                    fut_map = {fut: i for (i, fut) in write_futs}
+                    for fut in as_completed(fut_map):
+                        i = fut_map[fut]
+                        try:
+                            manifests.append(fut.result())
+                        except Exception as e:
+                            if not continue_on_error:
+                                raise
+                            manifests.append(
+                                _point_failure_manifest(
+                                    point_index=i,
+                                    spatial=spatials[i],
+                                    temporal=temporal,
+                                    output=output,
+                                    backend=backend_n,
+                                    device=device,
+                                    stage="write",
+                                    error=e,
+                                )
+                            )
+                        finally:
+                            progress.update(1)
+                finally:
+                    writer_ex.shutdown(wait=True)
+
+        manifests.sort(key=lambda x: int(x.get("point_index", -1)))
+        return manifests
+    finally:
+        progress.close()
 
 # -----------------------------------------------------------------------------
 # Internal: embedder caching
@@ -325,6 +632,39 @@ def _get_embedder_bundle_cached(model: str, backend: str, device: str, sensor_k:
     cls = get_embedder_cls(model)
     emb = cls()
     return emb, RLock()
+
+
+def _run_with_retry(
+    fn: Callable[[], _T],
+    *,
+    retries: int = 0,
+    backoff_s: float = 0.0,
+) -> _T:
+    """Run a callable with bounded retries and optional exponential backoff."""
+    tries = max(0, int(retries))
+    backoff = max(0.0, float(backoff_s))
+    last_err: Optional[Exception] = None
+    for attempt in range(tries + 1):
+        try:
+            return fn()
+        except Exception as e:  # pragma: no cover - exercised by call-sites
+            last_err = e
+            if attempt >= tries:
+                raise
+            if backoff > 0:
+                time.sleep(backoff * (2 ** attempt))
+    if last_err is not None:
+        raise last_err
+    raise RuntimeError("unreachable retry state")
+
+
+def _supports_batch_api(embedder: Any) -> bool:
+    """Return True when embedder overrides EmbedderBase.get_embeddings_batch."""
+    fn = getattr(type(embedder), "get_embeddings_batch", None)
+    if fn is None:
+        return False
+    from .embedders.base import EmbedderBase
+    return fn is not EmbedderBase.get_embeddings_batch
 
 
 # -----------------------------------------------------------------------------
@@ -394,6 +734,232 @@ def _inspect_input_raw(x_chw: np.ndarray, *, sensor: SensorSpec, name: str) -> D
     return {"ok": bool(rep.get("ok", False)), "report": rep, "sensor": _jsonable(sensor)}
 
 
+def _point_failure_manifest(
+    *,
+    point_index: int,
+    spatial: SpatialSpec,
+    temporal: Optional[TemporalSpec],
+    output: OutputSpec,
+    backend: str,
+    device: str,
+    stage: str,
+    error: Exception,
+) -> Dict[str, Any]:
+    return {
+        "created_at": _utc_ts(),
+        "point_index": int(point_index),
+        "status": "failed",
+        "stage": stage,
+        "error": repr(error),
+        "backend": backend,
+        "device": device,
+        "models": [],
+        "spatial": _jsonable(spatial),
+        "temporal": _jsonable(temporal),
+        "output": _jsonable(output),
+    }
+
+
+def _build_one_point_payload(
+    *,
+    point_index: int,
+    spatial: SpatialSpec,
+    temporal: Optional[TemporalSpec],
+    models: List[str],
+    backend: str,
+    device: str,
+    output: OutputSpec,
+    resolved_sensor: Dict[str, Optional[SensorSpec]],
+    model_type: Dict[str, str],
+    inputs_cache: Dict[Tuple[int, str], np.ndarray],
+    input_reports: Dict[Tuple[int, str], Dict[str, Any]],
+    prefetch_errors: Dict[Tuple[int, str], str],
+    pass_input_into_embedder: bool,
+    save_inputs: bool,
+    save_embeddings: bool,
+    fail_on_bad_input: bool,
+    continue_on_error: bool,
+    max_retries: int,
+    retry_backoff_s: float,
+) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
+    arrays: Dict[str, np.ndarray] = {}
+    manifest: Dict[str, Any] = {
+        "created_at": _utc_ts(),
+        "point_index": int(point_index),
+        "status": "ok",
+        "backend": backend,
+        "device": device,
+        "models": [],
+        "spatial": _jsonable(spatial),
+        "temporal": _jsonable(temporal),
+        "output": _jsonable(output),
+    }
+
+    try:
+        from importlib.metadata import version
+        manifest["package_version"] = version("rs-embed")
+    except Exception:
+        manifest["package_version"] = None
+
+    # local input cache: sensor_key -> x_chw
+    local_inp: Dict[str, np.ndarray] = {}
+    local_input_meta: Dict[str, Dict[str, Any]] = {}
+
+    for m in models:
+        m_entry: Dict[str, Any] = {"model": m, "status": "ok"}
+        sspec = resolved_sensor.get(m)
+        m_entry["sensor"] = _jsonable(sspec)
+
+        try:
+            # load embedder (cached)
+            sensor_k = _sensor_key(sspec)
+            embedder, lock = _get_embedder_bundle_cached(m.lower().strip(), backend, device, sensor_k)
+
+            # describe once per point per model (cheap)
+            try:
+                m_entry["describe"] = _jsonable(embedder.describe())
+            except Exception as e:
+                m_entry["describe"] = {"error": repr(e)}
+
+            # input: for on-the-fly models with a sensor
+            input_chw: Optional[np.ndarray] = None
+            report: Optional[Dict[str, Any]] = None
+            needs_provider_input = backend == "gee" and sspec is not None and "precomputed" not in (model_type.get(m) or "")
+            needs_input_for_embed = bool(pass_input_into_embedder and save_embeddings and needs_provider_input)
+            needs_input_for_export = bool(save_inputs and needs_provider_input)
+            if needs_input_for_embed or needs_input_for_export:
+                skey = _sensor_cache_key(sspec)
+                if skey in local_inp:
+                    input_chw = local_inp[skey]
+                else:
+                    cached = inputs_cache.get((point_index, skey))
+                    if cached is not None:
+                        input_chw = cached
+                        local_inp[skey] = input_chw
+                    else:
+                        # Fall back to direct fetch if chunk prefetch missed this item.
+                        pref_err = prefetch_errors.get((point_index, skey))
+                        if pref_err and continue_on_error:
+                            raise RuntimeError(
+                                f"Prefetch previously failed for model={m}, index={point_index}, sensor={skey}: {pref_err}"
+                            )
+                        prov = GEEProvider(auto_auth=True)
+                        _run_with_retry(
+                            lambda: prov.ensure_ready(),
+                            retries=max_retries,
+                            backoff_s=retry_backoff_s,
+                        )
+                        input_chw = _run_with_retry(
+                            lambda: _fetch_gee_patch_raw(prov, spatial=spatial, temporal=temporal, sensor=sspec),
+                            retries=max_retries,
+                            backoff_s=retry_backoff_s,
+                        )
+                        local_inp[skey] = input_chw
+
+                report = input_reports.get((point_index, skey))
+                if report is None and input_chw is not None:
+                    report = _inspect_input_raw(input_chw, sensor=sspec, name=f"gee_input_{skey}")
+
+                if fail_on_bad_input and report is not None and (not bool(report.get("ok", True))):
+                    issues = (report.get("report", {}) or {}).get("issues", [])
+                    raise RuntimeError(f"Input inspection failed for model={m}: {issues}")
+
+                if save_inputs and input_chw is not None:
+                    if skey in local_input_meta:
+                        input_meta = dict(local_input_meta[skey])
+                        input_meta["dedup_reused"] = True
+                    else:
+                        input_key = f"input_chw__{_sanitize_key(m)}"
+                        arrays[input_key] = np.asarray(input_chw, dtype=np.float32)
+                        input_meta = {
+                            "npz_key": input_key,
+                            "dtype": str(arrays[input_key].dtype),
+                            "shape": list(arrays[input_key].shape),
+                            "sha1": _sha1(arrays[input_key]),
+                            "inspection": _jsonable(report),
+                        }
+                        local_input_meta[skey] = dict(input_meta)
+                    m_entry["input"] = input_meta
+                else:
+                    m_entry["input"] = None
+            else:
+                m_entry["input"] = None
+
+            if save_embeddings:
+                def _infer_once():
+                    with lock:
+                        return embedder.get_embedding(
+                            spatial=spatial,
+                            temporal=temporal,
+                            sensor=sspec,
+                            output=output,
+                            backend=backend,
+                            device=device,
+                            input_chw=(input_chw if pass_input_into_embedder else None),
+                        )
+                emb = _run_with_retry(
+                    _infer_once,
+                    retries=max_retries,
+                    backoff_s=retry_backoff_s,
+                )
+                e_np = _embedding_to_numpy(emb)
+                emb_key = f"embedding__{_sanitize_key(m)}"
+                arrays[emb_key] = e_np
+                m_entry["embedding"] = {"npz_key": emb_key, "dtype": str(e_np.dtype), "shape": list(e_np.shape), "sha1": _sha1(e_np)}
+                m_entry["meta"] = _jsonable(emb.meta)
+            else:
+                m_entry["embedding"] = None
+                m_entry["meta"] = None
+        except Exception as e:
+            if not continue_on_error:
+                raise
+            m_entry["status"] = "failed"
+            m_entry["error"] = repr(e)
+            m_entry["input"] = m_entry.get("input")
+            m_entry["embedding"] = None
+            m_entry["meta"] = None
+
+        manifest["models"].append(m_entry)
+
+    n_failed = sum(1 for x in manifest["models"] if x.get("status") == "failed")
+    if n_failed == 0:
+        manifest["status"] = "ok"
+    elif n_failed < len(manifest["models"]):
+        manifest["status"] = "partial"
+    else:
+        manifest["status"] = "failed"
+    manifest["summary"] = {
+        "total_models": len(manifest["models"]),
+        "failed_models": n_failed,
+        "ok_models": len(manifest["models"]) - n_failed,
+    }
+    return arrays, manifest
+
+
+def _write_one_payload(
+    *,
+    out_path: str,
+    arrays: Dict[str, np.ndarray],
+    manifest: Dict[str, Any],
+    save_manifest: bool,
+    fmt: str,
+    max_retries: int,
+    retry_backoff_s: float,
+) -> Dict[str, Any]:
+    from .writers import write_arrays
+    return _run_with_retry(
+        lambda: write_arrays(
+            fmt=fmt,
+            out_path=out_path,
+            arrays=arrays,
+            manifest=_jsonable(manifest),
+            save_manifest=save_manifest,
+        ),
+        retries=max_retries,
+        backoff_s=retry_backoff_s,
+    )
+
+
 def _export_one_point_npz(
     *,
     point_index: int,
@@ -414,115 +980,40 @@ def _export_one_point_npz(
     save_manifest: bool,
     fail_on_bad_input: bool,
     fmt: str = "npz",
+    continue_on_error: bool = False,
+    max_retries: int = 0,
+    retry_backoff_s: float = 0.0,
 ) -> Dict[str, Any]:
-    arrays: Dict[str, np.ndarray] = {}
-    manifest: Dict[str, Any] = {
-        "created_at": _utc_ts(),
-        "backend": backend,
-        "device": device,
-        "models": [],
-        "spatial": _jsonable(spatial),
-        "temporal": _jsonable(temporal),
-        "output": _jsonable(output),
-    }
-
-    try:
-        from importlib.metadata import version
-        manifest["package_version"] = version("rs-embed")
-    except Exception:
-        manifest["package_version"] = None
-
-    # local input cache: sensor_key -> x_chw
-    local_inp: Dict[str, np.ndarray] = {}
-
-    for m in models:
-        m_entry: Dict[str, Any] = {"model": m}
-        sspec = resolved_sensor.get(m)
-        m_entry["sensor"] = _jsonable(sspec)
-
-        # load embedder (cached)
-        sensor_k = _sensor_key(sspec)
-        embedder, lock = _get_embedder_bundle_cached(m.lower().strip(), backend, device, sensor_k)
-
-        # describe once per point per model (cheap)
-        try:
-            m_entry["describe"] = _jsonable(embedder.describe())
-        except Exception as e:
-            m_entry["describe"] = {"error": repr(e)}
-
-        # input: only for on-the-fly models with a sensor
-        input_chw: Optional[np.ndarray] = None
-        report: Optional[Dict[str, Any]] = None
-        if save_inputs and backend == "gee" and sspec is not None and "precomputed" not in (model_type.get(m) or ""):
-            skey = _sensor_cache_key(sspec)
-            # try chunk cache first (we don't know index here; it might not exist)
-            # for one-point export we cache only in local_inp; export_batch fills local_inp before calling us
-            if skey in local_inp:
-                input_chw = local_inp[skey]
-            else:
-                # try batch-level cache
-                cached = inputs_cache.get((point_index, skey))
-                if cached is not None:
-                    input_chw = cached
-                    local_inp[skey] = input_chw
-                else:
-                    # fall back: just fetch once (should be rare when called from export_batch)
-                    prov = GEEProvider(auto_auth=True)
-                    prov.ensure_ready()
-                    input_chw = _fetch_gee_patch_raw(prov, spatial=spatial, temporal=temporal, sensor=sspec)
-                    local_inp[skey] = input_chw
-
-            # inspection report (from cache if available)
-            report = input_reports.get((point_index, skey))
-            if report is None:
-                report = _inspect_input_raw(input_chw, sensor=sspec, name=f"gee_input_{skey}")
-
-            input_key = f"input_chw__{_sanitize_key(m)}"
-            arrays[input_key] = np.asarray(input_chw, dtype=np.float32)
-
-            m_entry["input"] = {
-                "npz_key": input_key,
-                "dtype": str(arrays[input_key].dtype),
-                "shape": list(arrays[input_key].shape),
-                "sha1": _sha1(arrays[input_key]),
-                "inspection": _jsonable(report),
-            }
-
-            if fail_on_bad_input and report is not None and (not bool(report.get("ok", True))):
-                issues = (report.get("report", {}) or {}).get("issues", [])
-                raise RuntimeError(f"Input inspection failed for model={m}: {issues}")
-        else:
-            m_entry["input"] = None
-
-        # embeddings
-        if save_embeddings:
-            with lock:
-                emb = embedder.get_embedding(
-                    spatial=spatial,
-                    temporal=temporal,
-                    sensor=sspec,
-                    output=output,
-                    backend=backend,
-                    device=device,
-                    input_chw=(input_chw if pass_input_into_embedder else None),
-                )
-            e_np = _embedding_to_numpy(emb)
-            emb_key = f"embedding__{_sanitize_key(m)}"
-            arrays[emb_key] = e_np
-            m_entry["embedding"] = {"npz_key": emb_key, "dtype": str(e_np.dtype), "shape": list(e_np.shape), "sha1": _sha1(e_np)}
-            m_entry["meta"] = _jsonable(emb.meta)
-        else:
-            m_entry["embedding"] = None
-            m_entry["meta"] = None
-
-        manifest["models"].append(m_entry)
-
-    from .writers import write_arrays
-    manifest = write_arrays(
-        fmt=fmt, out_path=out_path, arrays=arrays,
-        manifest=_jsonable(manifest), save_manifest=save_manifest,
+    arrays, manifest = _build_one_point_payload(
+        point_index=point_index,
+        spatial=spatial,
+        temporal=temporal,
+        models=models,
+        backend=backend,
+        device=device,
+        output=output,
+        resolved_sensor=resolved_sensor,
+        model_type=model_type,
+        inputs_cache=inputs_cache,
+        input_reports=input_reports,
+        prefetch_errors={},
+        pass_input_into_embedder=pass_input_into_embedder,
+        save_inputs=save_inputs,
+        save_embeddings=save_embeddings,
+        fail_on_bad_input=fail_on_bad_input,
+        continue_on_error=continue_on_error,
+        max_retries=max_retries,
+        retry_backoff_s=retry_backoff_s,
     )
-    return manifest
+    return _write_one_payload(
+        out_path=out_path,
+        arrays=arrays,
+        manifest=manifest,
+        save_manifest=save_manifest,
+        fmt=fmt,
+        max_retries=max_retries,
+        retry_backoff_s=retry_backoff_s,
+    )
 
 
 def _export_combined_npz(
@@ -542,11 +1033,16 @@ def _export_combined_npz(
     fail_on_bad_input: bool,
     num_workers: int,
     fmt: str = "npz",
+    continue_on_error: bool = False,
+    max_retries: int = 0,
+    retry_backoff_s: float = 0.0,
+    show_progress: bool = False,
 ) -> Dict[str, Any]:
     # Simple combined implementation (no chunking): for large N prefer out_dir.
     arrays: Dict[str, np.ndarray] = {}
     manifest: Dict[str, Any] = {
         "created_at": _utc_ts(),
+        "status": "ok",
         "backend": backend,
         "device": device,
         "models": [],
@@ -557,18 +1053,23 @@ def _export_combined_npz(
     }
 
     provider: Optional[GEEProvider] = None
-    if save_inputs and backend == "gee":
+    if backend == "gee" and (save_inputs or save_embeddings):
         provider = GEEProvider(auto_auth=True)
-        provider.ensure_ready()
+        _run_with_retry(
+            lambda: provider.ensure_ready(),
+            retries=max_retries,
+            backoff_s=retry_backoff_s,
+        )
 
     # prefetch raw inputs in parallel per sensor
     inputs_cache: Dict[Tuple[int, str], np.ndarray] = {}
     input_reports: Dict[Tuple[int, str], Dict[str, Any]] = {}
+    prefetch_errors: Dict[Tuple[int, str], str] = {}
+    tasks: List[Tuple[int, str, SensorSpec]] = []
+    sensor_models: Dict[str, List[str]] = {}
     if provider is not None:
-        tasks: List[Tuple[int, str, SensorSpec]] = []
-        sensor_models: Dict[str, List[str]] = {}
         seen: set[Tuple[int, str]] = set()
-        for i, sp in enumerate(spatials):
+        for i, _sp in enumerate(spatials):
             for m in models:
                 sspec = resolved_sensor.get(m)
                 if sspec is None or "precomputed" in (model_type.get(m) or ""):
@@ -580,110 +1081,280 @@ def _export_combined_npz(
                     continue
                 seen.add(key)
                 tasks.append((i, skey, sspec))
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-        def _fetch_one(i: int, skey: str, sspec: SensorSpec):
-            assert provider is not None
-            x = _fetch_gee_patch_raw(provider, spatial=spatials[i], temporal=temporal, sensor=sspec)
-            rep = _inspect_input_raw(x, sensor=sspec, name=f"gee_input_{skey}")
-            return i, skey, x, rep
-        mw = max(1, int(num_workers))
-        with ThreadPoolExecutor(max_workers=mw) as ex:
-            futs = [ex.submit(_fetch_one, i, sk, ss) for (i, sk, ss) in tasks]
-            for fut in as_completed(futs):
-                i, skey, x, rep = fut.result()
-                if fail_on_bad_input and (not bool(rep.get("ok", True))):
-                    issues = (rep.get("report", {}) or {}).get("issues", [])
-                    mlist = sorted(set(sensor_models.get(skey, [])))
-                    raise RuntimeError(
-                        f"Input inspection failed for index={i}, models={mlist}: {issues}"
-                    )
-                inputs_cache[(i, skey)] = x
-                input_reports[(i, skey)] = rep
 
-    # compute embeddings and fill arrays
-    for m in models:
-        m_entry: Dict[str, Any] = {"model": m, "sensor": _jsonable(resolved_sensor.get(m))}
-        sspec = resolved_sensor.get(m)
-        sensor_k = _sensor_key(sspec)
-        embedder, lock = _get_embedder_bundle_cached(m.lower().strip(), backend, device, sensor_k)
-        try:
-            m_entry["describe"] = _jsonable(embedder.describe())
-        except Exception as e:
-            m_entry["describe"] = {"error": repr(e)}
-
-        # inputs: store as [N,C,H,W] if possible (same shape)
-        if save_inputs and backend == "gee" and sspec is not None and "precomputed" not in (model_type.get(m) or ""):
-            skey = _sensor_cache_key(sspec)
-            xs = []
-            ok = True
-            for i in range(len(spatials)):
-                x = inputs_cache.get((i, skey))
-                if x is None:
-                    ok = False
-                    break
-                xs.append(np.asarray(x, dtype=np.float32))
-            if ok:
-                try:
-                    arr = np.stack(xs, axis=0)
-                    in_key = f"inputs_bchw__{_sanitize_key(m)}"
-                    arrays[in_key] = arr
-                    m_entry["inputs"] = {"npz_key": in_key, "shape": list(arr.shape), "dtype": str(arr.dtype)}
-                except Exception:
-                    # fallback: per-item keys
-                    keys = []
-                    for i, x in enumerate(xs):
-                        k = f"input_chw__{_sanitize_key(m)}__{i:05d}"
-                        arrays[k] = x
-                        keys.append(k)
-                    m_entry["inputs"] = {"npz_keys": keys}
-            else:
-                m_entry["inputs"] = None
-        else:
-            m_entry["inputs"] = None
-
-        if save_embeddings:
-            embs = []
-            metas = []
-            with lock:
-                for i, sp in enumerate(spatials):
-                    inp = None
-                    if save_inputs and backend == "gee" and sspec is not None and "precomputed" not in (model_type.get(m) or ""):
-                        skey = _sensor_cache_key(sspec)
-                        inp = inputs_cache.get((i, skey))
-                    emb = embedder.get_embedding(
-                        spatial=sp,
-                        temporal=temporal,
-                        sensor=sspec,
-                        output=output,
-                        backend=backend,
-                        device=device,
-                        input_chw=inp,
-                    )
-                    embs.append(_embedding_to_numpy(emb))
-                    metas.append(_jsonable(emb.meta))
-            # try stack
-            try:
-                e_arr = np.stack(embs, axis=0)
-                e_key = f"embeddings__{_sanitize_key(m)}"
-                arrays[e_key] = e_arr
-                m_entry["embeddings"] = {"npz_key": e_key, "shape": list(e_arr.shape), "dtype": str(e_arr.dtype)}
-            except Exception:
-                keys = []
-                for i, e in enumerate(embs):
-                    k = f"embedding__{_sanitize_key(m)}__{i:05d}"
-                    arrays[k] = e
-                    keys.append(k)
-                m_entry["embeddings"] = {"npz_keys": keys}
-            m_entry["metas"] = metas
-        else:
-            m_entry["embeddings"] = None
-            m_entry["metas"] = None
-
-        manifest["models"].append(m_entry)
-
-    from .writers import write_arrays
-    manifest = write_arrays(
-        fmt=fmt, out_path=out_path, arrays=arrays,
-        manifest=_jsonable(manifest), save_manifest=save_manifest,
+    progress = _create_progress(
+        enabled=bool(show_progress),
+        total=(len(tasks) + len(models)),
+        desc="export_batch[combined]",
+        unit="step",
     )
-    return manifest
+    try:
+        if provider is not None and tasks:
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            def _fetch_one(i: int, skey: str, sspec: SensorSpec):
+                assert provider is not None
+                x = _run_with_retry(
+                    lambda: _fetch_gee_patch_raw(provider, spatial=spatials[i], temporal=temporal, sensor=sspec),
+                    retries=max_retries,
+                    backoff_s=retry_backoff_s,
+                )
+                rep = _inspect_input_raw(x, sensor=sspec, name=f"gee_input_{skey}")
+                return i, skey, x, rep
+
+            mw = max(1, int(num_workers))
+            with ThreadPoolExecutor(max_workers=mw) as ex:
+                fut_map = {ex.submit(_fetch_one, i, sk, ss): (i, sk) for (i, sk, ss) in tasks}
+                for fut in as_completed(fut_map):
+                    i, skey = fut_map[fut]
+                    try:
+                        i, skey, x, rep = fut.result()
+                    except Exception as e:
+                        if not continue_on_error:
+                            raise
+                        prefetch_errors[(i, skey)] = repr(e)
+                    else:
+                        if fail_on_bad_input and (not bool(rep.get("ok", True))):
+                            issues = (rep.get("report", {}) or {}).get("issues", [])
+                            mlist = sorted(set(sensor_models.get(skey, [])))
+                            err = RuntimeError(f"Input inspection failed for index={i}, models={mlist}: {issues}")
+                            if not continue_on_error:
+                                raise err
+                            prefetch_errors[(i, skey)] = repr(err)
+                            continue
+                        inputs_cache[(i, skey)] = x
+                        input_reports[(i, skey)] = rep
+                    finally:
+                        progress.update(1)
+
+        def _get_or_fetch_input(i: int, skey: str, sspec: SensorSpec) -> np.ndarray:
+            hit = inputs_cache.get((i, skey))
+            if hit is not None:
+                return hit
+            pref_err = prefetch_errors.get((i, skey))
+            if pref_err:
+                raise RuntimeError(f"Prefetch previously failed for index={i}, sensor={skey}: {pref_err}")
+            if provider is None:
+                raise RuntimeError(f"Missing provider for input fetch: index={i}, sensor={skey}")
+            x = _run_with_retry(
+                lambda: _fetch_gee_patch_raw(provider, spatial=spatials[i], temporal=temporal, sensor=sspec),
+                retries=max_retries,
+                backoff_s=retry_backoff_s,
+            )
+            rep = _inspect_input_raw(x, sensor=sspec, name=f"gee_input_{skey}")
+            if fail_on_bad_input and (not bool(rep.get("ok", True))):
+                issues = (rep.get("report", {}) or {}).get("issues", [])
+                raise RuntimeError(f"Input inspection failed for index={i}, sensor={skey}: {issues}")
+            inputs_cache[(i, skey)] = x
+            input_reports[(i, skey)] = rep
+            return x
+
+        input_refs_by_sensor: Dict[str, Dict[str, Any]] = {}
+
+        # compute embeddings and fill arrays
+        for m in models:
+            m_entry: Dict[str, Any] = {
+                "model": m,
+                "sensor": _jsonable(resolved_sensor.get(m)),
+                "status": "ok",
+            }
+            sspec = resolved_sensor.get(m)
+            try:
+                sensor_k = _sensor_key(sspec)
+                embedder, lock = _get_embedder_bundle_cached(m.lower().strip(), backend, device, sensor_k)
+                try:
+                    m_entry["describe"] = _jsonable(embedder.describe())
+                except Exception as e:
+                    m_entry["describe"] = {"error": repr(e)}
+
+                needs_provider_input = backend == "gee" and sspec is not None and "precomputed" not in (model_type.get(m) or "")
+                skey = _sensor_cache_key(sspec) if needs_provider_input and sspec is not None else None
+
+                # inputs: store once per sensor and let other models reference.
+                if save_inputs and needs_provider_input and skey is not None:
+                    if skey in input_refs_by_sensor:
+                        m_entry["inputs"] = {**input_refs_by_sensor[skey], "dedup_reused": True}
+                    else:
+                        xs = []
+                        missing = []
+                        for i in range(len(spatials)):
+                            try:
+                                x = _get_or_fetch_input(i, skey, sspec)
+                            except Exception as e:
+                                missing.append((i, repr(e)))
+                                continue
+                            xs.append(np.asarray(x, dtype=np.float32))
+                        if missing and not continue_on_error:
+                            raise RuntimeError(f"Missing prefetched inputs for model={m}: {missing}")
+                        if not xs:
+                            m_entry["inputs"] = None
+                        else:
+                            try:
+                                arr = np.stack(xs, axis=0)
+                                in_key = f"inputs_bchw__{_sanitize_key(m)}"
+                                arrays[in_key] = arr
+                                ref = {"npz_key": in_key, "shape": list(arr.shape), "dtype": str(arr.dtype)}
+                                input_refs_by_sensor[skey] = dict(ref)
+                                m_entry["inputs"] = ref
+                            except Exception:
+                                keys = []
+                                for i in range(len(spatials)):
+                                    try:
+                                        x = _get_or_fetch_input(i, skey, sspec)
+                                    except Exception:
+                                        continue
+                                    k = f"input_chw__{_sanitize_key(m)}__{i:05d}"
+                                    arrays[k] = np.asarray(x, dtype=np.float32)
+                                    keys.append(k)
+                                ref = {"npz_keys": keys}
+                                input_refs_by_sensor[skey] = dict(ref)
+                                m_entry["inputs"] = ref
+                else:
+                    m_entry["inputs"] = None
+
+                if save_embeddings:
+                    n = len(spatials)
+                    embs_by_idx: List[Optional[np.ndarray]] = [None] * n
+                    metas_by_idx: List[Optional[Dict[str, Any]]] = [None] * n
+                    errors_by_idx: Dict[int, str] = {}
+
+                    def _infer_one(i: int) -> Embedding:
+                        inp = None
+                        if needs_provider_input and skey is not None and sspec is not None:
+                            inp = _get_or_fetch_input(i, skey, sspec)
+                        with lock:
+                            return embedder.get_embedding(
+                                spatial=spatials[i],
+                                temporal=temporal,
+                                sensor=sspec,
+                                output=output,
+                                backend=backend,
+                                device=device,
+                                input_chw=inp,
+                            )
+
+                    can_batch = _supports_batch_api(embedder) and not needs_provider_input
+                    batch_error: Optional[Exception] = None
+                    if can_batch:
+                        try:
+                            def _infer_batch():
+                                with lock:
+                                    return embedder.get_embeddings_batch(
+                                        spatials=spatials,
+                                        temporal=temporal,
+                                        sensor=sspec,
+                                        output=output,
+                                        backend=backend,
+                                        device=device,
+                                    )
+                            batch_out = _run_with_retry(
+                                _infer_batch,
+                                retries=max_retries,
+                                backoff_s=retry_backoff_s,
+                            )
+                            if len(batch_out) != n:
+                                raise RuntimeError(
+                                    f"Model {m} returned {len(batch_out)} embeddings for {n} inputs."
+                                )
+                            for i, emb in enumerate(batch_out):
+                                embs_by_idx[i] = _embedding_to_numpy(emb)
+                                metas_by_idx[i] = _jsonable(emb.meta)
+                        except Exception as e:
+                            batch_error = e
+                            if not continue_on_error:
+                                raise
+
+                    if (not can_batch) or (batch_error is not None):
+                        for i in range(n):
+                            try:
+                                emb = _run_with_retry(
+                                    lambda i=i: _infer_one(i),
+                                    retries=max_retries,
+                                    backoff_s=retry_backoff_s,
+                                )
+                                embs_by_idx[i] = _embedding_to_numpy(emb)
+                                metas_by_idx[i] = _jsonable(emb.meta)
+                            except Exception as e:
+                                if not continue_on_error:
+                                    raise
+                                errors_by_idx[i] = repr(e)
+
+                    ok_indices = [i for i, e in enumerate(embs_by_idx) if e is not None]
+                    if ok_indices:
+                        try:
+                            e_arr = np.stack([embs_by_idx[i] for i in ok_indices], axis=0)  # type: ignore[list-item]
+                            if len(ok_indices) == n:
+                                e_key = f"embeddings__{_sanitize_key(m)}"
+                                arrays[e_key] = e_arr
+                                m_entry["embeddings"] = {"npz_key": e_key, "shape": list(e_arr.shape), "dtype": str(e_arr.dtype)}
+                            else:
+                                keys = []
+                                index_map = []
+                                for j, i in enumerate(ok_indices):
+                                    k = f"embedding__{_sanitize_key(m)}__{i:05d}"
+                                    arrays[k] = e_arr[j]
+                                    keys.append(k)
+                                    index_map.append(i)
+                                m_entry["embeddings"] = {"npz_keys": keys, "indices": index_map}
+                        except Exception:
+                            keys = []
+                            index_map = []
+                            for i in ok_indices:
+                                k = f"embedding__{_sanitize_key(m)}__{i:05d}"
+                                arrays[k] = embs_by_idx[i]  # type: ignore[index]
+                                keys.append(k)
+                                index_map.append(i)
+                            m_entry["embeddings"] = {"npz_keys": keys, "indices": index_map}
+                    else:
+                        m_entry["embeddings"] = None
+
+                    m_entry["metas"] = metas_by_idx
+                    if errors_by_idx:
+                        m_entry["failed_indices"] = sorted(errors_by_idx.keys())
+                        m_entry["errors_by_index"] = errors_by_idx
+                        if ok_indices:
+                            m_entry["status"] = "partial"
+                        else:
+                            m_entry["status"] = "failed"
+                else:
+                    m_entry["embeddings"] = None
+                    m_entry["metas"] = None
+            except Exception as e:
+                if not continue_on_error:
+                    raise
+                m_entry["status"] = "failed"
+                m_entry["error"] = repr(e)
+                m_entry["embeddings"] = None
+                m_entry["metas"] = None
+            finally:
+                progress.update(1)
+
+            manifest["models"].append(m_entry)
+
+        n_failed = sum(1 for x in manifest["models"] if x.get("status") == "failed")
+        n_partial = sum(1 for x in manifest["models"] if x.get("status") == "partial")
+        if n_failed == 0 and n_partial == 0:
+            manifest["status"] = "ok"
+        elif n_failed < len(manifest["models"]):
+            manifest["status"] = "partial"
+        else:
+            manifest["status"] = "failed"
+        manifest["summary"] = {
+            "total_models": len(manifest["models"]),
+            "failed_models": n_failed,
+            "partial_models": n_partial,
+            "ok_models": len(manifest["models"]) - n_failed - n_partial,
+        }
+
+        manifest = _write_one_payload(
+            out_path=out_path,
+            arrays=arrays,
+            manifest=manifest,
+            save_manifest=save_manifest,
+            fmt=fmt,
+            max_retries=max_retries,
+            retry_backoff_s=retry_backoff_s,
+        )
+        return manifest
+    finally:
+        progress.close()
