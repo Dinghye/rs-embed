@@ -24,7 +24,7 @@ from .core.embedding import Embedding
 from .core.errors import ModelError
 from .core.registry import get_embedder_cls
 from .core.specs import OutputSpec, SensorSpec, SpatialSpec, TemporalSpec
-from .providers.gee import GEEProvider
+from .providers.gee import GEEProvider, _resolve_band_aliases
 
 _T = TypeVar("_T")
 
@@ -411,6 +411,17 @@ def export_batch(
         # For GEE, prefetch once and reuse for export and/or embedding inference.
         need_prefetch = backend_n == "gee" and bool(save_inputs or save_embeddings) and bool(pending_idxs)
         pass_input_into_embedder = backend_n == "gee" and bool(save_embeddings)
+        (
+            sensor_by_key,
+            fetch_sensor_by_key,
+            sensor_to_fetch,
+            sensor_models,
+            fetch_members,
+        ) = _build_gee_prefetch_plan(
+            models=models,
+            resolved_sensor=resolved_sensor,
+            model_type=model_type,
+        )
 
         provider: Optional[GEEProvider] = None
         if need_prefetch:
@@ -431,21 +442,11 @@ def export_batch(
             prefetch_errors: Dict[Tuple[int, str], str] = {}
 
             if need_prefetch and provider is not None:
-                tasks: List[Tuple[int, str, SensorSpec]] = []
-                seen: set[Tuple[int, str]] = set()
-                for i in idxs:
-                    for m in models:
-                        sspec = resolved_sensor.get(m)
-                        if sspec is None:
-                            continue
-                        if "precomputed" in (model_type.get(m) or ""):
-                            continue
-                        skey = _sensor_cache_key(sspec)
-                        key = (i, skey)
-                        if key in seen:
-                            continue
-                        seen.add(key)
-                        tasks.append((i, skey, sspec))
+                tasks = [
+                    (i, fetch_key, fetch_sensor)
+                    for i in idxs
+                    for fetch_key, fetch_sensor in fetch_sensor_by_key.items()
+                ]
 
                 if tasks:
                     from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -457,8 +458,7 @@ def export_batch(
                             retries=max_retries,
                             backoff_s=retry_backoff_s,
                         )
-                        rep = _inspect_input_raw(x, sensor=ss, name=f"gee_input_{sk}")
-                        return ii, sk, x, rep
+                        return ii, sk, x
 
                     mw = max(1, int(num_workers))
                     with ThreadPoolExecutor(max_workers=mw) as ex:
@@ -466,21 +466,32 @@ def export_batch(
                         for fut in as_completed(fut_map):
                             ii, sk = fut_map[fut]
                             try:
-                                ii, sk, x, rep = fut.result()
+                                ii, sk, x = fut.result()
                             except Exception as e:
                                 if not continue_on_error:
                                     raise
-                                prefetch_errors[(ii, sk)] = repr(e)
+                                err_s = repr(e)
+                                for member_skey in fetch_members.get(sk, []):
+                                    prefetch_errors[(ii, member_skey)] = err_s
                                 continue
-                            if fail_on_bad_input and (not bool(rep.get("ok", True))):
-                                issues = (rep.get("report", {}) or {}).get("issues", [])
-                                err = RuntimeError(f"Input inspection failed for index={ii}, sensor={sk}: {issues}")
-                                if not continue_on_error:
-                                    raise err
-                                prefetch_errors[(ii, sk)] = repr(err)
-                                continue
-                            inputs_cache[(ii, sk)] = x
-                            input_reports[(ii, sk)] = rep
+                            for member_skey in fetch_members.get(sk, []):
+                                member_idx = sensor_to_fetch[member_skey][1]
+                                x_member = _select_prefetched_channels(x, member_idx)
+                                if fail_on_bad_input:
+                                    sspec_member = sensor_by_key[member_skey]
+                                    rep = _inspect_input_raw(x_member, sensor=sspec_member, name=f"gee_input_{member_skey}")
+                                    if not bool(rep.get("ok", True)):
+                                        issues = (rep.get("report", {}) or {}).get("issues", [])
+                                        mlist = sorted(set(sensor_models.get(member_skey, [])))
+                                        err = RuntimeError(
+                                            f"Input inspection failed for index={ii}, sensor={member_skey}, models={mlist}: {issues}"
+                                        )
+                                        if not continue_on_error:
+                                            raise err
+                                        prefetch_errors[(ii, member_skey)] = repr(err)
+                                        continue
+                                    input_reports[(ii, member_skey)] = rep
+                                inputs_cache[(ii, member_skey)] = x_member
 
             # export each point in chunk
             writer_async = bool(async_write)
@@ -665,6 +676,91 @@ def _supports_batch_api(embedder: Any) -> bool:
         return False
     from .embedders.base import EmbedderBase
     return fn is not EmbedderBase.get_embeddings_batch
+
+
+def _sensor_fetch_group_key(sensor: SensorSpec) -> Tuple[str, int, int, float, str]:
+    """Fetch identity excluding bands; used to build reusable band supersets."""
+    return (
+        str(sensor.collection),
+        int(sensor.scale_m),
+        int(sensor.cloudy_pct),
+        float(sensor.fill_value),
+        str(sensor.composite),
+    )
+
+
+def _select_prefetched_channels(x_chw: np.ndarray, idx: Tuple[int, ...]) -> np.ndarray:
+    if len(idx) == x_chw.shape[0] and all(i == j for j, i in enumerate(idx)):
+        return x_chw
+    return x_chw[list(idx), :, :]
+
+
+def _build_gee_prefetch_plan(
+    *,
+    models: List[str],
+    resolved_sensor: Dict[str, Optional[SensorSpec]],
+    model_type: Dict[str, str],
+) -> Tuple[
+    Dict[str, SensorSpec],  # sensor_by_key
+    Dict[str, SensorSpec],  # fetch_sensor_by_key
+    Dict[str, Tuple[str, Tuple[int, ...]]],  # sensor_key -> (fetch_key, channel_idx)
+    Dict[str, List[str]],  # sensor_models
+    Dict[str, List[str]],  # fetch_members
+]:
+    sensor_by_key: Dict[str, SensorSpec] = {}
+    sensor_models: Dict[str, List[str]] = {}
+    for m in models:
+        sspec = resolved_sensor.get(m)
+        if sspec is None or "precomputed" in (model_type.get(m) or ""):
+            continue
+        skey = _sensor_cache_key(sspec)
+        sensor_by_key.setdefault(skey, sspec)
+        sensor_models.setdefault(skey, []).append(m)
+
+    groups: Dict[Tuple[str, int, int, float, str], List[Tuple[str, SensorSpec, Tuple[str, ...]]]] = {}
+    for skey, sspec in sensor_by_key.items():
+        gkey = _sensor_fetch_group_key(sspec)
+        groups.setdefault(gkey, []).append((skey, sspec, _resolve_band_aliases(sspec.collection, sspec.bands)))
+
+    fetch_sensor_by_key: Dict[str, SensorSpec] = {}
+    sensor_to_fetch: Dict[str, Tuple[str, Tuple[int, ...]]] = {}
+    fetch_members: Dict[str, List[str]] = {}
+
+    for members in groups.values():
+        union_bands: List[str] = []
+        seen: set[str] = set()
+        for _, _, rbands in members:
+            for b in rbands:
+                if b not in seen:
+                    seen.add(b)
+                    union_bands.append(b)
+        if not union_bands:
+            continue
+
+        base = members[0][1]
+        fetch_sensor = SensorSpec(
+            collection=str(base.collection),
+            bands=tuple(union_bands),
+            scale_m=int(base.scale_m),
+            cloudy_pct=int(base.cloudy_pct),
+            fill_value=float(base.fill_value),
+            composite=str(base.composite),
+            check_input=bool(getattr(base, "check_input", False)),
+            check_raise=bool(getattr(base, "check_raise", True)),
+            check_save_dir=getattr(base, "check_save_dir", None),
+        )
+        fetch_key = _sensor_cache_key(fetch_sensor)
+        fetch_sensor_by_key[fetch_key] = fetch_sensor
+        fetch_members.setdefault(fetch_key, [])
+
+        band_pos = {b: i for i, b in enumerate(fetch_sensor.bands)}
+        for member_key, _member_sensor, member_bands in members:
+            idx = tuple(band_pos[b] for b in member_bands)
+            sensor_to_fetch[member_key] = (fetch_key, idx)
+            if member_key not in fetch_members[fetch_key]:
+                fetch_members[fetch_key].append(member_key)
+
+    return sensor_by_key, fetch_sensor_by_key, sensor_to_fetch, sensor_models, fetch_members
 
 
 # -----------------------------------------------------------------------------
@@ -1066,21 +1162,21 @@ def _export_combined_npz(
     input_reports: Dict[Tuple[int, str], Dict[str, Any]] = {}
     prefetch_errors: Dict[Tuple[int, str], str] = {}
     tasks: List[Tuple[int, str, SensorSpec]] = []
-    sensor_models: Dict[str, List[str]] = {}
+    (
+        sensor_by_key,
+        fetch_sensor_by_key,
+        sensor_to_fetch,
+        sensor_models,
+        fetch_members,
+    ) = _build_gee_prefetch_plan(
+        models=models,
+        resolved_sensor=resolved_sensor,
+        model_type=model_type,
+    )
     if provider is not None:
-        seen: set[Tuple[int, str]] = set()
         for i, _sp in enumerate(spatials):
-            for m in models:
-                sspec = resolved_sensor.get(m)
-                if sspec is None or "precomputed" in (model_type.get(m) or ""):
-                    continue
-                skey = _sensor_cache_key(sspec)
-                sensor_models.setdefault(skey, []).append(m)
-                key = (i, skey)
-                if key in seen:
-                    continue
-                seen.add(key)
-                tasks.append((i, skey, sspec))
+            for fetch_key, fetch_sensor in fetch_sensor_by_key.items():
+                tasks.append((i, fetch_key, fetch_sensor))
 
     progress = _create_progress(
         enabled=bool(show_progress),
@@ -1099,8 +1195,7 @@ def _export_combined_npz(
                     retries=max_retries,
                     backoff_s=retry_backoff_s,
                 )
-                rep = _inspect_input_raw(x, sensor=sspec, name=f"gee_input_{skey}")
-                return i, skey, x, rep
+                return i, skey, x
 
             mw = max(1, int(num_workers))
             with ThreadPoolExecutor(max_workers=mw) as ex:
@@ -1108,22 +1203,32 @@ def _export_combined_npz(
                 for fut in as_completed(fut_map):
                     i, skey = fut_map[fut]
                     try:
-                        i, skey, x, rep = fut.result()
+                        i, skey, x = fut.result()
                     except Exception as e:
                         if not continue_on_error:
                             raise
-                        prefetch_errors[(i, skey)] = repr(e)
+                        err_s = repr(e)
+                        for member_skey in fetch_members.get(skey, []):
+                            prefetch_errors[(i, member_skey)] = err_s
                     else:
-                        if fail_on_bad_input and (not bool(rep.get("ok", True))):
-                            issues = (rep.get("report", {}) or {}).get("issues", [])
-                            mlist = sorted(set(sensor_models.get(skey, [])))
-                            err = RuntimeError(f"Input inspection failed for index={i}, models={mlist}: {issues}")
-                            if not continue_on_error:
-                                raise err
-                            prefetch_errors[(i, skey)] = repr(err)
-                            continue
-                        inputs_cache[(i, skey)] = x
-                        input_reports[(i, skey)] = rep
+                        for member_skey in fetch_members.get(skey, []):
+                            member_idx = sensor_to_fetch[member_skey][1]
+                            x_member = _select_prefetched_channels(x, member_idx)
+                            if fail_on_bad_input:
+                                sspec_member = sensor_by_key[member_skey]
+                                rep = _inspect_input_raw(x_member, sensor=sspec_member, name=f"gee_input_{member_skey}")
+                                if not bool(rep.get("ok", True)):
+                                    issues = (rep.get("report", {}) or {}).get("issues", [])
+                                    mlist = sorted(set(sensor_models.get(member_skey, [])))
+                                    err = RuntimeError(
+                                        f"Input inspection failed for index={i}, models={mlist}, sensor={member_skey}: {issues}"
+                                    )
+                                    if not continue_on_error:
+                                        raise err
+                                    prefetch_errors[(i, member_skey)] = repr(err)
+                                    continue
+                                input_reports[(i, member_skey)] = rep
+                            inputs_cache[(i, member_skey)] = x_member
                     finally:
                         progress.update(1)
 

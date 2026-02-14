@@ -1,0 +1,610 @@
+from __future__ import annotations
+
+import importlib.util
+import os
+import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import date
+from functools import lru_cache
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
+import xarray as xr
+
+from ..core.embedding import Embedding
+from ..core.errors import ModelError
+from ..core.registry import register
+from ..core.specs import OutputSpec, SensorSpec, SpatialSpec, TemporalSpec
+from ..providers.gee import GEEProvider
+from .base import EmbedderBase
+from .meta_utils import build_meta, temporal_midpoint_str, temporal_to_range
+from ._vit_mae_utils import ensure_torch
+
+
+_S2_10_BANDS = ["B2", "B3", "B4", "B5", "B6", "B7", "B8", "B8A", "B11", "B12"]
+
+
+def _resolve_device(device: str) -> str:
+    if device != "auto":
+        return device
+    try:
+        import torch
+
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    except Exception:
+        return "cpu"
+
+
+def _resize_tchw(x_tchw: np.ndarray, *, out_hw: int) -> np.ndarray:
+    ensure_torch()
+    import torch
+    import torch.nn.functional as F
+
+    if x_tchw.ndim != 4:
+        raise ModelError(f"Expected [T,C,H,W], got {x_tchw.shape}")
+    x = torch.from_numpy(x_tchw.astype(np.float32, copy=False))
+    y = F.interpolate(x, size=(int(out_hw), int(out_hw)), mode="bilinear", align_corners=False)
+    return y.detach().cpu().numpy().astype(np.float32)
+
+
+def _normalize_series(x_tchw: np.ndarray, *, mode: str) -> np.ndarray:
+    mode_l = str(mode).lower().strip()
+    x = x_tchw.astype(np.float32, copy=False)
+    if mode_l in ("none", "off", "raw"):
+        return np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+    if mode_l in ("unit", "unit_scale", "reflectance"):
+        x = np.clip(x / 10000.0, 0.0, 1.0)
+        return np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+    if mode_l in ("per_tile_zscore", "zscore", "tile_zscore"):
+        mu = np.nanmean(x, axis=(0, 2, 3), keepdims=True)
+        sigma = np.nanstd(x, axis=(0, 2, 3), keepdims=True)
+        sigma = np.where(np.isfinite(sigma), sigma, 0.0)
+        sigma = np.maximum(sigma, 1e-6)
+        x = (x - mu) / sigma
+        return np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+    raise ModelError(
+        f"Unknown AnySat normalization mode '{mode}'. "
+        "Use one of: none, unit_scale, per_tile_zscore."
+    )
+
+
+def _midpoint_doy0(temporal: TemporalSpec) -> int:
+    mid = temporal_midpoint_str(temporal)
+    if mid is None:
+        return 182
+    d = date.fromisoformat(mid)
+    # AnySat docs: 01/01 -> 0 ; 31/12 -> 364
+    doy0 = int(d.timetuple().tm_yday) - 1
+    return max(0, min(364, doy0))
+
+
+def _fetch_s2_10_raw_chw(
+    provider: GEEProvider,
+    spatial: SpatialSpec,
+    temporal: TemporalSpec,
+    *,
+    scale_m: int = 10,
+    cloudy_pct: int = 30,
+    composite: str = "median",
+    fill_value: float = 0.0,
+) -> np.ndarray:
+    import ee
+
+    region = provider.get_region_3857(spatial)
+    col = (
+        ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
+        .filterDate(temporal.start, temporal.end)
+        .filterBounds(region)
+        .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", cloudy_pct))
+    )
+    if composite == "median":
+        img = col.median()
+    elif composite == "mosaic":
+        img = col.mosaic()
+    else:
+        raise ModelError(f"Unknown composite='{composite}'. Use 'median' or 'mosaic'.")
+
+    img = img.select(_S2_10_BANDS).reproject(crs="EPSG:3857", scale=scale_m)
+    rect = img.sampleRectangle(region=region, defaultValue=float(fill_value)).getInfo()
+    props = rect["properties"]
+    arrs = [np.array(props[b], dtype=np.float32) for b in _S2_10_BANDS]
+    raw = np.stack(arrs, axis=0).astype(np.float32)
+    raw = np.nan_to_num(raw, nan=0.0, posinf=0.0, neginf=0.0)
+    return np.clip(raw, 0.0, 10000.0).astype(np.float32)
+
+
+@lru_cache(maxsize=4)
+def _ensure_anysat_repo(
+    *,
+    repo_url: str,
+    cache_root: str,
+) -> str:
+    root = os.path.expanduser(cache_root)
+    os.makedirs(root, exist_ok=True)
+    dst = os.path.join(root, "AnySat")
+
+    if os.path.isdir(os.path.join(dst, "src")) and os.path.isfile(os.path.join(dst, "hubconf.py")):
+        return dst
+
+    try:
+        subprocess.run(
+            ["git", "clone", "--depth", "1", repo_url, dst],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except Exception as e:
+        raise ModelError(
+            "Failed to clone AnySat source code. "
+            f"Tried: git clone --depth 1 {repo_url} {dst}"
+        ) from e
+    return dst
+
+
+@lru_cache(maxsize=8)
+def _load_anysat_hub_module(repo_root: str):
+    hub_path = os.path.join(repo_root, "hubconf.py")
+    if not os.path.exists(hub_path):
+        raise ModelError(f"AnySat hubconf not found: {hub_path}")
+    spec = importlib.util.spec_from_file_location("anysat_hubconf", hub_path)
+    if spec is None or spec.loader is None:
+        raise ModelError("Failed to build import spec for AnySat hubconf.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # type: ignore[attr-defined]
+    return mod
+
+
+def _resolve_anysat_repo(
+    *,
+    repo_path: Optional[str],
+    repo_url: str,
+    repo_cache_root: str,
+    auto_download: bool,
+) -> str:
+    if repo_path:
+        p = os.path.expanduser(repo_path)
+        if not os.path.isdir(p):
+            raise ModelError(f"RS_EMBED_ANYSAT_REPO_PATH does not exist: {p}")
+        return p
+    if not auto_download:
+        raise ModelError(
+            "AnySat repository not provided. Set RS_EMBED_ANYSAT_REPO_PATH or enable auto download."
+        )
+    return _ensure_anysat_repo(repo_url=repo_url, cache_root=repo_cache_root)
+
+
+def _load_ckpt_state_dict(ckpt_path: str) -> Dict[str, Any]:
+    ensure_torch()
+    import torch
+
+    obj = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+    if isinstance(obj, dict) and "state_dict" in obj and isinstance(obj["state_dict"], dict):
+        return obj["state_dict"]
+    if isinstance(obj, dict):
+        return obj
+    raise ModelError(f"Unsupported checkpoint format at {ckpt_path}")
+
+
+@lru_cache(maxsize=6)
+def _load_anysat_cached(
+    *,
+    model_size: str,
+    flash_attn: bool,
+    pretrained: bool,
+    ckpt_path: Optional[str],
+    repo_path: Optional[str],
+    repo_url: str,
+    repo_cache_root: str,
+    auto_download_repo: bool,
+    dev: str,
+) -> Tuple[Any, Dict[str, Any]]:
+    ensure_torch()
+    import torch
+
+    repo_root = _resolve_anysat_repo(
+        repo_path=repo_path,
+        repo_url=repo_url,
+        repo_cache_root=repo_cache_root,
+        auto_download=auto_download_repo,
+    )
+    hub = _load_anysat_hub_module(repo_root)
+    if not hasattr(hub, "AnySat"):
+        raise ModelError("AnySat hubconf.py does not expose class AnySat.")
+
+    if ckpt_path:
+        ckpt_local = os.path.expanduser(ckpt_path)
+        if not os.path.exists(ckpt_local):
+            raise ModelError(f"AnySat checkpoint not found: {ckpt_local}")
+        if os.path.getsize(ckpt_local) < 50 * 1024 * 1024:
+            raise ModelError(f"AnySat checkpoint seems too small: {ckpt_local}")
+        model = hub.AnySat(model_size=model_size, flash_attn=bool(flash_attn), device=dev)
+        sd = _load_ckpt_state_dict(ckpt_local)
+        model.model.load_state_dict(sd, strict=True)
+        loaded_from = ckpt_local
+    else:
+        if pretrained:
+            # AnySat hubconf handles download from HF.
+            model = hub.AnySat.from_pretrained(model_size=model_size, flash_attn=bool(flash_attn), device=dev)
+            loaded_from = "hf://g-astruc/AnySat/models/AnySat.pth"
+        else:
+            model = hub.AnySat(model_size=model_size, flash_attn=bool(flash_attn), device=dev)
+            loaded_from = "random_init"
+
+    try:
+        model = model.to(dev).eval()
+    except Exception:
+        pass
+
+    p0 = None
+    for _, p in model.named_parameters():
+        if p is not None and p.numel() > 0:
+            p0 = p.detach()
+            break
+    if p0 is None:
+        raise ModelError("AnySat model has no parameters; cannot verify load.")
+    if not torch.isfinite(p0).all():
+        raise ModelError("AnySat parameters contain NaN/Inf; checkpoint load likely failed.")
+    p0f = p0.float()
+
+    meta = {
+        "model_size": str(model_size),
+        "flash_attn": bool(flash_attn),
+        "pretrained": bool(pretrained),
+        "loaded_from": loaded_from,
+        "repo_root": repo_root,
+        "device": dev,
+        "param_mean": float(p0f.mean().cpu()),
+        "param_std": float(p0f.std().cpu()),
+        "param_absmax": float(p0f.abs().max().cpu()),
+    }
+    return model, meta
+
+
+def _load_anysat(
+    *,
+    model_size: str,
+    flash_attn: bool,
+    pretrained: bool,
+    ckpt_path: Optional[str],
+    repo_path: Optional[str],
+    repo_url: str,
+    repo_cache_root: str,
+    auto_download_repo: bool,
+    device: str,
+) -> Tuple[Any, Dict[str, Any], str]:
+    dev = _resolve_device(device)
+    model, meta = _load_anysat_cached(
+        model_size=str(model_size),
+        flash_attn=bool(flash_attn),
+        pretrained=bool(pretrained),
+        ckpt_path=(os.path.expanduser(ckpt_path) if ckpt_path else None),
+        repo_path=(os.path.expanduser(repo_path) if repo_path else None),
+        repo_url=str(repo_url),
+        repo_cache_root=str(repo_cache_root),
+        auto_download_repo=bool(auto_download_repo),
+        dev=dev,
+    )
+    return model, meta, dev
+
+
+def _prepare_anysat_s2_input(
+    raw: np.ndarray,
+    *,
+    image_size: int,
+    doy0: int,
+    norm_mode: str,
+    device: str,
+) -> Dict[str, Any]:
+    ensure_torch()
+    import torch
+
+    if raw.ndim == 3:
+        if int(raw.shape[0]) != 10:
+            raise ModelError(f"AnySat s2 expects C=10 bands, got shape={raw.shape}")
+        x_tchw = raw[None, ...].astype(np.float32)
+    elif raw.ndim == 4:
+        if int(raw.shape[1]) != 10:
+            raise ModelError(f"AnySat s2 expects [T,10,H,W], got shape={raw.shape}")
+        x_tchw = raw.astype(np.float32)
+    else:
+        raise ModelError(f"AnySat input expects CHW or TCHW, got shape={raw.shape}")
+
+    if image_size > 0 and (x_tchw.shape[-1] != image_size or x_tchw.shape[-2] != image_size):
+        x_tchw = _resize_tchw(x_tchw, out_hw=image_size)
+
+    x_tchw = _normalize_series(x_tchw, mode=norm_mode)
+    t = int(x_tchw.shape[0])
+    dates = np.full((1, t), int(doy0), dtype=np.int64)
+
+    return {
+        "s2": torch.from_numpy(x_tchw[None, ...]).to(device),  # [1,T,10,H,W]
+        "s2_dates": torch.from_numpy(dates).to(device),  # [1,T]
+    }
+
+
+def _anysat_patch_features(
+    model: Any,
+    s2_input: Dict[str, Any],
+    *,
+    patch_size_m: int,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    ensure_torch()
+    import torch
+
+    if patch_size_m <= 0 or (patch_size_m % 10) != 0:
+        raise ModelError(f"AnySat patch_size must be a positive multiple of 10 (meters), got {patch_size_m}")
+
+    with torch.no_grad():
+        out = model(s2_input, patch_size=int(patch_size_m), output="patch")
+
+    if not hasattr(out, "ndim") or int(out.ndim) != 4:
+        raise ModelError(f"AnySat output='patch' returned unexpected shape/type: {type(out)} {getattr(out, 'shape', None)}")
+
+    # AnySat patch output: [B,H,W,D]
+    if int(out.shape[0]) != 1:
+        raise ModelError(f"AnySat embedder expects B=1 per call, got {tuple(out.shape)}")
+    arr = out[0].detach().float().cpu().numpy().astype(np.float32)  # [H,W,D]
+    grid = np.transpose(arr, (2, 0, 1)).astype(np.float32)  # [D,H,W]
+    meta = {
+        "patch_output_hw": (int(arr.shape[0]), int(arr.shape[1])),
+        "feature_dim": int(arr.shape[2]),
+        "patch_size_m": int(patch_size_m),
+    }
+    return grid, meta
+
+
+@register("anysat")
+class AnySatEmbedder(EmbedderBase):
+    DEFAULT_FETCH_WORKERS = 8
+
+    def describe(self) -> Dict[str, Any]:
+        return {
+            "type": "on_the_fly",
+            "backend": ["gee"],
+            "inputs": {"collection": "COPERNICUS/S2_SR_HARMONIZED", "bands": _S2_10_BANDS},
+            "temporal": {"mode": "range"},
+            "output": ["pooled", "grid"],
+            "defaults": {
+                "model_size": "base",
+                "patch_size_m": 10,
+                "image_size": 24,
+                "scale_m": 10,
+                "cloudy_pct": 30,
+                "composite": "median",
+                "normalization": "per_tile_zscore",
+            },
+            "notes": [
+                "AnySat expects S2 time-series + day-of-year dates; this integration uses a single S2 composite step.",
+                "grid output maps AnySat output='patch' to [D,H,W].",
+            ],
+        }
+
+    def __init__(self) -> None:
+        self._provider: Optional[GEEProvider] = None
+
+    def _get_provider(self) -> GEEProvider:
+        if self._provider is None:
+            p = GEEProvider(auto_auth=True)
+            p.ensure_ready()
+            self._provider = p
+        return self._provider
+
+    @staticmethod
+    def _default_sensor() -> SensorSpec:
+        return SensorSpec(
+            collection="COPERNICUS/S2_SR_HARMONIZED",
+            bands=tuple(_S2_10_BANDS),
+            scale_m=10,
+            cloudy_pct=30,
+            composite="median",
+            fill_value=0.0,
+        )
+
+    @staticmethod
+    def _resolve_fetch_workers(n_items: int) -> int:
+        v = int(os.environ.get("RS_EMBED_ANYSAT_FETCH_WORKERS", str(AnySatEmbedder.DEFAULT_FETCH_WORKERS)))
+        return max(1, min(int(n_items), v))
+
+    def get_embedding(
+        self,
+        *,
+        spatial: SpatialSpec,
+        temporal: Optional[TemporalSpec],
+        sensor: Optional[SensorSpec],
+        output: OutputSpec,
+        backend: str,
+        device: str = "auto",
+        input_chw: Optional[np.ndarray] = None,
+    ) -> Embedding:
+        if backend.lower().strip() != "gee":
+            raise ModelError("anysat expects backend='gee'.")
+
+        ss = sensor or self._default_sensor()
+        t = temporal_to_range(temporal)
+        doy0 = _midpoint_doy0(t)
+
+        model_size = os.environ.get("RS_EMBED_ANYSAT_MODEL_SIZE", "base").strip().lower()
+        flash_attn = os.environ.get("RS_EMBED_ANYSAT_FLASH_ATTN", "0").strip() in {"1", "true", "True"}
+        image_size = int(os.environ.get("RS_EMBED_ANYSAT_IMG", "24"))
+        norm_mode = os.environ.get("RS_EMBED_ANYSAT_NORM", "per_tile_zscore").strip()
+        patch_size_m = int(getattr(output, "scale_m", 10))
+
+        repo_path = os.environ.get("RS_EMBED_ANYSAT_REPO_PATH")
+        repo_url = os.environ.get("RS_EMBED_ANYSAT_REPO_URL", "https://github.com/gastruc/AnySat.git")
+        repo_cache = os.environ.get("RS_EMBED_ANYSAT_REPO_CACHE", os.path.join("~", ".cache", "rs_embed", "anysat"))
+        auto_download_repo = os.environ.get("RS_EMBED_ANYSAT_AUTO_DOWNLOAD_REPO", "1").strip() not in {"0", "false", "False"}
+        ckpt_path = os.environ.get("RS_EMBED_ANYSAT_CKPT")
+        pretrained = os.environ.get("RS_EMBED_ANYSAT_PRETRAINED", "1").strip() not in {"0", "false", "False"}
+
+        if input_chw is None:
+            provider = self._get_provider()
+            raw = _fetch_s2_10_raw_chw(
+                provider,
+                spatial,
+                t,
+                scale_m=int(ss.scale_m),
+                cloudy_pct=int(ss.cloudy_pct),
+                composite=str(ss.composite),
+                fill_value=float(ss.fill_value),
+            )
+        else:
+            raw = np.asarray(input_chw, dtype=np.float32)
+            if raw.ndim == 3:
+                if int(raw.shape[0]) != 10:
+                    raise ModelError(f"input_chw must have 10 bands for AnySat s2, got {raw.shape}")
+            elif raw.ndim == 4:
+                if int(raw.shape[1]) != 10:
+                    raise ModelError(f"input_chw must have shape [T,10,H,W] for AnySat s2, got {raw.shape}")
+            else:
+                raise ModelError(f"input_chw must be CHW or TCHW for AnySat, got {raw.shape}")
+            raw = np.clip(np.nan_to_num(raw, nan=0.0, posinf=0.0, neginf=0.0), 0.0, 10000.0).astype(np.float32)
+
+        model, lmeta, dev = _load_anysat(
+            model_size=model_size,
+            flash_attn=flash_attn,
+            pretrained=pretrained,
+            ckpt_path=ckpt_path,
+            repo_path=repo_path,
+            repo_url=repo_url,
+            repo_cache_root=repo_cache,
+            auto_download_repo=auto_download_repo,
+            device=device,
+        )
+
+        s2_input = _prepare_anysat_s2_input(
+            raw,
+            image_size=image_size,
+            doy0=doy0,
+            norm_mode=norm_mode,
+            device=dev,
+        )
+        grid, fmeta = _anysat_patch_features(
+            model,
+            s2_input,
+            patch_size_m=patch_size_m,
+        )
+
+        meta = build_meta(
+            model=self.model_name,
+            kind="on_the_fly",
+            backend="gee",
+            source=ss.collection,
+            sensor={
+                "collection": ss.collection,
+                "bands": tuple(_S2_10_BANDS),
+                "scale_m": int(ss.scale_m),
+                "cloudy_pct": int(ss.cloudy_pct),
+                "composite": str(ss.composite),
+                "fill_value": float(ss.fill_value),
+            },
+            temporal=t,
+            image_size=image_size,
+            input_time=temporal_midpoint_str(t),
+            extra={
+                "model_size": model_size,
+                "flash_attn": bool(flash_attn),
+                "normalization": norm_mode,
+                "start": t.start,
+                "end": t.end,
+                "doy0": int(doy0),
+                "device": dev,
+                **lmeta,
+                **fmeta,
+            },
+        )
+
+        if output.mode == "pooled":
+            if output.pooling == "max":
+                vec = np.max(grid, axis=(1, 2)).astype(np.float32)
+            else:
+                vec = np.mean(grid, axis=(1, 2)).astype(np.float32)
+            ometa = {**meta, "pooling": f"patch_{output.pooling}", "pooled_shape": tuple(vec.shape)}
+            return Embedding(data=vec, meta=ometa)
+
+        if output.mode == "grid":
+            gmeta = {
+                **meta,
+                "grid_kind": "patch_tokens",
+                "grid_hw": (int(grid.shape[1]), int(grid.shape[2])),
+                "grid_shape": tuple(grid.shape),
+            }
+            da = xr.DataArray(
+                grid.astype(np.float32),
+                dims=("d", "y", "x"),
+                coords={
+                    "d": np.arange(grid.shape[0]),
+                    "y": np.arange(grid.shape[1]),
+                    "x": np.arange(grid.shape[2]),
+                },
+                name="embedding",
+                attrs=gmeta,
+            )
+            return Embedding(data=da, meta=gmeta)
+
+        raise ModelError(f"Unknown output mode: {output.mode}")
+
+    def get_embeddings_batch(
+        self,
+        *,
+        spatials: list[SpatialSpec],
+        temporal: Optional[TemporalSpec] = None,
+        sensor: Optional[SensorSpec] = None,
+        output: OutputSpec = OutputSpec.pooled(),
+        backend: str = "gee",
+        device: str = "auto",
+    ) -> list[Embedding]:
+        if not spatials:
+            return []
+
+        if backend.lower().strip() != "gee":
+            raise ModelError("anysat expects backend='gee'.")
+
+        t = temporal_to_range(temporal)
+        ss = sensor or self._default_sensor()
+        provider = self._get_provider()
+
+        n = len(spatials)
+        prefetched_raw: List[Optional[np.ndarray]] = [None] * n
+
+        def _fetch_one(i: int, sp: SpatialSpec) -> Tuple[int, np.ndarray]:
+            raw = _fetch_s2_10_raw_chw(
+                provider,
+                sp,
+                t,
+                scale_m=int(ss.scale_m),
+                cloudy_pct=int(ss.cloudy_pct),
+                composite=str(ss.composite),
+                fill_value=float(ss.fill_value),
+            )
+            return i, raw
+
+        mw = self._resolve_fetch_workers(n)
+        if mw == 1:
+            for i, sp in enumerate(spatials):
+                ii, raw = _fetch_one(i, sp)
+                prefetched_raw[ii] = raw
+        else:
+            with ThreadPoolExecutor(max_workers=mw) as ex:
+                futs = [ex.submit(_fetch_one, i, sp) for i, sp in enumerate(spatials)]
+                for fut in as_completed(futs):
+                    i, raw = fut.result()
+                    prefetched_raw[i] = raw
+
+        out: List[Embedding] = []
+        for i, sp in enumerate(spatials):
+            raw = prefetched_raw[i]
+            if raw is None:
+                raise ModelError(f"Missing prefetched input at index={i} for anysat.")
+            out.append(
+                self.get_embedding(
+                    spatial=sp,
+                    temporal=t,
+                    sensor=ss,
+                    output=output,
+                    backend=backend,
+                    device=device,
+                    input_chw=raw,
+                )
+            )
+        return out

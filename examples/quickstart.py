@@ -8,6 +8,11 @@ How to run:
 
 - Default (matches notebook): quickstart.py → pooled DOFA, 2021-06-01 to 2021-08-31 around (121.5, 31.2) buffer 2048 m.
 - Different model: quickstart.py --model remoteclip_s2rgb --output grid --grid-scale 20
+- AnySat: quickstart.py --model anysat --output pooled
+- DynamicVis: quickstart.py --model dynamicvis --output pooled
+- Galileo: quickstart.py --model galileo --output pooled
+- WildSAT: quickstart.py --model wildsat --output pooled
+  (needs env: RS_EMBED_WILDSAT_CKPT=/path/to/wildsat_checkpoint.pth)
 - Batch sample: quickstart.py --batch
 - Custom points: python examples/quickstart.py --point 120 30 --point 121.6 31.3
 - BBox: python examples/quickstart.py --bbox 121.45 31.15 121.55 31.25
@@ -34,7 +39,7 @@ def _parse_args() -> argparse.Namespace:
         "-m",
         "--model",
         default="dofa",
-        help="Model id registered in rs_embed (e.g., dofa, remoteclip_s2rgb)",
+        help="Model id registered in rs_embed (e.g., dofa, remoteclip_s2rgb, anysat, dynamicvis, galileo, wildsat)",
     )
     parser.add_argument(
         "--backend",

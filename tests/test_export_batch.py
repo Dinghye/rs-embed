@@ -107,6 +107,88 @@ def test_export_batch_prefetch_dedup_across_models(tmp_path, monkeypatch):
         assert (out_dir / f"p{i:05d}.json").exists()
 
 
+def test_export_batch_prefetch_reuses_superset_and_slices_subset(tmp_path, monkeypatch):
+    class DummyRGB:
+        seen = []
+
+        def describe(self):
+            return {
+                "type": "onthefly",
+                "inputs": {"collection": "C", "bands": ["B4", "B3", "B2"]},
+                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+            }
+
+        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+            assert input_chw is not None
+            assert tuple(input_chw.shape) == (3, 2, 2)
+            DummyRGB.seen.append(tuple(float(input_chw[i, 0, 0]) for i in range(3)))
+            return Embedding(data=np.array([1.0], dtype=np.float32), meta={})
+
+    class DummyS2Superset:
+        seen = []
+
+        def describe(self):
+            return {
+                "type": "onthefly",
+                "inputs": {"collection": "C", "bands": ["B2", "B3", "B4", "B8"]},
+                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+            }
+
+        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+            assert input_chw is not None
+            assert tuple(input_chw.shape) == (4, 2, 2)
+            DummyS2Superset.seen.append(tuple(float(input_chw[i, 0, 0]) for i in range(4)))
+            return Embedding(data=np.array([2.0], dtype=np.float32), meta={})
+
+    registry.register("dummy_rgb_subset")(DummyRGB)
+    registry.register("dummy_s2_superset")(DummyS2Superset)
+
+    import rs_embed.api as api
+
+    class DummyProvider:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def ensure_ready(self):
+            return None
+
+    fetch_calls = {"n": 0, "bands": []}
+    band_value = {"B2": 2.0, "B3": 3.0, "B4": 4.0, "B8": 8.0}
+
+    def fake_fetch(provider, *, spatial, temporal, sensor):
+        fetch_calls["n"] += 1
+        fetch_calls["bands"].append(tuple(sensor.bands))
+        x = np.zeros((len(sensor.bands), 2, 2), dtype=np.float32)
+        for j, b in enumerate(sensor.bands):
+            x[j] = band_value[b]
+        return x
+
+    monkeypatch.setattr(api, "GEEProvider", DummyProvider)
+    monkeypatch.setattr(api, "_fetch_gee_patch_raw", fake_fetch)
+    monkeypatch.setattr(api, "_inspect_input_raw", lambda x_chw, *, sensor, name: {"ok": True})
+    api._get_embedder_bundle_cached.cache_clear()
+
+    spatials = [PointBuffer(lon=0, lat=0, buffer_m=10), PointBuffer(lon=0.1, lat=0.1, buffer_m=10)]
+    out_dir = tmp_path / "superset_dedup"
+    api.export_batch(
+        spatials=spatials,
+        temporal=TemporalSpec.range("2020-01-01", "2020-02-01"),
+        models=["dummy_rgb_subset", "dummy_s2_superset"],
+        out_dir=str(out_dir),
+        backend="gee",
+        device="cpu",
+        output=OutputSpec.pooled(),
+        save_inputs=False,
+        save_embeddings=True,
+        show_progress=False,
+    )
+
+    assert fetch_calls["n"] == len(spatials)
+    assert all(set(bands) == {"B2", "B3", "B4", "B8"} for bands in fetch_calls["bands"])
+    assert DummyRGB.seen == [(4.0, 3.0, 2.0), (4.0, 3.0, 2.0)]
+    assert DummyS2Superset.seen == [(2.0, 3.0, 4.0, 8.0), (2.0, 3.0, 4.0, 8.0)]
+
+
 def test_export_batch_combined_npz_dedup(tmp_path, monkeypatch):
     class DummyC:
         def describe(self):
@@ -163,6 +245,85 @@ def test_export_batch_combined_npz_dedup(tmp_path, monkeypatch):
 
     assert out_path.exists()
     assert fetch_calls["n"] == len(spatials)
+
+
+def test_export_batch_combined_prefetch_reuses_superset_and_slices_subset(tmp_path, monkeypatch):
+    class DummyRGB:
+        seen = []
+
+        def describe(self):
+            return {
+                "type": "onthefly",
+                "inputs": {"collection": "C", "bands": ["B4", "B3", "B2"]},
+                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+            }
+
+        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+            assert input_chw is not None
+            DummyRGB.seen.append(tuple(float(input_chw[i, 0, 0]) for i in range(3)))
+            return Embedding(data=np.array([1.0], dtype=np.float32), meta={})
+
+    class DummyS2Superset:
+        seen = []
+
+        def describe(self):
+            return {
+                "type": "onthefly",
+                "inputs": {"collection": "C", "bands": ["B2", "B3", "B4", "B8"]},
+                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+            }
+
+        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+            assert input_chw is not None
+            DummyS2Superset.seen.append(tuple(float(input_chw[i, 0, 0]) for i in range(4)))
+            return Embedding(data=np.array([2.0], dtype=np.float32), meta={})
+
+    registry.register("dummy_rgb_subset_combined")(DummyRGB)
+    registry.register("dummy_s2_superset_combined")(DummyS2Superset)
+
+    import rs_embed.api as api
+
+    class DummyProvider:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def ensure_ready(self):
+            return None
+
+    fetch_calls = {"n": 0}
+    band_value = {"B2": 2.0, "B3": 3.0, "B4": 4.0, "B8": 8.0}
+
+    def fake_fetch(provider, *, spatial, temporal, sensor):
+        fetch_calls["n"] += 1
+        x = np.zeros((len(sensor.bands), 2, 2), dtype=np.float32)
+        for j, b in enumerate(sensor.bands):
+            x[j] = band_value[b]
+        return x
+
+    monkeypatch.setattr(api, "GEEProvider", DummyProvider)
+    monkeypatch.setattr(api, "_fetch_gee_patch_raw", fake_fetch)
+    monkeypatch.setattr(api, "_inspect_input_raw", lambda x_chw, *, sensor, name: {"ok": True})
+    api._get_embedder_bundle_cached.cache_clear()
+
+    spatials = [PointBuffer(lon=0, lat=0, buffer_m=10), PointBuffer(lon=1, lat=1, buffer_m=10)]
+    out_path = tmp_path / "superset_combined.npz"
+    api.export_batch(
+        spatials=spatials,
+        temporal=TemporalSpec.year(2022),
+        models=["dummy_rgb_subset_combined", "dummy_s2_superset_combined"],
+        out_path=str(out_path),
+        backend="gee",
+        device="cpu",
+        output=OutputSpec.pooled(),
+        save_inputs=False,
+        save_embeddings=True,
+        show_progress=False,
+    )
+
+    assert out_path.exists()
+    assert fetch_calls["n"] == len(spatials)
+    assert DummyRGB.seen == [(4.0, 3.0, 2.0), (4.0, 3.0, 2.0)]
+    assert DummyS2Superset.seen == [(2.0, 3.0, 4.0, 8.0), (2.0, 3.0, 4.0, 8.0)]
 
 
 def test_export_batch_netcdf_per_item(tmp_path, monkeypatch):
