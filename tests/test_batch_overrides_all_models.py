@@ -12,6 +12,8 @@ from rs_embed.embedders.onthefly_wildsat import WildSATEmbedder
 from rs_embed.embedders.onthefly_terrafm import TerraFMBEmbedder
 from rs_embed.embedders.onthefly_terramind import TerraMindEmbedder
 from rs_embed.embedders.onthefly_fomo import FoMoEmbedder
+from rs_embed.embedders.onthefly_thor import THORBaseEmbedder
+
 from rs_embed.embedders.precomputed_copernicus_embed import CopernicusEmbedder
 from rs_embed.embedders.precomputed_gse_annual import GSEAnnualEmbedder
 from rs_embed.embedders.precomputed_tessera import TesseraEmbedder
@@ -217,6 +219,39 @@ def test_fomo_batch_prefetch_passes_raw_input(monkeypatch):
     assert len(out) == 2
     assert seen[0][0] == 12
     assert seen[0][1] >= 3456.0
+
+
+def test_thor_batch_prefetch_passes_raw_input(monkeypatch):
+    import rs_embed.embedders.onthefly_thor as thor
+
+    emb = THORBaseEmbedder()
+    monkeypatch.setenv("RS_EMBED_THOR_FETCH_WORKERS", "1")
+    monkeypatch.setattr(emb, "_get_provider", lambda: object())
+    monkeypatch.setattr(
+        thor,
+        "_fetch_s2_sr_10_raw_chw",
+        lambda provider, spatial, temporal, **kw: np.full((10, 8, 8), 5678.0, dtype=np.float32),
+    )
+
+    seen = []
+
+    def _fake_get_embedding(**kw):
+        arr = kw["input_chw"]
+        seen.append((arr.shape[0], float(arr.max())))
+        return Embedding(data=np.array([kw["spatial"].lon], dtype=np.float32), meta={})
+
+    monkeypatch.setattr(emb, "get_embedding", _fake_get_embedding)
+
+    out = emb.get_embeddings_batch(
+        spatials=_spatials(2),
+        temporal=TemporalSpec.range("2020-06-01", "2020-08-31"),
+        output=OutputSpec.pooled(),
+        backend="gee",
+    )
+
+    assert len(out) == 2
+    assert seen[0][0] == 10
+    assert seen[0][1] >= 5678.0
 
 
 def test_dynamicvis_batch_prefetch_passes_raw_input(monkeypatch):
