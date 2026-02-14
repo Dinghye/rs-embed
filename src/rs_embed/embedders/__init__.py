@@ -14,3 +14,4 @@ from .onthefly_prithvi import PrithviEOV2S2_6B_Embedder  # noqa: F401
 from .onthefly_terrafm import TerraFMBEmbedder  # noqa: F401
 from .onthefly_terramind import TerraMindEmbedder  # noqa: F401
 from .onthefly_dofa import DOFAEmbedder  # noqa: F401
+from .onthefly_fomo import FoMoEmbedder  # noqa: F401
