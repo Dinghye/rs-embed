@@ -329,7 +329,8 @@ def _prepare_galileo_encoder_inputs(
     s_t_x = np.zeros((1, h, w, t, len(space_time_bands)), dtype=np.float32)
 
     s2_map = [space_time_bands.index(b) for b in s2_bands]
-    s_t_x[0, :, :, :, s2_map] = s2_hwtd
+    # Use a basic slice first so NumPy keeps [H,W,T,C] order during assignment.
+    s_t_x[0][..., s2_map] = s2_hwtd
 
     ndvi_set = False
     if include_ndvi and ("NDVI" in space_time_bands):

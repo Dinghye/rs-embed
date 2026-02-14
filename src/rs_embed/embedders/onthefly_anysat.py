@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 from functools import lru_cache
@@ -147,6 +148,12 @@ def _load_anysat_hub_module(repo_root: str):
     hub_path = os.path.join(repo_root, "hubconf.py")
     if not os.path.exists(hub_path):
         raise ModelError(f"AnySat hubconf not found: {hub_path}")
+
+    repo_abs = os.path.abspath(repo_root)
+    if repo_abs not in sys.path:
+        # AnySat hubconf imports use `from src...`; they require repo root on sys.path.
+        sys.path.insert(0, repo_abs)
+
     spec = importlib.util.spec_from_file_location("anysat_hubconf", hub_path)
     if spec is None or spec.loader is None:
         raise ModelError("Failed to build import spec for AnySat hubconf.py")

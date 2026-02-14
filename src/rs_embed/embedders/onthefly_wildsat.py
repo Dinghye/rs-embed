@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import html
 import os
 import re
+import urllib.parse
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
@@ -20,6 +23,158 @@ from .onthefly_remoteclip import _fetch_s2_rgb_chw
 
 
 _SUPPORTED_ARCHES = {"vitb16", "vitl16", "resnet50", "swint"}
+_WILDSAT_DEFAULT_GDRIVE_FILE_ID = "1IxBpf3nbEMzny4YJWS6stMBxel6gMiYE"
+_WILDSAT_DEFAULT_CKPT_FILENAME = "vitb16-imagenet-bnfc.pth"
+_WILDSAT_DEFAULT_CACHE_DIR = "~/.cache/rs_embed/wildsat"
+_WILDSAT_DEFAULT_MIN_BYTES = 50 * 1024 * 1024
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    v = os.environ.get(name)
+    if v is None:
+        return bool(default)
+    return str(v).strip().lower() not in {"0", "false", "no", "off", ""}
+
+
+def _download_url_to_path(url: str, dst_path: str) -> str:
+    os.makedirs(os.path.dirname(dst_path), exist_ok=True)
+    tmp_path = dst_path + ".part"
+    try:
+        with urllib.request.urlopen(url, timeout=120) as r, open(tmp_path, "wb") as f:
+            while True:
+                chunk = r.read(1024 * 1024)
+                if not chunk:
+                    break
+                f.write(chunk)
+        os.replace(tmp_path, dst_path)
+    finally:
+        try:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+        except Exception:
+            pass
+    return dst_path
+
+
+def _google_drive_confirm_url(file_id: str) -> str:
+    first = f"https://drive.google.com/uc?export=download&id={urllib.parse.quote(str(file_id))}"
+    with urllib.request.urlopen(first, timeout=120) as r:
+        ctype = str(r.headers.get("content-type") or "").lower()
+        if "text/html" not in ctype:
+            return r.geturl()
+        page = r.read().decode("utf-8", "ignore")
+
+    form_match = re.search(r'<form[^>]*id="download-form"[^>]*action="([^"]+)"', page)
+    if form_match is None:
+        form_match = re.search(r'<form[^>]*action="([^"]+)"', page)
+    if form_match is None:
+        raise ModelError(
+            "Failed to parse Google Drive confirmation page for WildSAT checkpoint download. "
+            "Set RS_EMBED_WILDSAT_CKPT to a local .pth path instead."
+        )
+
+    pairs = re.findall(r'<input[^>]*name="([^"]+)"[^>]*value="([^"]*)"', page)
+    params = {str(k): html.unescape(str(v)) for k, v in pairs}
+    params.setdefault("id", str(file_id))
+    params.setdefault("export", "download")
+
+    action = html.unescape(form_match.group(1))
+    return action + "?" + urllib.parse.urlencode(params)
+
+
+@lru_cache(maxsize=4)
+def _download_wildsat_ckpt_from_hf(
+    *,
+    repo_id: str,
+    filename: str,
+    cache_dir: Optional[str],
+    min_bytes: int,
+) -> str:
+    try:
+        from huggingface_hub import hf_hub_download
+    except Exception as e:
+        raise ModelError(
+            "WildSAT auto-download from Hugging Face requires huggingface_hub. "
+            "Install: pip install huggingface_hub"
+        ) from e
+
+    p = hf_hub_download(repo_id=repo_id, filename=filename, cache_dir=cache_dir)
+    if not os.path.exists(p):
+        raise ModelError(f"Failed to download WildSAT checkpoint: {repo_id}/{filename}")
+    sz = os.path.getsize(p)
+    if sz < int(min_bytes):
+        raise ModelError(
+            f"Downloaded WildSAT checkpoint is too small ({sz} bytes): {p}. "
+            "It may be an incomplete pointer/download."
+        )
+    return p
+
+
+@lru_cache(maxsize=4)
+def _download_wildsat_ckpt_from_gdrive(
+    *,
+    file_id: str,
+    cache_dir: str,
+    filename: str,
+    min_bytes: int,
+) -> str:
+    root = os.path.expanduser(cache_dir)
+    os.makedirs(root, exist_ok=True)
+    dst = os.path.join(root, filename)
+    if os.path.exists(dst) and os.path.getsize(dst) >= int(min_bytes):
+        return dst
+
+    url = _google_drive_confirm_url(file_id)
+    _download_url_to_path(url, dst)
+
+    sz = os.path.getsize(dst) if os.path.exists(dst) else 0
+    if sz < int(min_bytes):
+        raise ModelError(
+            f"Downloaded WildSAT checkpoint is too small ({sz} bytes): {dst}. "
+            "Set RS_EMBED_WILDSAT_CKPT to a valid local .pth checkpoint path."
+        )
+    return dst
+
+
+def _resolve_wildsat_ckpt_path() -> str:
+    ckpt_path = str(os.environ.get("RS_EMBED_WILDSAT_CKPT") or "").strip()
+    if ckpt_path:
+        return os.path.expanduser(ckpt_path)
+
+    auto_download = _env_flag("RS_EMBED_WILDSAT_AUTO_DOWNLOAD", True)
+    if not auto_download:
+        raise ModelError(
+            "WildSAT checkpoint is required. Set RS_EMBED_WILDSAT_CKPT to a local .pth checkpoint path, "
+            "or enable RS_EMBED_WILDSAT_AUTO_DOWNLOAD=1."
+        )
+
+    min_bytes = int(os.environ.get("RS_EMBED_WILDSAT_CKPT_MIN_BYTES", str(_WILDSAT_DEFAULT_MIN_BYTES)))
+    cache_dir = os.environ.get("RS_EMBED_WILDSAT_CACHE_DIR", _WILDSAT_DEFAULT_CACHE_DIR)
+
+    hf_repo = str(os.environ.get("RS_EMBED_WILDSAT_HF_REPO") or "").strip()
+    hf_file = str(os.environ.get("RS_EMBED_WILDSAT_HF_FILE") or "").strip()
+    if bool(hf_repo) != bool(hf_file):
+        raise ModelError(
+            "Set both RS_EMBED_WILDSAT_HF_REPO and RS_EMBED_WILDSAT_HF_FILE to auto-download from Hugging Face."
+        )
+    if hf_repo and hf_file:
+        return _download_wildsat_ckpt_from_hf(
+            repo_id=hf_repo,
+            filename=hf_file,
+            cache_dir=cache_dir,
+            min_bytes=min_bytes,
+        )
+
+    gdrive_id = str(os.environ.get("RS_EMBED_WILDSAT_GDRIVE_ID", _WILDSAT_DEFAULT_GDRIVE_FILE_ID)).strip()
+    filename = str(os.environ.get("RS_EMBED_WILDSAT_CKPT_FILE", _WILDSAT_DEFAULT_CKPT_FILENAME)).strip()
+    if not filename:
+        filename = _WILDSAT_DEFAULT_CKPT_FILENAME
+    return _download_wildsat_ckpt_from_gdrive(
+        file_id=gdrive_id,
+        cache_dir=cache_dir,
+        filename=filename,
+        min_bytes=min_bytes,
+    )
 
 
 def _resolve_device(device: str) -> str:
@@ -526,9 +681,13 @@ class WildSATEmbedder(EmbedderBase):
                 "image_size": self.DEFAULT_IMAGE_SIZE,
                 "normalization": "minmax",
                 "feature": "image_head",
+                "auto_download_ckpt": True,
+                "default_ckpt_file": _WILDSAT_DEFAULT_CKPT_FILENAME,
             },
             "notes": [
-                "Requires RS_EMBED_WILDSAT_CKPT pointing to a WildSAT checkpoint (.pth).",
+                "If RS_EMBED_WILDSAT_CKPT is not set, auto-download is enabled by default.",
+                "Default auto-download source is the official WildSAT sample checkpoint (Google Drive).",
+                "You can override source via RS_EMBED_WILDSAT_HF_REPO + RS_EMBED_WILDSAT_HF_FILE.",
                 "If decoder image head weights are present, pooled features default to that branch; otherwise fallback to backbone output.",
             ],
         }
@@ -575,11 +734,7 @@ class WildSATEmbedder(EmbedderBase):
         ss = sensor or self._default_sensor()
         t = temporal_to_range(temporal)
 
-        ckpt_path = os.environ.get("RS_EMBED_WILDSAT_CKPT")
-        if not ckpt_path:
-            raise ModelError(
-                "WildSAT checkpoint is required. Set RS_EMBED_WILDSAT_CKPT to a local .pth checkpoint path."
-            )
+        ckpt_path = _resolve_wildsat_ckpt_path()
 
         arch_hint = os.environ.get("RS_EMBED_WILDSAT_ARCH", "auto").strip()
         image_size = int(os.environ.get("RS_EMBED_WILDSAT_IMG", str(self.DEFAULT_IMAGE_SIZE)))

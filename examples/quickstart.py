@@ -12,7 +12,7 @@ How to run:
 - DynamicVis: quickstart.py --model dynamicvis --output pooled
 - Galileo: quickstart.py --model galileo --output pooled
 - WildSAT: quickstart.py --model wildsat --output pooled
-  (needs env: RS_EMBED_WILDSAT_CKPT=/path/to/wildsat_checkpoint.pth)
+  (auto-download enabled by default; optional env: RS_EMBED_WILDSAT_CKPT=/path/to/wildsat_checkpoint.pth)
 - Batch sample: quickstart.py --batch
 - Custom points: python examples/quickstart.py --point 120 30 --point 121.6 31.3
 - BBox: python examples/quickstart.py --bbox 121.45 31.15 121.55 31.25
