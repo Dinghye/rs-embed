@@ -15,6 +15,8 @@
 </div>
 
 
+<img src="./docs/assets/background.png" /> 
+
 
 ## TL;DR
 
@@ -23,7 +25,7 @@ emb = get_embedding("tessera", spatial=..., temporal=..., output=...)
 ```
 
 * 🧊 Precomputed embeddings: Tessera / GSE / Copernicus Embed
-* 🔥 On-the-fly models: Prithvi-EO v2 / RemoteCLIP / SatMAE / ScaleMAE / FoMo /  (imagery via GEE)
+* 🔥 On-the-fly models: Prithvi-EO v2 / RemoteCLIP / SatMAE / ScaleMAE / SatVision-TOA / FoMo /  (imagery via GEE)
 
 ## Install(tempory)
 ```bash

@@ -17,3 +17,4 @@ from .onthefly_dofa import DOFAEmbedder  # noqa: F401
 from .onthefly_fomo import FoMoEmbedder  # noqa: F401
 from .onthefly_thor import THORBaseEmbedder  # noqa: F401
 from .onthefly_agrifm import AgriFMEmbedder  # noqa: F401
+from .onthefly_satvision_toa import SatVisionTOAEmbedder  # noqa: F401

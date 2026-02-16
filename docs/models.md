@@ -30,14 +30,5 @@ This page lists supported model backends and their I/O characteristics.
 | TerraFM-B  | terrafm_b        | ViT-Base style (embed dim 768, patch 16)        | S1/S2 depending on config | Applies TerraFM-specific normalization (including scaling/clamping and per-sensor handling); optional GEE patch checks + quicklook | pooled: [768] ; grid: [768, 14, 14]                                                |                  |
 | TerraMind  | terramind        | Multi-modal ViT backbone (TerraMind v1 family) | S2 L2A 12 bands     | Uses raw S2 SR DN (0–10000) + TerraMind S2L2A z-score stats, then 224 resize; optional GEE patch checks                              | pooled: variant dependent (tiny/small/base/large) ; grid: [D, 14, 14]              | From TerraTorch  |
 | AgriFM     | agrifm           | Multi-source temporal Video Swin encoder (AgriFM) | S2 10 bands multi-temporal [T, C, H, W] | Uses S2 raw DN (0–10000), default `agrifm_stats` z-score normalization, then resize to 256; supports temporal binning from GEE | pooled: spatial mean/max of encoder feature map [D] ; grid: encoder feature map [D, H, W] | From AgriFM      |
+| SatVision-TOA | satvision_toa | Swin Transformer V2 (SatVision TOA giant, default) | MODIS TOA 14 bands (`1,2,3,26,6,20,7,27,28,29,31,32,33,34`) | Raw mode: reflectance/emissive channel-wise scaling to [0,1]; unit mode: clip to [0,1]; auto mode picks by value range. If `MODIS/061/MOD021KM` is unavailable, auto-fallback uses `MODIS/061/MOD09GA` + `MODIS/061/MOD21A1D` proxy channels. | pooled: token mean/max [D] ; grid: patch tokens/feature map [D, H, W] (default giant: D=4096) | From NASA CISTO SatVision |
 | FoMo       | fomo             | MultiSpectral ViT (FoMo-Net_1 style)          | S2 SR 12 bands      | Uses S2 raw DN (0-10000), default unit-scale normalization, 64 resize; loads FoMo-Bench code + FoMo-Net checkpoint                | pooled: token mean/max [768] ; grid: spectral-averaged patch tokens [768, H, W]    | From FoMo-Bench  |
-
-### AgriFM Notes
-
-- Checkpoint is auto-downloaded by default (official source): `https://glass.hku.hk/casual/AgriFM/AgriFM.pth`.
-- Runtime import uses a lightweight fallback and does not require installing full `mmcv/mmseg` stacks.
-- Optional local override: `RS_EMBED_AGRIFM_CKPT=/path/to/AgriFM.pth`.
-- To disable auto-download, set `RS_EMBED_AGRIFM_AUTO_DOWNLOAD=0` (then local checkpoint is required).
-- Optional checkpoint download controls: `RS_EMBED_AGRIFM_CKPT_URL`, `RS_EMBED_AGRIFM_CACHE_DIR`, `RS_EMBED_AGRIFM_CKPT_FILE`, `RS_EMBED_AGRIFM_CKPT_MIN_BYTES`.
-- Optional repo controls: `RS_EMBED_AGRIFM_REPO_PATH`, `RS_EMBED_AGRIFM_REPO_URL`, `RS_EMBED_AGRIFM_REPO_CACHE`, `RS_EMBED_AGRIFM_AUTO_DOWNLOAD_REPO`.
-- Optional runtime controls: `RS_EMBED_AGRIFM_FRAMES`, `RS_EMBED_AGRIFM_IMG`, `RS_EMBED_AGRIFM_NORM`, `RS_EMBED_AGRIFM_FETCH_WORKERS`.

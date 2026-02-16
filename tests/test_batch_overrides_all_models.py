@@ -1,7 +1,7 @@
 import numpy as np
 
 from rs_embed.core.embedding import Embedding
-from rs_embed.core.specs import OutputSpec, PointBuffer, TemporalSpec
+from rs_embed.core.specs import OutputSpec, PointBuffer, SensorSpec, TemporalSpec
 from rs_embed.embedders.onthefly_anysat import AnySatEmbedder
 from rs_embed.embedders.onthefly_prithvi import PrithviEOV2S2_6B_Embedder
 from rs_embed.embedders.onthefly_remoteclip import RemoteCLIPS2RGBEmbedder
@@ -14,6 +14,7 @@ from rs_embed.embedders.onthefly_terramind import TerraMindEmbedder
 from rs_embed.embedders.onthefly_fomo import FoMoEmbedder
 from rs_embed.embedders.onthefly_thor import THORBaseEmbedder
 from rs_embed.embedders.onthefly_agrifm import AgriFMEmbedder
+from rs_embed.embedders.onthefly_satvision_toa import SatVisionTOAEmbedder
 
 from rs_embed.embedders.precomputed_copernicus_embed import CopernicusEmbedder
 from rs_embed.embedders.precomputed_gse_annual import GSEAnnualEmbedder
@@ -420,6 +421,65 @@ def test_galileo_batch_prefetch_passes_raw_input(monkeypatch):
     assert len(out) == 2
     assert seen[0][0] == 10
     assert seen[0][1] >= 2222.0
+
+
+def test_satvision_toa_batch_prefetch_passes_raw_input(monkeypatch):
+    import rs_embed.embedders.onthefly_satvision_toa as sv
+
+    emb = SatVisionTOAEmbedder()
+    monkeypatch.setenv("RS_EMBED_SATVISION_TOA_FETCH_WORKERS", "1")
+    monkeypatch.setattr(emb, "_get_provider", lambda: object())
+    monkeypatch.setattr(
+        emb,
+        "_resolve_runtime",
+        lambda **kw: {
+            "model": object(),
+            "model_meta": {},
+            "device": "cpu",
+            "model_id": "MVRL/SatVision-TOA",
+            "image_size": 8,
+            "in_chans": 14,
+            "norm_mode": "raw",
+            "reflectance_indices": (0, 1, 2, 3, 4, 6),
+            "emissive_indices": (5, 7, 8, 9, 10, 11, 12, 13),
+            "reflectance_divisor": 10000.0,
+            "emissive_mins": (175.0,) * 8,
+            "emissive_maxs": (375.0,) * 8,
+        },
+    )
+    monkeypatch.setattr(emb, "_prepare_input", lambda raw_chw, **kw: np.asarray(raw_chw, dtype=np.float32))
+    monkeypatch.setattr(
+        sv,
+        "_fetch_toa_raw_chw_from_gee",
+        lambda provider, spatial, temporal, sensor: np.full((14, 8, 8), 2000.0 + spatial.lon, dtype=np.float32),
+    )
+    monkeypatch.setattr(
+        sv,
+        "_satvision_forward_batch",
+        lambda model, x_chw_batch, **kw: (
+            [np.full((4,), float(x[0, 0, 0]), dtype=np.float32) for x in x_chw_batch],
+            {"tokens_kind": "pooled"},
+        ),
+    )
+
+    sensor = SensorSpec(
+        collection="TEST/COLL",
+        bands=tuple(f"B{i}" for i in range(14)),
+        scale_m=500,
+    )
+
+    out = emb.get_embeddings_batch(
+        spatials=_spatials(2),
+        temporal=TemporalSpec.range("2020-06-01", "2020-08-31"),
+        sensor=sensor,
+        output=OutputSpec.pooled(),
+        backend="gee",
+    )
+
+    assert len(out) == 2
+    assert out[0].data.shape == (4,)
+    assert float(out[0].data[0]) == 2000.0
+    assert float(out[1].data[0]) == 2001.0
 
 
 def test_precomputed_batch_overrides_call_single_embedding(monkeypatch):
