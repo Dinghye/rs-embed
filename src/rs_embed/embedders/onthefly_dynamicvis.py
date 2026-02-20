@@ -36,7 +36,11 @@ def _missing_runtime_modules() -> List[str]:
     required = ("mmengine", "mmcv")
     missing: List[str] = []
     for name in required:
-        if importlib.util.find_spec(name) is None:
+        try:
+            spec = importlib.util.find_spec(name)
+        except Exception:
+            spec = None
+        if spec is None:
             missing.append(name)
     return missing
 
@@ -658,4 +662,3 @@ class DynamicVisEmbedder(EmbedderBase):
                 )
             )
         return out
-

@@ -256,15 +256,22 @@ def _install_agrifm_lightweight_shims() -> None:
                 raise TypeError(f"Unsupported cfg['type']={type(typ)}")
             return cls(**c)
 
+    def _new_module(name: str) -> types.ModuleType:
+        mod = types.ModuleType(name)
+        # Some dependency loaders call importlib.util.find_spec("mmengine").
+        # A module in sys.modules with __spec__=None can trigger ValueError.
+        mod.__spec__ = importlib.util.spec_from_loader(name, loader=None)
+        return mod
+
     if "mmseg.models.builder" not in sys.modules:
         reg_backbones = _MiniRegistry("BACKBONES")
-        mod_builder = types.ModuleType("mmseg.models.builder")
+        mod_builder = _new_module("mmseg.models.builder")
         mod_builder.BACKBONES = reg_backbones
 
-        mod_models = types.ModuleType("mmseg.models")
+        mod_models = _new_module("mmseg.models")
         mod_models.builder = mod_builder
 
-        mod_mmseg = types.ModuleType("mmseg")
+        mod_mmseg = _new_module("mmseg")
         mod_mmseg.models = mod_models
 
         sys.modules["mmseg"] = mod_mmseg
@@ -276,11 +283,11 @@ def _install_agrifm_lightweight_shims() -> None:
     if "mmseg.registry.registry" not in sys.modules:
         reg_models = _MiniRegistry("MODELS")
         reg_transforms = _MiniRegistry("TRANSFORMS")
-        mod_registry = types.ModuleType("mmseg.registry.registry")
+        mod_registry = _new_module("mmseg.registry.registry")
         mod_registry.MODELS = reg_models
         mod_registry.TRANSFORMS = reg_transforms
 
-        mod_registry_pkg = types.ModuleType("mmseg.registry")
+        mod_registry_pkg = _new_module("mmseg.registry")
         mod_registry_pkg.registry = mod_registry
         mod_registry_pkg.MODELS = reg_models
         mod_registry_pkg.TRANSFORMS = reg_transforms
@@ -305,7 +312,7 @@ def _install_agrifm_lightweight_shims() -> None:
         pass
 
     if "mmengine.model" not in sys.modules:
-        mod_mmengine_model = types.ModuleType("mmengine.model")
+        mod_mmengine_model = _new_module("mmengine.model")
 
         class BaseModule(nn.Module):
             def __init__(self, *args, **kwargs):
@@ -322,7 +329,7 @@ def _install_agrifm_lightweight_shims() -> None:
         sys.modules["mmengine.model"] = mod_mmengine_model
 
     if "mmengine.runner" not in sys.modules:
-        mod_mmengine_runner = types.ModuleType("mmengine.runner")
+        mod_mmengine_runner = _new_module("mmengine.runner")
 
         def load_checkpoint(model, filename, strict=False, revise_keys=None, map_location="cpu", **kwargs):
             obj = torch.load(filename, map_location=map_location, weights_only=False)
@@ -358,10 +365,14 @@ def _install_agrifm_lightweight_shims() -> None:
         sys.modules["mmengine.runner"] = mod_mmengine_runner
 
     if "mmengine" not in sys.modules:
-        mod_mmengine = types.ModuleType("mmengine")
+        mod_mmengine = _new_module("mmengine")
         mod_mmengine.model = sys.modules["mmengine.model"]
         mod_mmengine.runner = sys.modules["mmengine.runner"]
         sys.modules["mmengine"] = mod_mmengine
+    else:
+        mod_mmengine = sys.modules.get("mmengine")
+        if mod_mmengine is not None and getattr(mod_mmengine, "__spec__", None) is None:
+            mod_mmengine.__spec__ = importlib.util.spec_from_loader("mmengine", loader=None)
 
 
 @lru_cache(maxsize=8)

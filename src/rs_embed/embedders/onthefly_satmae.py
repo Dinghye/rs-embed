@@ -366,3 +366,104 @@ class SatMAERGBEmbedder(EmbedderBase):
         if any(e is None for e in out):
             raise ModelError("satmae_rgb batch inference produced incomplete outputs.")
         return [e for e in out if e is not None]
+
+    def get_embeddings_batch_from_inputs(
+        self,
+        *,
+        spatials: list[SpatialSpec],
+        input_chws: list[np.ndarray],
+        temporal: Optional[TemporalSpec] = None,
+        sensor: Optional[SensorSpec] = None,
+        output: OutputSpec = OutputSpec.pooled(),
+        backend: str = "gee",
+        device: str = "auto",
+    ) -> list[Embedding]:
+        if backend.lower() not in ("gee", "auto"):
+            raise ModelError("satmae_rgb expects backend='gee' (or 'auto').")
+        if len(spatials) != len(input_chws):
+            raise ModelError(
+                f"spatials/input_chws length mismatch: {len(spatials)} != {len(input_chws)}"
+            )
+        if not spatials:
+            return []
+
+        if sensor is None:
+            sensor = self._default_sensor()
+
+        model_id = os.environ.get("RS_EMBED_SATMAE_ID", self.DEFAULT_MODEL_ID)
+        image_size = int(os.environ.get("RS_EMBED_SATMAE_IMG", str(self.DEFAULT_IMAGE_SIZE)))
+        t = temporal_to_range(temporal)
+
+        rgb_u8_all: List[np.ndarray] = []
+        for i, input_chw in enumerate(input_chws):
+            if input_chw.ndim != 3 or input_chw.shape[0] != 3:
+                raise ModelError(
+                    "input_chw must be CHW with 3 bands for satmae_rgb, got "
+                    f"{getattr(input_chw, 'shape', None)} at index={i}"
+                )
+            s2_chw = np.clip(input_chw.astype(np.float32) / 10000.0, 0.0, 1.0)
+            rgb_u8 = (s2_chw.transpose(1, 2, 0) * 255.0).astype(np.uint8)
+            rgb_u8_all.append(resize_rgb_u8(rgb_u8, image_size))
+
+        model, wmeta = _load_satmae(model_id=model_id, device=device)
+        dev = wmeta.get("device", device)
+        infer_bs = self._resolve_infer_batch(str(dev))
+
+        out: List[Optional[Embedding]] = [None] * len(spatials)
+        want_grid = output.mode == "grid"
+        xr_mod = None
+        if want_grid:
+            try:
+                import xarray as xr  # type: ignore
+                xr_mod = xr
+            except Exception as e:
+                raise ModelError("grid output requires xarray. Install: pip install xarray") from e
+
+        n = len(spatials)
+        for s0 in range(0, n, infer_bs):
+            s1 = min(n, s0 + infer_bs)
+            toks_batch = _satmae_forward_tokens_batch(
+                model,
+                rgb_u8_all[s0:s1],
+                image_size=image_size,
+                device=dev,
+            )
+            for j, tokens in enumerate(toks_batch):
+                i = s0 + j
+                meta = base_meta(
+                    model_name=self.model_name,
+                    hf_id=model_id,
+                    backend="gee",
+                    image_size=image_size,
+                    sensor=sensor,
+                    temporal=t,
+                    source=sensor.collection,
+                    extra={
+                        "tokens_kind": "tokens_forward_encoder",
+                        "tokens_shape": tuple(tokens.shape),
+                        "batch_infer": True,
+                        "input_override": True,
+                    },
+                )
+                if output.mode == "pooled":
+                    vec, cls_removed = pool_from_tokens(tokens, output.pooling)
+                    meta.update({"pooling": f"patch_{output.pooling}", "cls_removed": bool(cls_removed)})
+                    out[i] = Embedding(data=vec, meta=meta)
+                elif output.mode == "grid":
+                    assert xr_mod is not None
+                    grid, (h, w), cls_removed = tokens_to_grid_dhw(tokens)
+                    meta.update({"grid_hw": (h, w), "grid_kind": "patch_tokens", "cls_removed": bool(cls_removed)})
+                    da = xr_mod.DataArray(
+                        grid,
+                        dims=("d", "y", "x"),
+                        coords={"d": np.arange(grid.shape[0]), "y": np.arange(h), "x": np.arange(w)},
+                        name="embedding",
+                        attrs=meta,
+                    )
+                    out[i] = Embedding(data=da, meta=meta)
+                else:
+                    raise ModelError(f"Unknown output mode: {output.mode}")
+
+        if any(e is None for e in out):
+            raise ModelError("satmae_rgb batch inference produced incomplete outputs.")
+        return [e for e in out if e is not None]

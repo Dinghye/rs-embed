@@ -52,3 +52,37 @@ class EmbedderBase:
             )
             for s in spatials
         ]
+
+    def get_embeddings_batch_from_inputs(
+        self,
+        *,
+        spatials: list[SpatialSpec],
+        input_chws: list[np.ndarray],
+        temporal: Optional[TemporalSpec] = None,
+        sensor: Optional[SensorSpec] = None,
+        output: OutputSpec = OutputSpec.pooled(),
+        backend: str = "gee",
+        device: str = "auto",
+    ) -> list[Embedding]:
+        """Batch inference with prefetched CHW inputs.
+
+        Default implementation keeps existing behavior by looping through
+        get_embedding(..., input_chw=...).
+        Embedders that can do true batched model forward should override.
+        """
+        if len(spatials) != len(input_chws):
+            raise ValueError(
+                f"spatials/input_chws length mismatch: {len(spatials)} != {len(input_chws)}"
+            )
+        return [
+            self.get_embedding(
+                spatial=s,
+                temporal=temporal,
+                sensor=sensor,
+                output=output,
+                backend=backend,
+                device=device,
+                input_chw=x,
+            )
+            for s, x in zip(spatials, input_chws)
+        ]

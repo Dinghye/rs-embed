@@ -18,7 +18,7 @@ def temporal_to_range(
     """
     Normalize TemporalSpec to a start/end range.
     - None -> default range
-    - year -> [year-01-01, year-12-31]
+    - year -> [year-01-01, (year+1)-01-01)  # end-exclusive
     - range -> unchanged
     """
     if temporal is None:
@@ -28,7 +28,7 @@ def temporal_to_range(
         return temporal
     if temporal.mode == "year":
         y = int(temporal.year)
-        return TemporalSpec.range(f"{y}-01-01", f"{y}-12-31")
+        return TemporalSpec.range(f"{y}-01-01", f"{y+1}-01-01")
     raise ModelError(f"Unknown TemporalSpec mode: {temporal.mode}")
 
 
@@ -46,7 +46,7 @@ def temporal_to_dict(temporal: Optional[TemporalSpec]) -> Dict[str, Any]:
             "mode": "year",
             "year": temporal.year,
             "start": f"{temporal.year}-01-01",
-            "end": f"{temporal.year}-12-31",
+            "end": f"{int(temporal.year)+1}-01-01",
         }
     return {"mode": temporal.mode}
 

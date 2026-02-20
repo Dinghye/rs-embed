@@ -1,0 +1,84 @@
+from __future__ import annotations
+
+import inspect
+from functools import lru_cache
+from typing import Any, Dict, Optional, Tuple
+
+import numpy as np
+
+from ...core.embedding import Embedding
+from ...core.specs import OutputSpec, SensorSpec, SpatialSpec, TemporalSpec
+
+
+def sensor_key(sensor: Optional[SensorSpec]) -> Tuple:
+    if sensor is None:
+        return ("__none__",)
+    return (
+        sensor.collection,
+        sensor.bands,
+        int(sensor.scale_m),
+        int(sensor.cloudy_pct),
+        float(sensor.fill_value),
+        str(sensor.composite),
+        bool(getattr(sensor, "check_input", False)),
+        bool(getattr(sensor, "check_raise", True)),
+        getattr(sensor, "check_save_dir", None),
+    )
+
+
+def supports_batch_api(embedder: Any) -> bool:
+    """Return True when embedder overrides EmbedderBase.get_embeddings_batch."""
+    fn = getattr(type(embedder), "get_embeddings_batch", None)
+    if fn is None:
+        return False
+    from ...embedders.base import EmbedderBase
+
+    return fn is not EmbedderBase.get_embeddings_batch
+
+
+def supports_prefetched_batch_api(embedder: Any) -> bool:
+    """Return True when embedder overrides batch-from-inputs fast path."""
+    fn = getattr(type(embedder), "get_embeddings_batch_from_inputs", None)
+    if fn is None:
+        return False
+    from ...embedders.base import EmbedderBase
+
+    return fn is not EmbedderBase.get_embeddings_batch_from_inputs
+
+
+@lru_cache(maxsize=128)
+def embedder_accepts_input_chw(embedder_cls: type) -> bool:
+    fn = getattr(embedder_cls, "get_embedding", None)
+    if fn is None:
+        return False
+    try:
+        sig = inspect.signature(fn)
+    except Exception:
+        return False
+    if "input_chw" in sig.parameters:
+        return True
+    return any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+
+
+def call_embedder_get_embedding(
+    *,
+    embedder: Any,
+    spatial: SpatialSpec,
+    temporal: Optional[TemporalSpec],
+    sensor: Optional[SensorSpec],
+    output: OutputSpec,
+    backend: str,
+    device: str,
+    input_chw: Optional[np.ndarray] = None,
+) -> Embedding:
+    kwargs: Dict[str, Any] = {
+        "spatial": spatial,
+        "temporal": temporal,
+        "sensor": sensor,
+        "output": output,
+        "backend": backend,
+        "device": device,
+    }
+    if input_chw is not None and embedder_accepts_input_chw(type(embedder)):
+        kwargs["input_chw"] = input_chw
+    return embedder.get_embedding(**kwargs)

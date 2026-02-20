@@ -383,6 +383,71 @@ def _remoteclip_encode_tokens(
 
         raise ModelError("RemoteCLIP exposes neither token sequence nor pooled encoding methods.")
 
+
+def _remoteclip_encode_pooled_batch(
+    model,
+    rgb_u8_batch: List[np.ndarray],
+    *,
+    image_size: int = 224,
+    device: str = "auto",
+) -> np.ndarray:
+    """Fast pooled-only batch encoding. Returns [B,D]."""
+    if not rgb_u8_batch:
+        return np.zeros((0, 0), dtype=np.float32)
+
+    import torch
+    from torchvision import transforms
+    from PIL import Image
+
+    dev = "cuda" if (device == "auto" and torch.cuda.is_available()) else ("cpu" if device == "auto" else device)
+    model = model.to(dev).eval()
+    core = getattr(model, "model", model)
+
+    xs = []
+    if hasattr(model, "transform") and callable(getattr(model, "transform")):
+        for rgb_u8 in rgb_u8_batch:
+            x = model.transform(rgb_u8.astype(np.float32), image_size)
+            if not torch.is_tensor(x):
+                raise ModelError("RemoteCLIP transform did not return torch.Tensor.")
+            if x.ndim != 3:
+                raise ModelError(f"RemoteCLIP transform returned shape={tuple(x.shape)}; expected [C,H,W].")
+            xs.append(x)
+    else:
+        preprocess = transforms.Compose(
+            [
+                transforms.Resize(image_size, interpolation=transforms.InterpolationMode.BICUBIC),
+                transforms.CenterCrop(image_size),
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    mean=(0.48145466, 0.4578275, 0.40821073),
+                    std=(0.26862954, 0.26130258, 0.27577711),
+                ),
+            ]
+        )
+        for rgb_u8 in rgb_u8_batch:
+            img = Image.fromarray(rgb_u8, mode="RGB")
+            xs.append(preprocess(img))
+
+    xb = torch.stack(xs, dim=0).to(dev)  # [B,3,H,W]
+    with torch.inference_mode():
+        if hasattr(core, "encode_image"):
+            vec = core.encode_image(xb)
+        elif hasattr(model, "encode_image"):
+            vec = model.encode_image(xb)
+        elif hasattr(core, "visual") and callable(getattr(core.visual, "forward", None)):
+            vec = core.visual(xb)
+            if vec.ndim == 3:
+                vec = vec.mean(dim=1)
+        else:
+            raise ModelError("RemoteCLIP batch pooled path requires encode_image/visual.forward.")
+
+    if vec.ndim != 2:
+        raise ModelError(f"RemoteCLIP batch pooled expected [B,D], got {tuple(vec.shape)}")
+    arr = vec.detach().float().cpu().numpy().astype(np.float32)
+    if int(arr.shape[0]) != len(rgb_u8_batch):
+        raise ModelError(f"RemoteCLIP batch mismatch: got B={arr.shape[0]}, expected {len(rgb_u8_batch)}")
+    return arr
+
 @register("remoteclip_s2rgb")
 class RemoteCLIPS2RGBEmbedder(EmbedderBase):
     """
@@ -393,6 +458,8 @@ class RemoteCLIPS2RGBEmbedder(EmbedderBase):
     """
 
     DEFAULT_FETCH_WORKERS = 8
+    DEFAULT_BATCH_CPU = 8
+    DEFAULT_BATCH_CUDA = 64
 
     def describe(self) -> Dict[str, Any]:
         return {
@@ -459,6 +526,12 @@ class RemoteCLIPS2RGBEmbedder(EmbedderBase):
     def _resolve_fetch_workers(n_items: int) -> int:
         v = int(os.environ.get("RS_EMBED_REMOTECLIP_FETCH_WORKERS", str(RemoteCLIPS2RGBEmbedder.DEFAULT_FETCH_WORKERS)))
         return max(1, min(int(n_items), v))
+
+    @staticmethod
+    def _resolve_infer_batch(dev: str) -> int:
+        default_bs = RemoteCLIPS2RGBEmbedder.DEFAULT_BATCH_CUDA if str(dev).startswith("cuda") else RemoteCLIPS2RGBEmbedder.DEFAULT_BATCH_CPU
+        v = int(os.environ.get("RS_EMBED_REMOTECLIP_BATCH_SIZE", str(default_bs)))
+        return max(1, v)
 
     def get_embedding(
             self,
@@ -681,20 +754,182 @@ class RemoteCLIPS2RGBEmbedder(EmbedderBase):
                     i, raw = fut.result()
                     prefetched_raw[i] = raw
 
-        out: List[Embedding] = []
-        for i, sp in enumerate(spatials):
-            raw = prefetched_raw[i]
+        raw_inputs: List[np.ndarray] = []
+        for i, raw in enumerate(prefetched_raw):
             if raw is None:
                 raise ModelError(f"Missing prefetched input at index={i} for remoteclip_s2rgb.")
-            out.append(
-                self.get_embedding(
-                    spatial=sp,
-                    temporal=temporal,
-                    sensor=sensor,
-                    output=output,
-                    backend=backend,
-                    device=device,
-                    input_chw=raw,
-                )
+            raw_inputs.append(raw)
+        return self.get_embeddings_batch_from_inputs(
+            spatials=spatials,
+            input_chws=raw_inputs,
+            temporal=temporal,
+            sensor=sensor,
+            output=output,
+            backend=backend,
+            device=device,
+        )
+
+    def get_embeddings_batch_from_inputs(
+        self,
+        *,
+        spatials: list[SpatialSpec],
+        input_chws: list[np.ndarray],
+        temporal: Optional[TemporalSpec] = None,
+        sensor: Optional[SensorSpec] = None,
+        output: OutputSpec = OutputSpec.pooled(),
+        backend: str = "gee",
+        device: str = "auto",
+    ) -> list[Embedding]:
+        if backend.lower() != "gee":
+            raise ModelError("remoteclip_s2rgb only supports backend='gee' in v0.1.")
+        if temporal is None:
+            raise ModelError("remoteclip_s2rgb requires TemporalSpec.range(start,end).")
+        temporal.validate()
+        if temporal.mode != "range":
+            raise ModelError("remoteclip_s2rgb requires TemporalSpec.range in v0.1.")
+        if len(spatials) != len(input_chws):
+            raise ModelError(
+                f"spatials/input_chws length mismatch: {len(spatials)} != {len(input_chws)}"
             )
-        return out
+        if not spatials:
+            return []
+
+        t = temporal_to_range(temporal)
+        scale_m = sensor.scale_m if sensor else 10
+        cloudy_pct = sensor.cloudy_pct if sensor else 30
+        composite = sensor.composite if sensor else "median"
+        image_size = 224
+
+        ckpt = "MVRL/remote-clip-vit-base-patch32"
+        if sensor and isinstance(sensor.collection, str) and sensor.collection.startswith("hf:"):
+            ckpt = sensor.collection.replace("hf:", "", 1).strip()
+
+        cache_dir = (
+            os.environ.get("HUGGINGFACE_HUB_CACHE")
+            or os.environ.get("HF_HOME")
+            or os.environ.get("HUGGINGFACE_HOME")
+        )
+        model, wmeta, dev = self._get_model(ckpt=ckpt, cache_dir=cache_dir, device=device)
+        infer_bs = self._resolve_infer_batch(str(dev))
+
+        rgb_u8_all: List[np.ndarray] = []
+        for i, input_chw in enumerate(input_chws):
+            if input_chw.ndim != 3 or input_chw.shape[0] != 3:
+                raise ModelError(
+                    f"input_chw must be CHW with 3 bands for remoteclip_s2rgb, got {getattr(input_chw,'shape',None)} at index={i}"
+                )
+            s2_rgb_chw = np.clip(input_chw.astype(np.float32) / 10000.0, 0.0, 1.0)
+            rgb_u8_all.append(_s2_rgb_u8_from_chw(s2_rgb_chw))
+
+        sensor_meta = {
+            "collection": "COPERNICUS/S2_SR_HARMONIZED",
+            "bands": ("B4", "B3", "B2"),
+            "scale_m": scale_m,
+            "cloudy_pct": cloudy_pct,
+            "composite": composite,
+        }
+
+        out: List[Optional[Embedding]] = [None] * len(spatials)
+        n = len(spatials)
+
+        if output.mode == "pooled":
+            for s0 in range(0, n, infer_bs):
+                s1 = min(n, s0 + infer_bs)
+                vecs = _remoteclip_encode_pooled_batch(
+                    model,
+                    rgb_u8_all[s0:s1],
+                    image_size=image_size,
+                    device=dev,
+                )  # [B,D]
+                for j in range(s1 - s0):
+                    i = s0 + j
+                    extra = {
+                        "bands": sensor_meta["bands"],
+                        "scale_m": scale_m,
+                        "cloudy_pct": cloudy_pct,
+                        "composite": composite,
+                        "start": t.start,
+                        "end": t.end,
+                        "ckpt": ckpt,
+                        "device": dev,
+                        "pretrained_required": True,
+                        "auto_download": True,
+                        "hf_cache_dir": cache_dir,
+                        "tokens_kind": "pooled_batch",
+                        "batch_infer": True,
+                        "input_override": True,
+                        **wmeta,
+                    }
+                    meta = build_meta(
+                        model=self.model_name,
+                        kind="on_the_fly",
+                        backend="gee",
+                        source="COPERNICUS/S2_SR_HARMONIZED",
+                        sensor=sensor_meta,
+                        temporal=t,
+                        image_size=image_size,
+                        input_time=temporal_midpoint_str(t),
+                        extra=extra,
+                    )
+                    out[i] = Embedding(data=vecs[j].astype(np.float32), meta=meta)
+        elif output.mode == "grid":
+            for i in range(n):
+                tokens_or_vec, tmeta = _remoteclip_encode_tokens(
+                    model,
+                    rgb_u8_all[i],
+                    image_size=image_size,
+                    device=dev,
+                )
+                extra = {
+                    "bands": sensor_meta["bands"],
+                    "scale_m": scale_m,
+                    "cloudy_pct": cloudy_pct,
+                    "composite": composite,
+                    "start": t.start,
+                    "end": t.end,
+                    "ckpt": ckpt,
+                    "device": dev,
+                    "pretrained_required": True,
+                    "auto_download": True,
+                    "hf_cache_dir": cache_dir,
+                    "batch_infer": False,
+                    "input_override": True,
+                    **wmeta,
+                    **tmeta,
+                }
+                base_meta = build_meta(
+                    model=self.model_name,
+                    kind="on_the_fly",
+                    backend="gee",
+                    source="COPERNICUS/S2_SR_HARMONIZED",
+                    sensor=sensor_meta,
+                    temporal=t,
+                    image_size=image_size,
+                    input_time=temporal_midpoint_str(t),
+                    extra=extra,
+                )
+                if tokens_or_vec.ndim != 2:
+                    raise ModelError(
+                        "grid output requires token sequence [N,D]. "
+                        "Your RemoteCLIP wrapper only provides pooled vectors (no forward_encoder tokens)."
+                    )
+                grid_dhw, gmeta = _tokens_to_grid_dhw(tokens_or_vec)
+                meta = {**base_meta, **gmeta, "grid_type": "vit_tokens"}
+                da = xr.DataArray(
+                    grid_dhw,
+                    dims=("d", "y", "x"),
+                    coords={
+                        "d": np.arange(grid_dhw.shape[0]),
+                        "y": np.arange(grid_dhw.shape[1]),
+                        "x": np.arange(grid_dhw.shape[2]),
+                    },
+                    name="embedding",
+                    attrs=meta,
+                )
+                out[i] = Embedding(data=da, meta=meta)
+        else:
+            raise ModelError(f"Unknown output mode: {output.mode}")
+
+        if any(e is None for e in out):
+            raise ModelError("remoteclip_s2rgb batch inference produced incomplete outputs.")
+        return [e for e in out if e is not None]

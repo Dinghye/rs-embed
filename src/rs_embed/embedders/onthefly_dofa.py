@@ -295,6 +295,63 @@ def _dofa_forward_tokens_and_pooled(
     return patch_tokens, pooled, extra
 
 
+def _dofa_forward_tokens_and_pooled_batch(
+    model,
+    x_bchw: np.ndarray,
+    wavelengths_um: List[float],
+    *,
+    device: str,
+) -> Tuple[np.ndarray, np.ndarray, Dict[str, Any]]:
+    """Batch forward for DOFA.
+
+    Returns:
+      patch_tokens: [B, N, D] (no CLS)
+      pooled:       [B, D]
+    """
+    import torch
+
+    dev = _auto_device(device)
+    x = torch.from_numpy(x_bchw).to(dev)
+    if x.dtype != torch.float32:
+        x = x.float()
+    wavelist = torch.tensor(wavelengths_um, device=dev).float()
+
+    with torch.inference_mode():
+        xtok, _ = model.patch_embed(x, wavelist)  # [B,N,D]
+        xtok = xtok + model.pos_embed[:, 1:, :]
+        cls_token = model.cls_token + model.pos_embed[:, :1, :]
+        cls_tokens = cls_token.expand(xtok.shape[0], -1, -1)
+        xseq = torch.cat((cls_tokens, xtok), dim=1)  # [B,1+N,D]
+
+        for blk in model.blocks:
+            xseq = blk(xseq)
+
+        if getattr(model, "global_pool", True):
+            pooled_t = xseq[:, 1:, :].mean(dim=1)
+            pooled_t = model.fc_norm(pooled_t)
+            pooled = pooled_t.detach().float().cpu().numpy().astype(np.float32)  # [B,D]
+            norm_applied = "fc_norm(global_pool_mean)"
+        else:
+            xseq = model.norm(xseq)
+            pooled = xseq[:, 0].detach().float().cpu().numpy().astype(np.float32)  # [B,D]
+            norm_applied = "norm(cls)"
+
+        patch_tokens = xseq[:, 1:, :].detach().float().cpu().numpy().astype(np.float32)  # [B,N,D]
+
+    n = int(patch_tokens.shape[1])
+    d = int(patch_tokens.shape[2])
+    side = int(round(math.sqrt(n)))
+    extra = {
+        "token_count": int(n),
+        "token_dim": int(d),
+        "token_grid_side": int(side) if side * side == n else None,
+        "tokens_include_cls": False,
+        "pooled_norm": norm_applied,
+        "batch_shape": tuple(patch_tokens.shape),
+    }
+    return patch_tokens, pooled, extra
+
+
 # -----------------------------
 # Embedder
 # -----------------------------
@@ -312,6 +369,8 @@ class DOFAEmbedder(EmbedderBase):
     """
 
     DEFAULT_FETCH_WORKERS = 8
+    DEFAULT_BATCH_CPU = 8
+    DEFAULT_BATCH_CUDA = 64
 
     def describe(self) -> Dict[str, Any]:
         return {
@@ -362,6 +421,12 @@ class DOFAEmbedder(EmbedderBase):
     def _resolve_fetch_workers(n_items: int) -> int:
         v = int(os.environ.get("RS_EMBED_DOFA_FETCH_WORKERS", str(DOFAEmbedder.DEFAULT_FETCH_WORKERS)))
         return max(1, min(int(n_items), v))
+
+    @staticmethod
+    def _resolve_infer_batch(dev: str) -> int:
+        default_bs = DOFAEmbedder.DEFAULT_BATCH_CUDA if str(dev).startswith("cuda") else DOFAEmbedder.DEFAULT_BATCH_CPU
+        v = int(os.environ.get("RS_EMBED_DOFA_BATCH_SIZE", str(default_bs)))
+        return max(1, v)
 
     def get_embedding(
         self,
@@ -623,20 +688,152 @@ class DOFAEmbedder(EmbedderBase):
                     i, raw = fut.result()
                     prefetched_raw[i] = raw
 
-        out: List[Embedding] = []
-        for i, sp in enumerate(spatials):
-            raw = prefetched_raw[i]
+        raw_inputs: List[np.ndarray] = []
+        for i, raw in enumerate(prefetched_raw):
             if raw is None:
                 raise ModelError(f"Missing prefetched input at index={i} for dofa.")
-            out.append(
-                self.get_embedding(
-                    spatial=sp,
-                    temporal=temporal,
-                    sensor=ss,
-                    output=output,
-                    backend=backend,
-                    device=device,
-                    input_chw=raw,
-                )
+            raw_inputs.append(raw)
+        return self.get_embeddings_batch_from_inputs(
+            spatials=spatials,
+            input_chws=raw_inputs,
+            temporal=temporal,
+            sensor=ss,
+            output=output,
+            backend=backend,
+            device=device,
+        )
+
+    def get_embeddings_batch_from_inputs(
+        self,
+        *,
+        spatials: list[SpatialSpec],
+        input_chws: list[np.ndarray],
+        temporal: Optional[TemporalSpec] = None,
+        sensor: Optional[SensorSpec] = None,
+        output: OutputSpec = OutputSpec.pooled(),
+        backend: str = "gee",
+        device: str = "auto",
+    ) -> list[Embedding]:
+        if len(spatials) != len(input_chws):
+            raise ModelError(
+                f"spatials/input_chws length mismatch: {len(spatials)} != {len(input_chws)}"
             )
-        return out
+        if not spatials:
+            return []
+
+        backend_l = backend.lower().strip()
+        if backend_l != "gee":
+            return super().get_embeddings_batch_from_inputs(
+                spatials=spatials,
+                input_chws=input_chws,
+                temporal=temporal,
+                sensor=sensor,
+                output=output,
+                backend=backend,
+                device=device,
+            )
+        if temporal is None:
+            raise ModelError("dofa backend='gee' requires TemporalSpec.range(start,end).")
+        temporal.validate()
+        if temporal.mode != "range":
+            raise ModelError("dofa backend='gee' requires TemporalSpec.range in v0.1.")
+
+        ss = sensor or self._default_sensor()
+        variant = getattr(ss, "variant", "base")
+        bands = list(getattr(ss, "bands", _S2_SR_12_BANDS))
+        wavelengths_um = getattr(ss, "wavelengths", None)
+        if wavelengths_um is None:
+            wavelengths_um = _infer_wavelengths_um(bands)
+        if wavelengths_um is None:
+            raise ModelError(
+                f"Cannot infer wavelengths for bands={bands}. Provide sensor.wavelengths explicitly (µm)."
+            )
+        wavelengths_um = [float(v) for v in wavelengths_um]
+
+        x_bchw_all: List[np.ndarray] = []
+        resize_meta_all: List[Dict[str, Any]] = []
+        for i, input_chw in enumerate(input_chws):
+            if input_chw.ndim != 3 or int(input_chw.shape[0]) != len(bands):
+                raise ModelError(
+                    f"input_chw must be CHW with {len(bands)} bands for DOFA, got "
+                    f"{getattr(input_chw,'shape',None)} at index={i}"
+                )
+            x_chw = np.clip(input_chw.astype(np.float32) / 10000.0, 0.0, 1.0).astype(np.float32)
+            x_chw, resize_meta = _resize_chw(x_chw, size=224)
+            x_bchw_all.append(x_chw)
+            resize_meta_all.append(resize_meta)
+
+        model, mmeta = _load_dofa_model(variant=variant, device=device)
+        dev = str(mmeta.get("device", device))
+        infer_bs = self._resolve_infer_batch(dev)
+
+        out: List[Optional[Embedding]] = [None] * len(spatials)
+        n = len(spatials)
+        for s0 in range(0, n, infer_bs):
+            s1 = min(n, s0 + infer_bs)
+            xb = np.stack(x_bchw_all[s0:s1], axis=0).astype(np.float32)
+            tokens_bnd, pooled_bd, tmeta = _dofa_forward_tokens_and_pooled_batch(
+                model,
+                xb,
+                wavelengths_um=wavelengths_um,
+                device=dev,
+            )
+            for j in range(s1 - s0):
+                i = s0 + j
+                tokens = tokens_bnd[j]
+                pooled = pooled_bd[j]
+                base_meta: Dict[str, Any] = {
+                    "model": self.model_name,
+                    "type": "on_the_fly",
+                    "backend": backend_l,
+                    "variant": str(variant),
+                    "output_mode": output.mode,
+                    "device": str(dev),
+                    "preprocess": {"strategy": "resize_to_224_bilinear", "resize_meta": resize_meta_all[i]},
+                    "input_channels": int(x_bchw_all[i].shape[0]),
+                    "wavelengths_um": list(map(float, wavelengths_um)),
+                    "input_size_hw": (int(x_bchw_all[i].shape[1]), int(x_bchw_all[i].shape[2])),
+                    "token_meta": tmeta,
+                    "batch_infer": True,
+                    "input_override": True,
+                    **mmeta,
+                    "raw_chw_shape": tuple(input_chws[i].shape),
+                }
+
+                if output.mode == "pooled":
+                    base_meta["pooled_shape"] = tuple(pooled.shape)
+                    out[i] = Embedding(data=pooled.astype(np.float32), meta=base_meta)
+                    continue
+
+                if output.mode == "grid":
+                    n_tok, d_tok = tokens.shape
+                    side = int(round(math.sqrt(n_tok)))
+                    if side * side != n_tok:
+                        raise ModelError(f"DOFA tokens N={n_tok} not square; cannot reshape to grid.")
+                    grid = tokens.reshape(side, side, d_tok).transpose(2, 0, 1).astype(np.float32)
+                    meta = {
+                        **base_meta,
+                        "grid_type": "vit_patch_tokens",
+                        "grid_shape": tuple(grid.shape),
+                        "grid_hw_tokens": (int(side), int(side)),
+                        "patch_size": int(getattr(model, "patch_size", 16)),
+                    }
+                    da = xr.DataArray(
+                        grid,
+                        dims=("d", "y", "x"),
+                        coords={
+                            "d": np.arange(grid.shape[0]),
+                            "y": np.arange(grid.shape[1]),
+                            "x": np.arange(grid.shape[2]),
+                        },
+                        name="embedding",
+                        attrs=meta,
+                    )
+                    out[i] = Embedding(data=da, meta=meta)
+                    continue
+
+                raise ModelError(f"Unknown output mode: {output.mode}")
+
+        if any(e is None for e in out):
+            raise ModelError("dofa batch inference produced incomplete outputs.")
+        return [e for e in out if e is not None]

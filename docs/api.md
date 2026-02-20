@@ -271,7 +271,7 @@ export_batch(
 - `chunk_size`: process points in chunks (controls memory/throughput)
 - `num_workers`: concurrency for GEE patch prefetching (ThreadPool)
 - `resume`: skip already-exported outputs and continue from remaining items
-- `show_progress`: show progress during batch export
+- `show_progress`: show progress during batch export (overall progress + per-model inference progress)
 
 **Returns**
 

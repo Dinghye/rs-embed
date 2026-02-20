@@ -193,6 +193,36 @@ def test_write_netcdf_batch_embeddings(tmp_path):
     ds.close()
 
 
+def test_write_netcdf_resolves_dim_name_conflicts(tmp_path):
+    """Variables with different lengths should not be forced onto one shared dim."""
+    import xarray as xr
+
+    arrays = {
+        "embedding__model_a": np.zeros((8,), dtype=np.float32),
+        "embedding__model_b": np.zeros((4,), dtype=np.float32),
+        "inputs_bchw__model_c": np.zeros((2, 3, 4, 4), dtype=np.float32),
+        "inputs_bchw__model_d": np.zeros((2, 5, 4, 4), dtype=np.float32),
+    }
+    out = str(tmp_path / "conflict.nc")
+    write_arrays(fmt="netcdf", out_path=out, arrays=arrays, manifest={}, save_manifest=False)
+
+    ds = xr.open_dataset(out)
+    try:
+        assert tuple(ds["embedding__model_a"].dims) == ("dim",)
+        dim_b = ds["embedding__model_b"].dims[0]
+        assert dim_b != "dim"
+        assert dim_b.startswith("dim__")
+        assert int(ds.sizes[dim_b]) == 4
+
+        assert tuple(ds["inputs_bchw__model_c"].dims) == ("point", "band", "y", "x")
+        band_d = ds["inputs_bchw__model_d"].dims[1]
+        assert band_d != "band"
+        assert band_d.startswith("band__")
+        assert int(ds.sizes[band_d]) == 5
+    finally:
+        ds.close()
+
+
 # ══════════════════════════════════════════════════════════════════════
 # write_arrays — unknown format
 # ══════════════════════════════════════════════════════════════════════

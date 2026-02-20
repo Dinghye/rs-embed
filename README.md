@@ -30,7 +30,7 @@ emb = get_embedding("tessera", spatial=..., temporal=..., output=...)
 ## Install(tempory)
 ```bash
 # temporay
-git git@github.com:Dinghye/rs-embed.git
+git clone git@github.com:Dinghye/rs-embed.git
 cd rs-embed
 conda env create -f environment.yml
 conda activate rs-embed

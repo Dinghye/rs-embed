@@ -99,8 +99,14 @@ def _write_netcdf(
 
     # Build xarray Dataset with semantically-named dimensions.
     data_vars: Dict[str, xr.DataArray] = {}
+    dim_sizes: Dict[str, int] = {}
     for key, arr in arrays.items():
-        dims = _infer_dims(key, arr)
+        dims = _resolve_conflicting_dims(
+            key=key,
+            dims=_infer_dims(key, arr),
+            shape=arr.shape,
+            dim_sizes=dim_sizes,
+        )
         data_vars[key] = xr.DataArray(data=arr, dims=dims)
 
     ds = xr.Dataset(data_vars)
@@ -127,6 +133,40 @@ def _write_netcdf(
     manifest["nc_path"] = out_path
     manifest["nc_variables"] = sorted(arrays.keys())
     return manifest
+
+
+def _safe_dim_suffix(key: str) -> str:
+    out = "".join((c if c.isalnum() else "_") for c in str(key))
+    out = out.strip("_")
+    return out or "var"
+
+
+def _resolve_conflicting_dims(
+    *,
+    key: str,
+    dims: Tuple[str, ...],
+    shape: Tuple[int, ...],
+    dim_sizes: Dict[str, int],
+) -> Tuple[str, ...]:
+    """Rename dims only when an existing dim name has a different size."""
+    if len(dims) != len(shape):
+        return dims
+
+    resolved = []
+    for name, size_raw in zip(dims, shape):
+        size = int(size_raw)
+        existing = dim_sizes.get(name)
+        resolved_name = name
+        if existing is not None and existing != size:
+            suffix = _safe_dim_suffix(key)
+            resolved_name = f"{name}__{suffix}"
+            idx = 2
+            while resolved_name in dim_sizes and dim_sizes[resolved_name] != size:
+                resolved_name = f"{name}__{suffix}_{idx}"
+                idx += 1
+        dim_sizes.setdefault(resolved_name, size)
+        resolved.append(resolved_name)
+    return tuple(resolved)
 
 
 # ── dimension inference ────────────────────────────────────────────

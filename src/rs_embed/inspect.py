@@ -9,7 +9,7 @@ Currently we support Google Earth Engine (backend="gee").
 """
 
 from dataclasses import asdict
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 

@@ -497,6 +497,65 @@ def test_export_batch_combined_fail_on_bad_input(tmp_path, monkeypatch):
         )
 
 
+def test_export_batch_combined_partial_inputs_include_indices(tmp_path, monkeypatch):
+    class DummyInputOnly:
+        def describe(self):
+            return {
+                "type": "onthefly",
+                "inputs": {"collection": "C", "bands": ["B1"]},
+                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+            }
+
+        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+            raise AssertionError("save_embeddings=False should skip model inference")
+
+    registry.register("dummy_input_only")(DummyInputOnly)
+
+    import rs_embed.api as api
+
+    class DummyProvider:
+        def __init__(self, *a, **kw):
+            pass
+
+        def ensure_ready(self):
+            return None
+
+    def fake_fetch(provider, *, spatial, temporal, sensor):
+        if float(getattr(spatial, "lon", 0.0)) > 0.5:
+            raise RuntimeError("prefetch fail")
+        return np.ones((1, 2, 2), dtype=np.float32)
+
+    monkeypatch.setattr(api, "GEEProvider", DummyProvider)
+    monkeypatch.setattr(api, "_fetch_gee_patch_raw", fake_fetch)
+    monkeypatch.setattr(api, "_inspect_input_raw", lambda x, *, sensor, name: {"ok": True})
+    api._get_embedder_bundle_cached.cache_clear()
+
+    out_path = tmp_path / "partial_inputs_indices.npz"
+    out = api.export_batch(
+        spatials=[PointBuffer(lon=0, lat=0, buffer_m=10), PointBuffer(lon=1, lat=1, buffer_m=10)],
+        temporal=TemporalSpec.year(2022),
+        models=["dummy_input_only"],
+        out_path=str(out_path),
+        backend="gee",
+        output=OutputSpec.pooled(),
+        sensor=SensorSpec(collection="C", bands=("B1",)),
+        save_inputs=True,
+        save_embeddings=False,
+        continue_on_error=True,
+        show_progress=False,
+    )
+
+    assert out_path.exists()
+    m = out["models"][0]
+    assert m["model"] == "dummy_input_only"
+    assert "inputs" in m and isinstance(m["inputs"], dict)
+    assert m["inputs"]["indices"] == [0]
+
+    with np.load(out_path) as npz:
+        arr = npz[m["inputs"]["npz_key"]]
+        assert arr.shape[0] == 1
+
+
 def test_export_batch_prefetch_used_even_without_saving_inputs(tmp_path, monkeypatch):
     class DummyNeedInput:
         def describe(self):
@@ -811,7 +870,175 @@ def test_export_batch_resume_out_path_skips_existing(tmp_path):
     assert DummyResumeCombined.calls == len(spatials)
 
 
-def test_export_batch_progress_updates_once_per_point(tmp_path, monkeypatch):
+def test_export_batch_combined_saves_prefetch_checkpoint_before_inference(tmp_path, monkeypatch):
+    class DummyCrashAfterFetch:
+        def describe(self):
+            return {
+                "type": "onthefly",
+                "inputs": {"collection": "C", "bands": ["B1", "B2"]},
+                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+            }
+
+        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+            raise RuntimeError("boom-after-prefetch")
+
+    registry.register("dummy_crash_after_fetch")(DummyCrashAfterFetch)
+
+    import rs_embed.api as api
+
+    class DummyProvider:
+        def __init__(self, *a, **kw):
+            pass
+
+        def ensure_ready(self):
+            return None
+
+    monkeypatch.setattr(api, "GEEProvider", DummyProvider)
+    monkeypatch.setattr(
+        api,
+        "_fetch_gee_patch_raw",
+        lambda prov, *, spatial, temporal, sensor: np.ones((2, 2, 2), dtype=np.float32),
+    )
+    monkeypatch.setattr(api, "_inspect_input_raw", lambda x, *, sensor, name: {"ok": True})
+    api._get_embedder_bundle_cached.cache_clear()
+
+    out_path = tmp_path / "prefetch_ckpt.npz"
+    with pytest.raises(RuntimeError, match="boom-after-prefetch"):
+        api.export_batch(
+            spatials=[PointBuffer(lon=0, lat=0, buffer_m=10), PointBuffer(lon=1, lat=1, buffer_m=10)],
+            temporal=TemporalSpec.year(2022),
+            models=["dummy_crash_after_fetch"],
+            out_path=str(out_path),
+            backend="gee",
+            output=OutputSpec.pooled(),
+            sensor=SensorSpec(collection="C", bands=("B1", "B2")),
+            save_inputs=False,
+            save_embeddings=True,
+            show_progress=False,
+        )
+
+    assert out_path.exists()
+    with open(tmp_path / "prefetch_ckpt.json", "r", encoding="utf-8") as f:
+        mani = json.load(f)
+    assert bool(mani.get("resume_incomplete"))
+    assert mani.get("stage") == "prefetched"
+
+    npz = np.load(out_path)
+    try:
+        assert any(k.startswith("__prefetch_") for k in npz.files)
+    finally:
+        npz.close()
+
+
+def test_export_batch_combined_resume_continues_remaining_models(tmp_path, monkeypatch):
+    class DummyResumeGood:
+        calls = 0
+
+        def describe(self):
+            return {
+                "type": "onthefly",
+                "inputs": {"collection": "C", "bands": ["B1", "B2"]},
+                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+            }
+
+        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+            DummyResumeGood.calls += 1
+            return Embedding(data=np.array([1.0], dtype=np.float32), meta={})
+
+    class DummyResumeFlaky:
+        calls = 0
+        fail = True
+
+        def describe(self):
+            return {
+                "type": "onthefly",
+                "inputs": {"collection": "C", "bands": ["B1", "B2"]},
+                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+            }
+
+        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+            DummyResumeFlaky.calls += 1
+            if DummyResumeFlaky.fail:
+                raise RuntimeError("flaky")
+            return Embedding(data=np.array([2.0], dtype=np.float32), meta={})
+
+    registry.register("dummy_resume_good_ckpt")(DummyResumeGood)
+    registry.register("dummy_resume_flaky_ckpt")(DummyResumeFlaky)
+
+    import rs_embed.api as api
+
+    class DummyProvider:
+        def __init__(self, *a, **kw):
+            pass
+
+        def ensure_ready(self):
+            return None
+
+    fetch_calls = {"n": 0}
+
+    def fake_fetch(provider, *, spatial, temporal, sensor):
+        fetch_calls["n"] += 1
+        return np.ones((2, 2, 2), dtype=np.float32)
+
+    monkeypatch.setattr(api, "GEEProvider", DummyProvider)
+    monkeypatch.setattr(api, "_fetch_gee_patch_raw", fake_fetch)
+    monkeypatch.setattr(api, "_inspect_input_raw", lambda x, *, sensor, name: {"ok": True})
+    api._get_embedder_bundle_cached.cache_clear()
+
+    out_path = tmp_path / "resume_partial.npz"
+    spatials = [PointBuffer(lon=0, lat=0, buffer_m=10), PointBuffer(lon=1, lat=1, buffer_m=10)]
+
+    with pytest.raises(RuntimeError, match="flaky"):
+        api.export_batch(
+            spatials=spatials,
+            temporal=TemporalSpec.year(2022),
+            models=["dummy_resume_good_ckpt", "dummy_resume_flaky_ckpt"],
+            out_path=str(out_path),
+            backend="gee",
+            output=OutputSpec.pooled(),
+            sensor=SensorSpec(collection="C", bands=("B1", "B2")),
+            save_inputs=False,
+            save_embeddings=True,
+            show_progress=False,
+        )
+
+    first_good_calls = DummyResumeGood.calls
+    first_fetch_calls = fetch_calls["n"]
+    assert first_good_calls == len(spatials)
+    assert first_fetch_calls == len(spatials)
+
+    DummyResumeFlaky.fail = False
+    result = api.export_batch(
+        spatials=spatials,
+        temporal=TemporalSpec.year(2022),
+        models=["dummy_resume_good_ckpt", "dummy_resume_flaky_ckpt"],
+        out_path=str(out_path),
+        backend="gee",
+        output=OutputSpec.pooled(),
+        sensor=SensorSpec(collection="C", bands=("B1", "B2")),
+        save_inputs=False,
+        save_embeddings=True,
+        resume=True,
+        show_progress=False,
+    )
+
+    assert result["status"] == "ok"
+    assert bool(result.get("resume_incomplete")) is False
+    assert DummyResumeGood.calls == first_good_calls
+    assert fetch_calls["n"] == first_fetch_calls
+    assert any(m.get("model") == "dummy_resume_good_ckpt" for m in result["models"])
+    assert any(m.get("model") == "dummy_resume_flaky_ckpt" for m in result["models"])
+
+    npz = np.load(out_path)
+    try:
+        assert "embeddings__dummy_resume_good_ckpt" in npz.files
+        assert "embeddings__dummy_resume_flaky_ckpt" in npz.files
+        assert not any(k.startswith("__prefetch_") for k in npz.files)
+    finally:
+        npz.close()
+
+
+def test_export_batch_progress_updates_point_and_model_bars(tmp_path, monkeypatch):
     class DummyProgressModel:
         def describe(self):
             return {"type": "precomputed", "backend": ["local"], "output": ["pooled"]}
@@ -824,22 +1051,25 @@ def test_export_batch_progress_updates_once_per_point(tmp_path, monkeypatch):
     import rs_embed.api as api
     api._get_embedder_bundle_cached.cache_clear()
 
-    state = {"total": None, "updates": 0, "closed": False}
+    state = {}
 
     class _FakeProgress:
-        def __init__(self, *, total: int):
-            state["total"] = total
+        def __init__(self, *, total: int, desc: str):
+            state[desc] = {"total": int(total), "updates": 0, "calls": [], "closed": False}
+            self._desc = desc
 
         def update(self, n: int = 1):
-            state["updates"] += int(n)
+            n_i = int(n)
+            state[self._desc]["updates"] += n_i
+            state[self._desc]["calls"].append(n_i)
 
         def close(self):
-            state["closed"] = True
+            state[self._desc]["closed"] = True
 
     monkeypatch.setattr(
         api,
         "_create_progress",
-        lambda *, enabled, total, desc, unit="item": _FakeProgress(total=total),
+        lambda *, enabled, total, desc, unit="item": _FakeProgress(total=total, desc=desc),
     )
 
     spatials = [PointBuffer(lon=0, lat=0, buffer_m=10), PointBuffer(lon=1, lat=1, buffer_m=10)]
@@ -852,9 +1082,172 @@ def test_export_batch_progress_updates_once_per_point(tmp_path, monkeypatch):
         output=OutputSpec.pooled(),
         save_inputs=False,
         save_embeddings=True,
+        chunk_size=1,
         show_progress=True,
     )
 
-    assert state["total"] == len(spatials)
-    assert state["updates"] == len(spatials)
-    assert state["closed"] is True
+    assert state["export_batch"]["total"] == len(spatials)
+    assert state["export_batch"]["updates"] == len(spatials)
+    assert state["export_batch"]["closed"] is True
+    assert state["infer[dummy_progress]"]["total"] == len(spatials)
+    assert state["infer[dummy_progress]"]["updates"] == len(spatials)
+    assert state["infer[dummy_progress]"]["closed"] is True
+
+
+def test_export_batch_combined_progress_updates_model_inference(tmp_path, monkeypatch):
+    class DummyBatchProgressModel:
+        def describe(self):
+            return {"type": "precomputed", "backend": ["local"], "output": ["pooled"]}
+
+        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+            return Embedding(data=np.array([1.0], dtype=np.float32), meta={})
+
+        def get_embeddings_batch(self, *, spatials, temporal, sensor, output, backend, device="auto"):
+            return [Embedding(data=np.array([1.0], dtype=np.float32), meta={}) for _ in spatials]
+
+    class DummySingleProgressModel:
+        def describe(self):
+            return {"type": "precomputed", "backend": ["local"], "output": ["pooled"]}
+
+        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+            return Embedding(data=np.array([2.0], dtype=np.float32), meta={})
+
+    registry.register("dummy_batch_progress")(DummyBatchProgressModel)
+    registry.register("dummy_single_progress")(DummySingleProgressModel)
+
+    import rs_embed.api as api
+    api._get_embedder_bundle_cached.cache_clear()
+
+    state = {}
+
+    class _FakeProgress:
+        def __init__(self, *, total: int, desc: str):
+            state[desc] = {"total": int(total), "updates": 0, "calls": [], "closed": False}
+            self._desc = desc
+
+        def update(self, n: int = 1):
+            n_i = int(n)
+            state[self._desc]["updates"] += n_i
+            state[self._desc]["calls"].append(n_i)
+
+        def close(self):
+            state[self._desc]["closed"] = True
+
+    monkeypatch.setattr(
+        api,
+        "_create_progress",
+        lambda *, enabled, total, desc, unit="item": _FakeProgress(total=total, desc=desc),
+    )
+
+    spatials = [PointBuffer(lon=0, lat=0, buffer_m=10), PointBuffer(lon=1, lat=1, buffer_m=10)]
+    api.export_batch(
+        spatials=spatials,
+        temporal=TemporalSpec.year(2022),
+        models=["dummy_batch_progress", "dummy_single_progress"],
+        out_path=str(tmp_path / "combined_progress.npz"),
+        backend="local",
+        output=OutputSpec.pooled(),
+        save_inputs=False,
+        save_embeddings=True,
+        chunk_size=1,
+        show_progress=True,
+    )
+
+    assert state["export_batch[combined]"]["total"] == 2
+    assert state["export_batch[combined]"]["updates"] == 2
+    assert state["export_batch[combined]"]["closed"] is True
+    assert state["infer[dummy_batch_progress]"]["total"] == len(spatials)
+    assert state["infer[dummy_batch_progress]"]["updates"] == len(spatials)
+    assert state["infer[dummy_batch_progress]"]["calls"] == [1, 1]
+    assert state["infer[dummy_batch_progress]"]["closed"] is True
+    assert state["infer[dummy_single_progress]"]["total"] == len(spatials)
+    assert state["infer[dummy_single_progress]"]["updates"] == len(spatials)
+    assert state["infer[dummy_single_progress]"]["calls"] == [1, 1]
+    assert state["infer[dummy_single_progress]"]["closed"] is True
+
+
+def test_export_batch_combined_progress_fills_on_model_init_failure(tmp_path, monkeypatch):
+    class DummyInitFailModel:
+        def __init__(self):
+            raise RuntimeError("init failed")
+
+    registry.register("dummy_init_fail")(DummyInitFailModel)
+
+    import rs_embed.api as api
+    api._get_embedder_bundle_cached.cache_clear()
+
+    state = {}
+
+    class _FakeProgress:
+        def __init__(self, *, total: int, desc: str):
+            state[desc] = {"total": int(total), "updates": 0, "calls": [], "closed": False}
+            self._desc = desc
+
+        def update(self, n: int = 1):
+            n_i = int(n)
+            state[self._desc]["updates"] += n_i
+            state[self._desc]["calls"].append(n_i)
+
+        def close(self):
+            state[self._desc]["closed"] = True
+
+    monkeypatch.setattr(
+        api,
+        "_create_progress",
+        lambda *, enabled, total, desc, unit="item": _FakeProgress(total=total, desc=desc),
+    )
+
+    spatials = [PointBuffer(lon=0, lat=0, buffer_m=10), PointBuffer(lon=1, lat=1, buffer_m=10)]
+    result = api.export_batch(
+        spatials=spatials,
+        temporal=TemporalSpec.year(2022),
+        models=["dummy_init_fail"],
+        out_path=str(tmp_path / "combined_progress_init_fail.npz"),
+        backend="local",
+        output=OutputSpec.pooled(),
+        save_inputs=False,
+        save_embeddings=True,
+        continue_on_error=True,
+        show_progress=True,
+    )
+
+    assert result["status"] == "failed"
+    assert state["infer[dummy_init_fail]"]["total"] == len(spatials)
+    assert state["infer[dummy_init_fail]"]["updates"] == len(spatials)
+    assert state["infer[dummy_init_fail]"]["closed"] is True
+
+
+def test_export_batch_combined_embedder_without_input_chw_kwarg(tmp_path):
+    class DummyNoInputKwarg:
+        calls = 0
+
+        def describe(self):
+            return {"type": "precomputed", "backend": ["local"], "output": ["pooled"]}
+
+        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto"):
+            DummyNoInputKwarg.calls += 1
+            return Embedding(data=np.array([1.0], dtype=np.float32), meta={})
+
+    registry.register("dummy_no_input_kwarg")(DummyNoInputKwarg)
+
+    import rs_embed.api as api
+    api._get_embedder_bundle_cached.cache_clear()
+
+    spatials = [PointBuffer(lon=0, lat=0, buffer_m=10), PointBuffer(lon=1, lat=1, buffer_m=10)]
+    out_path = tmp_path / "combined_no_input_kwarg.npz"
+
+    result = api.export_batch(
+        spatials=spatials,
+        temporal=TemporalSpec.year(2022),
+        models=["dummy_no_input_kwarg"],
+        out_path=str(out_path),
+        backend="local",
+        output=OutputSpec.pooled(),
+        save_inputs=False,
+        save_embeddings=True,
+        show_progress=False,
+    )
+
+    assert out_path.exists()
+    assert result["status"] == "ok"
+    assert DummyNoInputKwarg.calls == len(spatials)
