@@ -119,12 +119,3 @@ Practically multi-input models:
 - For strict-schema models (`satvision_toa`, `terramind`, `thor_1_0_base`, `agrifm`), do not change channel order unless checkpoint metadata explicitly allows it.
 - If comparing embeddings across models, standardize ROI and temporal compositing first; model preprocessing differences are substantial.
 
-## Code Consistency Check
-
-Checked against current code in `rs-embed/src/rs_embed/embedders/`:
-
-- Model registration list in this page matches `catalog.py`.
-- `prithvi_eo_v2_s2_6b` defaults are `resize` + target `224`, optional `pad` legacy mode.
-- `prithvi_eo_v2_s2_6b` location input order is `(lon, lat)` in both single and batch forward.
-- `agrifm` default image size is `224` (updated from older `256` wording).
-- `anysat` passes `s2_dates`; `galileo` passes `months`; `dofa` passes wavelength vector; `scalemae_rgb` passes `input_res_m`.
