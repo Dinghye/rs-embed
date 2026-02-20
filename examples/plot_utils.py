@@ -299,7 +299,7 @@ def show_quicklook_artifact(
     artifacts: dict,
     *,
     flipud: bool = True,
-    figsize=(3.5, 3.5),
+    figsize=(5, 5),
     title: str = "quicklook_rgb",
 ):
     """Display quicklook image from inspect_gee_patch artifacts."""

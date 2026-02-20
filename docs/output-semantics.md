@@ -74,7 +74,9 @@ Unified Output Format
 Embedding.data.shape == (D, H, W)
 ```
 
-Returned as xarray.DataArray, carrying CRS, cropping, and metadata.
+Usually returned as `xarray.DataArray` with metadata in `attrs`.
+For precomputed geospatial products, metadata may include CRS/crop context.
+For ViT token grids, it is typically patch-grid metadata (not georeferenced pixel coordinates).
 
 **(a) ViT / MAE-style models**
 * Native output: tokens (N, D)

@@ -183,7 +183,7 @@ emb = get_embedding(
     "remoteclip_s2rgb",
     spatial=PointBuffer(lon=121.5, lat=31.2, buffer_m=2048),
     temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
-    output=OutputSpec.pooled("mean"),
+    output=OutputSpec.pooled(pooling="mean"),
     backend="gee",
     device="auto",
 )
@@ -262,6 +262,11 @@ export_batch(
     fail_on_bad_input: bool = False,
     chunk_size: int = 16,
     num_workers: int = 8,
+    continue_on_error: bool = False,
+    max_retries: int = 0,
+    retry_backoff_s: float = 0.0,
+    async_write: bool = True,
+    writer_workers: int = 2,
     resume: bool = False,
     show_progress: bool = True,
 ) -> Any
@@ -288,6 +293,11 @@ export_batch(
 - `fail_on_bad_input`: whether to raise immediately if input checks fail
 - `chunk_size`: process points in chunks (controls memory/throughput)
 - `num_workers`: concurrency for GEE patch prefetching (ThreadPool)
+- `continue_on_error`: keep exporting remaining points/models even if one item fails
+- `max_retries`: retry count for provider fetch/write operations
+- `retry_backoff_s`: sleep seconds between retries
+- `async_write`: write output files asynchronously in `out_dir` mode
+- `writer_workers`: writer thread count when `async_write=True`
 - `resume`: skip already-exported outputs and continue from remaining items
 - `show_progress`: show progress during batch export (overall progress + per-model inference progress)
 
@@ -392,12 +402,14 @@ rep = inspect_gee_patch(
 
 ## Model Registry (Advanced)
 
-If you need to list available models in code:
+If you need a stable model list in code, use the model catalog:
 
 ```python
-from rs_embed.core.registry import list_models
-print(list_models())
+from rs_embed.embedders.catalog import MODEL_SPECS
+print(sorted(MODEL_SPECS.keys()))
 ```
+
+`list_models()` from `rs_embed.core.registry` only reports models currently loaded into the runtime registry.
 
 ---
 
@@ -427,5 +439,5 @@ Different features require different optional dependencies:
 The current version is still early stage (`0.1.x`):
 
 - `BBox/PointBuffer` currently require `crs="EPSG:4326"`
-- `backend` currently mainly supports `"gee"`
+- Precomputed models mainly use `backend="local"`; on-the-fly models mainly use provider backends (typically `"gee"`)
 - `export_batch(format=...)` currently implements only `"npz"`; it may be extended to parquet/zarr/hdf5, etc.

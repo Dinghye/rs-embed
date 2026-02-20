@@ -5,10 +5,11 @@ To add a new model, you typically do four things:
 
 1. **Create an embedder class** in `src/rs_embed/embedders/`
 2. Decorate it with **`@register("your_model_name")`**
-3. Implement:
+3. Add it to `src/rs_embed/embedders/catalog.py` (`MODEL_SPECS`)
+4. Implement:
    - `describe()`
    - `get_embedding(...)`
-4. (Optional, recommended) Override:
+5. (Optional, recommended) Override:
    - `get_embeddings_batch(...)` for true batched inference
 
 ---
@@ -19,14 +20,17 @@ Models are discovered through the registry in `rs_embed.core.registry`:
 
 - `@register("name")` registers an embedder class.
 - `get_embedder_cls("name")` resolves the class.
-- `list_models()` lists available model names.
+- `list_models()` lists models that have already been loaded in the current process.
 
-Registration uses a **side-effect import**:
-the registry is populated when `rs_embed.embedders` is imported.
+Model loading is **lazy**:
+
+- `get_embedder_cls("name")` looks up `name` in `MODEL_SPECS`.
+- Then it imports the mapped module and reads the mapped class.
+- The class is inserted into the runtime registry.
 
 !!! tip
-    Put your embedder in `rs_embed/embedders/` and ensure `rs_embed/embedders/__init__.py` imports it (directly or indirectly).
-    This ensures registry auto-loading works.
+    Put your embedder in `rs_embed/embedders/` and add it to `src/rs_embed/embedders/catalog.py`.
+    If it's not in `MODEL_SPECS`, string-based lookup (`get_embedding("...")`) will not find it.
 
 ---
 
@@ -59,16 +63,13 @@ class EmbedderBase:
 ```python
 {
   "type": "on_the_fly" | "precomputed",
-  "backend": ["gee", ...],
+  "backend": ["provider" | "gee" | "local" | "auto", ...],
   "inputs": {
     "sensor_required": true/false,
     "default_sensor": {...} | null,
     "notes": "..."
   },
-  "outputs": {
-    "supports": ["pooled", "grid"],
-    "dtype": "float32"
-  }
+  "output": ["pooled", "grid"]
 }
 ```
 
@@ -86,6 +87,7 @@ Create `src/rs_embed/embedders/toy_model.py`:
 ```python
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Any, Dict, Optional
 import numpy as np
 
@@ -100,9 +102,9 @@ class ToyModelV1(EmbedderBase):
     def describe(self) -> Dict[str, Any]:
         return {
             "type": "precomputed",
-            "backend": ["gee"],  # or ["local"] if you add your own provider
+            "backend": ["local"],  # use "provider"/"gee" for on-the-fly fetchers
             "inputs": {"sensor_required": False, "default_sensor": None},
-            "outputs": {"supports": ["pooled"], "dtype": "float32"},
+            "output": ["pooled"],
         }
 
     def get_embedding(
@@ -128,13 +130,17 @@ class ToyModelV1(EmbedderBase):
             "model": self.model_name,
             "backend": backend,
             "device": device,
-            "spatial": spatial.to_dict(),
-            "temporal": temporal.to_dict() if temporal else None,
+            "spatial": asdict(spatial),
+            "temporal": asdict(temporal) if temporal else None,
         }
         return Embedding(data=vec, meta=meta)
 ```
 
-Then make sure it is imported by `rs_embed.embedders` (either add an import in `src/rs_embed/embedders/__init__.py` or ensure a wildcard import brings it in).
+Then register it in `src/rs_embed/embedders/catalog.py`:
+
+```python
+MODEL_SPECS["toy_model_v1"] = ("toy_model", "ToyModelV1")
+```
 
 ---
 
@@ -310,7 +316,7 @@ pytest -q
 
 Update docs in one of these places:
 
-- `docs/API.md` / `docs/api.md` (add model name and usage)
+- `docs/api.md` (add model name and usage)
 - `docs/extending.md` (this page)
 - `examples/playground.ipynb` (add a short cell demonstrating the new model)
 
@@ -329,10 +335,9 @@ nav:
 
 Before opening a PR / shipping the model:
 
-- [ ] `@register("...")` added and discoverable via `list_models()`
+- [ ] `@register("...")` added and entry added in `src/rs_embed/embedders/catalog.py`
 - [ ] `describe()` is fast and accurate
 - [ ] `get_embedding()` supports `input_chw` reuse (if on-the-fly)
 - [ ] clear errors for missing optional dependencies
 - [ ] unit tests added (`pytest -q` passes)
 - [ ] minimal usage example in docs or notebook
-

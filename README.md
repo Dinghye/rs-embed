@@ -1,7 +1,7 @@
 <div align="center">
 
 # <img src="./docs/assets/icon.png" width="35" alt="icon" />  rs-embed
-**A single line of code to get embeddings from Any supported model for Any location and Any time**
+**A single line of code to get embeddings from Any Remote Sensing Foundation Model(RSFM) for Any location and Any time**
 
 
 <!-- Badges: replace YOUR_USER/YOUR_REPO + workflow file name -->
@@ -24,8 +24,6 @@
 emb = get_embedding("tessera", spatial=..., temporal=..., output=...)
 ```
 
-* 🧊 Precomputed embeddings: Tessera / GSE / Copernicus Embed
-* 🔥 On-the-fly models: Prithvi-EO v2 / RemoteCLIP / SatMAE / ScaleMAE / SatVision-TOA / FoMo /  (imagery via GEE)
 
 ## Install(tempory)
 ```bash

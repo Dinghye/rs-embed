@@ -16,10 +16,10 @@ This page lists supported model backends and their I/O characteristics.
 
 Source of truth:
 
-- `rs-embed/src/rs_embed/embedders/catalog.py`
-- `rs-embed/src/rs_embed/embedders/onthefly_*.py`
-- `rs-embed/src/rs_embed/embedders/_vit_mae_utils.py`
-- `rs-embed/src/rs_embed/embedders/runtime_utils.py`
+- `src/rs_embed/embedders/catalog.py`
+- `src/rs_embed/embedders/onthefly_*.py`
+- `src/rs_embed/embedders/_vit_mae_utils.py`
+- `src/rs_embed/embedders/runtime_utils.py`
 
 Registered on-the-fly IDs:
 

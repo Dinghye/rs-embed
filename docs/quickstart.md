@@ -1,11 +1,18 @@
 ## Install (temporary)
 
 ```bash
-git clone git@github.com:Dinghye/rs-embed.git
+git clone https://github.com/Dinghye/rs-embed.git
+# or: git clone git@github.com:Dinghye/rs-embed.git
 cd rs-embed
 conda env create -f environment.yml
 conda activate rs-embed
 pip install -e .
+```
+
+For on-the-fly model demos (GEE + torch wrappers), install optional dependencies if needed:
+
+```bash
+pip install -e ".[gee,torch,models]"
 ```
 
 Examples notebook: examples/playground.ipynb
