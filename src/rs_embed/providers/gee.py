@@ -1,13 +1,13 @@
-
 from __future__ import annotations
 
-from typing import Any, Tuple
+from datetime import date, timedelta
+from typing import Any, Optional, Sequence, Tuple
 
 import numpy as np
 from pyproj import Transformer
 
 from ..core.errors import ProviderError
-from ..core.specs import BBox, PointBuffer, SpatialSpec
+from ..core.specs import BBox, PointBuffer, SensorSpec, SpatialSpec, TemporalSpec
 from .base import ProviderBase
 
 
@@ -87,6 +87,51 @@ def _resolve_band_aliases(collection: str, bands: Tuple[str, ...]) -> Tuple[str,
     return tuple(out)
 
 
+def _split_date_range(start: str, end: str, n_parts: int) -> Tuple[Tuple[str, str], ...]:
+    s = date.fromisoformat(str(start))
+    e = date.fromisoformat(str(end))
+    if e <= s:
+        raise ProviderError(f"Invalid date range: start={start}, end={end}")
+
+    total_days = max(1, (e - s).days)
+    n = max(1, int(n_parts))
+    bounds = [s + timedelta(days=(total_days * i) // n) for i in range(n + 1)]
+    bounds[-1] = e
+
+    out = []
+    for i in range(n):
+        a = bounds[i]
+        b = bounds[i + 1]
+        if b <= a:
+            b = min(e, a + timedelta(days=1))
+        if b <= a:
+            continue
+        out.append((a.isoformat(), b.isoformat()))
+    if not out:
+        out.append((str(start), str(end)))
+    return tuple(out)
+
+
+def _sample_image_bands_raw_chw(
+    img: Any,
+    *,
+    region: Any,
+    bands: Sequence[str],
+    scale_m: int,
+    fill_value: float,
+) -> np.ndarray:
+    img = img.select(list(bands)).reproject(crs="EPSG:3857", scale=int(scale_m))
+    rect = img.sampleRectangle(region=region, defaultValue=float(fill_value)).getInfo()
+    props = rect.get("properties", {}) if isinstance(rect, dict) else {}
+    arrs = [np.array(props.get(str(b), []), dtype=np.float32) for b in bands]
+    try:
+        raw = np.stack(arrs, axis=0).astype(np.float32)
+    except Exception as e:
+        raise ProviderError("Failed to sample rectangle from GEE image.") from e
+    raw = np.nan_to_num(raw, nan=0.0, posinf=0.0, neginf=0.0)
+    return np.clip(raw, 0.0, 10000.0).astype(np.float32)
+
+
 class GEEProvider(ProviderBase):
     name = "gee"
 
@@ -138,6 +183,53 @@ class GEEProvider(ProviderBase):
         self.ensure_ready()
         return self._to_ee_region_3857(spatial)
 
+    def get_region(self, spatial: SpatialSpec):
+        return self.get_region_3857(spatial)
+
+    def build_image(
+        self,
+        *,
+        sensor: SensorSpec,
+        temporal: Optional[TemporalSpec],
+        region: Optional[Any] = None,
+    ) -> Any:
+        """Build an ee.Image from SensorSpec and TemporalSpec."""
+        import ee
+
+        temporal_range: Optional[Tuple[str, str]] = None
+        if temporal is not None:
+            temporal.validate()
+            if temporal.mode == "range":
+                temporal_range = (temporal.start, temporal.end)
+            elif temporal.mode == "year":
+                y = int(temporal.year)
+                temporal_range = (f"{y}-01-01", f"{y+1}-01-01")
+            else:
+                raise ProviderError(f"Unknown TemporalSpec mode: {temporal.mode}")
+
+        try:
+            ic = ee.ImageCollection(sensor.collection)
+            if region is not None:
+                ic = ic.filterBounds(region)
+            if temporal_range is not None:
+                ic = ic.filterDate(temporal_range[0], temporal_range[1])
+            if sensor.cloudy_pct is not None:
+                try:
+                    ic = ic.filter(ee.Filter.lte("CLOUDY_PIXEL_PERCENTAGE", int(sensor.cloudy_pct)))
+                except Exception:
+                    pass
+
+            if sensor.composite == "median":
+                img = ic.median()
+            elif sensor.composite == "mosaic":
+                img = ic.mosaic()
+            else:
+                img = ic.median()
+        except Exception:
+            img = ee.Image(sensor.collection)
+
+        return img
+
     def fetch_array_chw(
         self,
         *,
@@ -157,11 +249,10 @@ class GEEProvider(ProviderBase):
         import ee
 
         # 1) Resolve aliases using collection hint when provided
-        if collection:
-            resolved = _resolve_band_aliases(collection, bands)
-        else:
-            # No collection hint: best effort — resolve nothing
-            resolved = bands
+        resolved = self.normalize_bands(
+            collection=(collection or ""),
+            bands=bands,
+        )
 
         # 2) Select resolved bands (this will error at compute-time if typo)
         img = image.select(list(resolved))
@@ -190,3 +281,205 @@ class GEEProvider(ProviderBase):
             )
 
         return np.stack(arrs, axis=0)
+
+    def normalize_bands(
+        self,
+        *,
+        collection: str,
+        bands: Tuple[str, ...],
+    ) -> Tuple[str, ...]:
+        return _resolve_band_aliases(collection, tuple(str(b) for b in bands))
+
+    def fetch_s1_vvvh_raw_chw(
+        self,
+        *,
+        spatial: SpatialSpec,
+        temporal: TemporalSpec,
+        scale_m: int = 10,
+        orbit: Optional[str] = None,
+        use_float_linear: bool = True,
+        composite: str = "median",
+        fill_value: float = 0.0,
+    ) -> np.ndarray:
+        import ee
+        temporal.validate()
+
+        region = self.get_region(spatial)
+        collection_id = "COPERNICUS/S1_GRD_FLOAT" if bool(use_float_linear) else "COPERNICUS/S1_GRD"
+        col = (
+            ee.ImageCollection(collection_id)
+            .filterDate(temporal.start, temporal.end)
+            .filterBounds(region)
+            .filter(ee.Filter.eq("instrumentMode", "IW"))
+            .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VV"))
+            .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VH"))
+        )
+        if orbit:
+            col = col.filter(ee.Filter.eq("orbitProperties_pass", orbit))
+
+        comp = str(composite).lower().strip()
+        if comp == "median":
+            img = col.median()
+        elif comp == "mosaic":
+            img = col.mosaic()
+        else:
+            raise ProviderError(f"Unknown composite='{composite}'. Use 'median' or 'mosaic'.")
+
+        img = img.select(["VV", "VH"]).reproject(crs="EPSG:3857", scale=int(scale_m))
+        rect = img.sampleRectangle(region=region, defaultValue=float(fill_value)).getInfo()
+        props = rect.get("properties", {}) if isinstance(rect, dict) else {}
+        vv = np.array(props.get("VV", []), dtype=np.float32)
+        vh = np.array(props.get("VH", []), dtype=np.float32)
+        try:
+            arr = np.stack([vv, vh], axis=0).astype(np.float32)
+        except Exception as e:
+            raise ProviderError("Failed to sample S1 VV/VH rectangle from GEE image.") from e
+        arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+        if arr.ndim != 3 or int(arr.shape[0]) != 2:
+            raise ProviderError(f"Expected S1 VV/VH CHW with C=2, got shape={getattr(arr, 'shape', None)}")
+        return arr
+
+    def fetch_multiframe_collection_raw_tchw(
+        self,
+        *,
+        spatial: SpatialSpec,
+        temporal: TemporalSpec,
+        collection: str,
+        bands: Sequence[str],
+        n_frames: int = 8,
+        scale_m: int = 10,
+        cloudy_pct: Optional[int] = 30,
+        composite: str = "median",
+        fill_value: float = 0.0,
+    ) -> np.ndarray:
+        import ee
+        temporal.validate()
+
+        region = self.get_region(spatial)
+        resolved_bands = self.normalize_bands(
+            collection=str(collection),
+            bands=tuple(str(b) for b in bands),
+        )
+        col_all = ee.ImageCollection(str(collection)).filterDate(temporal.start, temporal.end).filterBounds(region)
+        if cloudy_pct is not None:
+            try:
+                col_all = col_all.filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", int(cloudy_pct)))
+            except Exception:
+                pass
+
+        comp = str(composite).lower().strip()
+        if comp not in {"median", "mosaic"}:
+            raise ProviderError(f"Unknown composite='{composite}'. Use 'median' or 'mosaic'.")
+
+        def _reduce(c: Any) -> Any:
+            return c.median() if comp == "median" else c.mosaic()
+
+        fallback_frame = None
+        try:
+            if int(col_all.size().getInfo()) > 0:
+                fallback_frame = _sample_image_bands_raw_chw(
+                    _reduce(col_all),
+                    region=region,
+                    bands=resolved_bands,
+                    scale_m=scale_m,
+                    fill_value=fill_value,
+                )
+        except Exception:
+            fallback_frame = None
+
+        frames = []
+        bins = _split_date_range(temporal.start, temporal.end, max(1, int(n_frames)))
+        for start_i, end_i in bins:
+            col_i = col_all.filterDate(start_i, end_i)
+            try:
+                has_data = int(col_i.size().getInfo()) > 0
+            except Exception:
+                has_data = False
+
+            if has_data:
+                frames.append(
+                    _sample_image_bands_raw_chw(
+                        _reduce(col_i),
+                        region=region,
+                        bands=resolved_bands,
+                        scale_m=scale_m,
+                        fill_value=fill_value,
+                    )
+                )
+            elif fallback_frame is not None:
+                frames.append(fallback_frame.copy())
+
+        if not frames:
+            if fallback_frame is not None:
+                frames = [fallback_frame.copy() for _ in range(max(1, int(n_frames)))]
+            else:
+                raise ProviderError("No valid observations found for the requested ROI/time window.")
+
+        t = max(1, int(n_frames))
+        if len(frames) < t:
+            frames.extend([frames[-1].copy() for _ in range(t - len(frames))])
+        elif len(frames) > t:
+            frames = frames[:t]
+
+        arr = np.stack(frames, axis=0).astype(np.float32)
+        if arr.ndim != 4:
+            raise ProviderError(f"Expected TCHW array, got shape={getattr(arr, 'shape', None)}")
+        if int(arr.shape[1]) != len(tuple(resolved_bands)):
+            raise ProviderError(
+                f"Time series channel mismatch: got C={int(arr.shape[1])}, expected C={len(tuple(resolved_bands))}"
+            )
+        return arr
+
+    def fetch_collection_patch_all_bands_chw(
+        self,
+        *,
+        spatial: SpatialSpec,
+        temporal: Optional[TemporalSpec],
+        collection: str,
+        scale_m: int = 10,
+        fill_value: float = 0.0,
+        composite: str = "median",
+    ) -> Tuple[np.ndarray, Tuple[str, ...]]:
+        import ee
+
+        region = self.get_region(spatial)
+
+        temporal_range: Optional[Tuple[str, str]] = None
+        if temporal is not None:
+            temporal.validate()
+            if temporal.mode == "range":
+                temporal_range = (temporal.start, temporal.end)
+            elif temporal.mode == "year":
+                y = int(temporal.year)
+                temporal_range = (f"{y}-01-01", f"{y+1}-01-01")
+            else:
+                raise ProviderError(f"Unknown TemporalSpec mode: {temporal.mode}")
+
+        col = ee.ImageCollection(str(collection))
+        col = col.filterBounds(region)
+        if temporal_range is not None:
+            col = col.filterDate(temporal_range[0], temporal_range[1])
+
+        comp = str(composite).lower().strip()
+        if comp == "median":
+            img = col.median()
+        elif comp == "mosaic":
+            img = col.mosaic()
+        else:
+            raise ProviderError(f"Unknown composite='{composite}'. Use 'median' or 'mosaic'.")
+
+        img = img.reproject(crs="EPSG:3857", scale=int(scale_m)).clip(region)
+        band_names_raw = img.bandNames().getInfo()
+        band_names = tuple(str(b) for b in (band_names_raw or []))
+        if not band_names:
+            raise ProviderError(f"No bands found for collection={collection!r}.")
+
+        rect = img.sampleRectangle(region=region, defaultValue=float(fill_value)).getInfo()
+        props = rect.get("properties", {}) if isinstance(rect, dict) else {}
+        arrs = [np.array(props.get(b, []), dtype=np.float32) for b in band_names]
+        try:
+            arr = np.stack(arrs, axis=0).astype(np.float32)
+        except Exception as e:
+            raise ProviderError("Failed to sample rectangle for all collection bands.") from e
+        arr = np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+        return arr, band_names

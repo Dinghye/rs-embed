@@ -9,7 +9,6 @@ import sys
 import types
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date, timedelta
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -20,9 +19,17 @@ from ..core.embedding import Embedding
 from ..core.errors import ModelError
 from ..core.registry import register
 from ..core.specs import OutputSpec, SensorSpec, SpatialSpec, TemporalSpec
-from ..providers.gee import GEEProvider
+from ..providers import ProviderBase
 from ._vit_mae_utils import ensure_torch
 from .base import EmbedderBase
+from .runtime_utils import (
+    call_provider_getter as _call_provider_getter,
+    fetch_s2_multiframe_raw_tchw as _fetch_s2_multiframe_raw_tchw,
+    get_cached_provider,
+    is_provider_backend,
+    load_cached_with_device as _load_cached_with_device,
+    resolve_device_auto_torch as _resolve_device,
+)
 from .meta_utils import build_meta, temporal_midpoint_str, temporal_to_range
 
 
@@ -123,16 +130,6 @@ def _download_agrifm_ckpt(
         )
     return dst
 
-
-def _resolve_device(device: str) -> str:
-    if device != "auto":
-        return device
-    try:
-        import torch
-
-        return "cuda" if torch.cuda.is_available() else "cpu"
-    except Exception:
-        return "cpu"
 
 
 def _resize_tchw(x_tchw: np.ndarray, *, out_hw: int) -> np.ndarray:
@@ -547,61 +544,21 @@ def _load_agrifm(
     auto_download_repo: bool,
     device: str = "auto",
 ) -> Tuple[Any, Dict[str, Any], str]:
-    dev = _resolve_device(device)
-    model, meta = _load_agrifm_cached(
+    (loaded, dev) = _load_cached_with_device(
+        _load_agrifm_cached,
+        device=device,
         ckpt_path=ckpt_path,
         repo_path=repo_path,
         repo_url=repo_url,
         repo_cache_root=repo_cache_root,
         auto_download_repo=auto_download_repo,
-        dev=dev,
     )
+    model, meta = loaded
     return model, meta, dev
 
 
-def _split_range(start: str, end: str, n_parts: int) -> List[Tuple[str, str]]:
-    s = date.fromisoformat(start)
-    e = date.fromisoformat(end)
-    total_days = max(1, (e - s).days)
-    n = max(1, int(n_parts))
-
-    bounds = [s + timedelta(days=(total_days * i) // n) for i in range(n + 1)]
-    bounds[-1] = e
-    out: List[Tuple[str, str]] = []
-    for i in range(n):
-        a = bounds[i]
-        b = bounds[i + 1]
-        if b <= a:
-            b = min(e, a + timedelta(days=1))
-        if b <= a:
-            continue
-        out.append((a.isoformat(), b.isoformat()))
-    if not out:
-        out.append((start, end))
-    return out
-
-
-def _sample_s2_10_raw_chw_from_image(
-    img,
-    *,
-    region,
-    scale_m: int,
-    fill_value: float,
-) -> np.ndarray:
-    img = img.select(_S2_10_BANDS).reproject(crs="EPSG:3857", scale=int(scale_m))
-    rect = img.sampleRectangle(region=region, defaultValue=float(fill_value)).getInfo()
-    props = rect.get("properties", {}) if isinstance(rect, dict) else {}
-    arrs = [np.array(props.get(b, []), dtype=np.float32) for b in _S2_10_BANDS]
-    try:
-        raw = np.stack(arrs, axis=0).astype(np.float32)
-    except Exception as e:
-        raise ModelError("Failed to sample S2 10-band rectangle from GEE image.") from e
-    raw = np.nan_to_num(raw, nan=0.0, posinf=0.0, neginf=0.0)
-    return np.clip(raw, 0.0, 10000.0).astype(np.float32)
-
-
 def _fetch_s2_10_raw_tchw(
-    provider: GEEProvider,
+    provider: ProviderBase,
     spatial: SpatialSpec,
     temporal: TemporalSpec,
     *,
@@ -611,70 +568,18 @@ def _fetch_s2_10_raw_tchw(
     composite: str = "median",
     fill_value: float = 0.0,
 ) -> np.ndarray:
-    import ee
-
-    region = provider.get_region_3857(spatial)
-    col_all = (
-        ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
-        .filterDate(temporal.start, temporal.end)
-        .filterBounds(region)
-        .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", int(cloudy_pct)))
+    return _fetch_s2_multiframe_raw_tchw(
+        provider,
+        spatial=spatial,
+        temporal=temporal,
+        bands=tuple(_S2_10_BANDS),
+        n_frames=int(n_frames),
+        collection="COPERNICUS/S2_SR_HARMONIZED",
+        scale_m=int(scale_m),
+        cloudy_pct=int(cloudy_pct),
+        composite=str(composite),
+        fill_value=float(fill_value),
     )
-
-    if composite not in {"median", "mosaic"}:
-        raise ModelError(f"Unknown composite='{composite}'. Use 'median' or 'mosaic'.")
-
-    def _reduce(c):
-        return c.median() if composite == "median" else c.mosaic()
-
-    fallback_frame = None
-    try:
-        if int(col_all.size().getInfo()) > 0:
-            fallback_frame = _sample_s2_10_raw_chw_from_image(
-                _reduce(col_all),
-                region=region,
-                scale_m=scale_m,
-                fill_value=fill_value,
-            )
-    except Exception:
-        fallback_frame = None
-
-    frames: List[np.ndarray] = []
-    bins = _split_range(temporal.start, temporal.end, max(1, int(n_frames)))
-    for start_i, end_i in bins:
-        col_i = col_all.filterDate(start_i, end_i)
-        try:
-            has_data = int(col_i.size().getInfo()) > 0
-        except Exception:
-            has_data = False
-
-        if has_data:
-            img_i = _reduce(col_i)
-            frame = _sample_s2_10_raw_chw_from_image(
-                img_i,
-                region=region,
-                scale_m=scale_m,
-                fill_value=fill_value,
-            )
-            frames.append(frame)
-        elif fallback_frame is not None:
-            frames.append(fallback_frame.copy())
-
-    if not frames:
-        if fallback_frame is not None:
-            frames = [fallback_frame.copy() for _ in range(max(1, int(n_frames)))]
-        else:
-            raise ModelError(
-                "No valid Sentinel-2 observations found for the requested ROI/time window."
-            )
-
-    t = max(1, int(n_frames))
-    if len(frames) < t:
-        frames.extend([frames[-1].copy() for _ in range(t - len(frames))])
-    elif len(frames) > t:
-        frames = frames[:t]
-
-    return np.stack(frames, axis=0).astype(np.float32)  # [T,C,H,W]
 
 
 def _agrifm_forward_grid(model, x_tchw: np.ndarray, *, device: str) -> Tuple[np.ndarray, Dict[str, Any]]:
@@ -729,7 +634,7 @@ class AgriFMEmbedder(EmbedderBase):
     def describe(self) -> Dict[str, Any]:
         return {
             "type": "on_the_fly",
-            "backend": ["gee"],
+            "backend": ["provider"],
             "inputs": {
                 "collection": "COPERNICUS/S2_SR_HARMONIZED",
                 "bands": _S2_10_BANDS,
@@ -750,14 +655,14 @@ class AgriFMEmbedder(EmbedderBase):
         }
 
     def __init__(self) -> None:
-        self._provider: Optional[GEEProvider] = None
+        self._providers: Dict[str, ProviderBase] = {}
 
-    def _get_provider(self) -> GEEProvider:
-        if self._provider is None:
-            p = GEEProvider(auto_auth=True)
-            p.ensure_ready()
-            self._provider = p
-        return self._provider
+    def _get_provider(self, backend: str) -> ProviderBase:
+        return get_cached_provider(
+            self._providers,
+            backend=backend,
+            allow_auto=True,
+        )
 
     @staticmethod
     def _default_sensor() -> SensorSpec:
@@ -786,8 +691,8 @@ class AgriFMEmbedder(EmbedderBase):
         device: str = "auto",
         input_chw: Optional[np.ndarray] = None,
     ) -> Embedding:
-        if backend.lower() not in ("gee", "auto"):
-            raise ModelError("agrifm expects backend='gee' (or 'auto').")
+        if not is_provider_backend(backend, allow_auto=True):
+            raise ModelError("agrifm expects a provider backend (or 'auto').")
 
         if sensor is None:
             sensor = self._default_sensor()
@@ -805,7 +710,7 @@ class AgriFMEmbedder(EmbedderBase):
 
         if input_chw is None:
             raw_tchw = _fetch_s2_10_raw_tchw(
-                self._get_provider(),
+                _call_provider_getter(self._get_provider, backend),
                 spatial,
                 t,
                 n_frames=n_frames,
@@ -870,7 +775,7 @@ class AgriFMEmbedder(EmbedderBase):
         meta = build_meta(
             model=self.model_name,
             kind="on_the_fly",
-            backend="gee",
+            backend=str(backend).lower(),
             source=sensor.collection,
             sensor=sensor,
             temporal=t,
@@ -926,15 +831,15 @@ class AgriFMEmbedder(EmbedderBase):
     ) -> list[Embedding]:
         if not spatials:
             return []
-        if backend.lower() not in ("gee", "auto"):
-            raise ModelError("agrifm expects backend='gee' (or 'auto').")
+        if not is_provider_backend(backend, allow_auto=True):
+            raise ModelError("agrifm expects a provider backend (or 'auto').")
 
         if sensor is None:
             sensor = self._default_sensor()
 
         t = temporal_to_range(temporal)
         n_frames = max(1, int(os.environ.get("RS_EMBED_AGRIFM_FRAMES", str(self.DEFAULT_FRAMES))))
-        provider = self._get_provider()
+        provider = _call_provider_getter(self._get_provider, backend)
         n = len(spatials)
         prefetched_raw: List[Optional[np.ndarray]] = [None] * n
 

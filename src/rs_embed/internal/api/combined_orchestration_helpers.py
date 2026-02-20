@@ -13,12 +13,12 @@ def init_combined_provider(
     backend: str,
     save_inputs: bool,
     save_embeddings: bool,
-    provider_factory: Callable[[], Any],
+    provider_factory: Optional[Callable[[], Any]],
     run_with_retry: Callable[..., Any],
     max_retries: int,
     retry_backoff_s: float,
 ) -> Optional[Any]:
-    if backend != "gee" or (not (save_inputs or save_embeddings)):
+    if provider_factory is None or (not (save_inputs or save_embeddings)):
         return None
     provider = provider_factory()
     run_with_retry(

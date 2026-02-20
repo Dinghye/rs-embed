@@ -14,21 +14,19 @@ from ..core.embedding import Embedding
 from ..core.errors import ModelError
 from ..core.registry import register
 from ..core.specs import OutputSpec, SensorSpec, SpatialSpec, TemporalSpec
+from ..providers.base import ProviderBase
 from .base import EmbedderBase
+from .runtime_utils import (
+    call_provider_getter as _call_provider_getter,
+    fetch_s2_rgb_chw as _fetch_s2_rgb_chw,
+    get_cached_provider,
+    is_provider_backend,
+    load_cached_with_device as _load_cached_with_device,
+    resolve_device_auto_torch as _resolve_device,
+)
 from .meta_utils import build_meta, temporal_midpoint_str, temporal_to_range
 from ._vit_mae_utils import fetch_s2_rgb_u8_from_gee, resize_rgb_u8, ensure_torch
-from .onthefly_remoteclip import _fetch_s2_rgb_chw
 
-
-def _resolve_device(device: str) -> str:
-    if device != "auto":
-        return device
-    try:
-        import torch
-
-        return "cuda" if torch.cuda.is_available() else "cpu"
-    except Exception:
-        return "cpu"
 
 
 def _missing_runtime_modules() -> List[str]:
@@ -306,8 +304,9 @@ def _load_dynamicvis_backbone(
     auto_download_repo: bool,
     device: str,
 ) -> Tuple[Any, Dict[str, Any], str]:
-    dev = _resolve_device(device)
-    model, meta = _load_dynamicvis_backbone_cached(
+    (loaded, dev) = _load_cached_with_device(
+        _load_dynamicvis_backbone_cached,
+        device=device,
         arch=str(arch),
         image_size=int(image_size),
         path_type=str(path_type),
@@ -320,8 +319,8 @@ def _load_dynamicvis_backbone(
         repo_cache_root=str(repo_cache_root),
         hf_cache_dir=(str(hf_cache_dir) if hf_cache_dir else None),
         auto_download_repo=bool(auto_download_repo),
-        dev=str(dev),
     )
+    model, meta = loaded
     return model, meta, dev
 
 
@@ -411,7 +410,7 @@ class DynamicVisEmbedder(EmbedderBase):
     def describe(self) -> Dict[str, Any]:
         return {
             "type": "on_the_fly",
-            "backend": ["gee"],
+            "backend": ["provider"],
             "inputs": {"collection": "COPERNICUS/S2_SR_HARMONIZED", "bands": ["B4", "B3", "B2"]},
             "temporal": {"mode": "range"},
             "output": ["pooled", "grid"],
@@ -431,16 +430,14 @@ class DynamicVisEmbedder(EmbedderBase):
         }
 
     def __init__(self) -> None:
-        self._provider: Optional[Any] = None
+        self._providers: Dict[str, ProviderBase] = {}
 
-    def _get_provider(self):
-        if self._provider is None:
-            from ..providers.gee import GEEProvider
-
-            p = GEEProvider(auto_auth=True)
-            p.ensure_ready()
-            self._provider = p
-        return self._provider
+    def _get_provider(self, backend: str) -> ProviderBase:
+        return get_cached_provider(
+            self._providers,
+            backend=backend,
+            allow_auto=True,
+        )
 
     @staticmethod
     def _default_sensor() -> SensorSpec:
@@ -468,8 +465,8 @@ class DynamicVisEmbedder(EmbedderBase):
         device: str = "auto",
         input_chw: Optional[np.ndarray] = None,
     ) -> Embedding:
-        if backend.lower() not in ("gee", "auto"):
-            raise ModelError("dynamicvis expects backend='gee' (or 'auto').")
+        if not is_provider_backend(backend, allow_auto=True):
+            raise ModelError("dynamicvis expects a provider backend (or 'auto').")
 
         if sensor is None:
             sensor = self._default_sensor()
@@ -506,7 +503,7 @@ class DynamicVisEmbedder(EmbedderBase):
                 temporal=t,
                 sensor=sensor,
                 out_size=image_size,
-                provider=self._get_provider(),
+                provider=_call_provider_getter(self._get_provider, backend),
             )
         else:
             if input_chw.ndim != 3 or int(input_chw.shape[0]) != 3:
@@ -542,7 +539,7 @@ class DynamicVisEmbedder(EmbedderBase):
         meta = build_meta(
             model=self.model_name,
             kind="on_the_fly",
-            backend="gee",
+            backend=str(backend).lower(),
             source=sensor.collection,
             sensor=sensor,
             temporal=t,
@@ -607,12 +604,12 @@ class DynamicVisEmbedder(EmbedderBase):
         if not spatials:
             return []
 
-        if backend.lower() not in ("gee", "auto"):
-            raise ModelError("dynamicvis expects backend='gee' (or 'auto').")
+        if not is_provider_backend(backend, allow_auto=True):
+            raise ModelError("dynamicvis expects a provider backend (or 'auto').")
 
         t = temporal_to_range(temporal)
         ss = sensor or self._default_sensor()
-        provider = self._get_provider()
+        provider = _call_provider_getter(self._get_provider, backend)
         n = len(spatials)
 
         scale_m = int(ss.scale_m)

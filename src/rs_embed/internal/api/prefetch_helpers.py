@@ -1,20 +1,20 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
 from ...core.export_helpers import sensor_cache_key as _sensor_cache_key
 from ...core.specs import SensorSpec
-from ...providers.gee import _resolve_band_aliases
 
 
 def sensor_fetch_group_key(sensor: SensorSpec) -> Tuple[str, int, int, float, str]:
     """Fetch identity excluding bands; used to build reusable band supersets."""
+    cloudy = -1 if getattr(sensor, "cloudy_pct", None) is None else int(sensor.cloudy_pct)
     return (
         str(sensor.collection),
         int(sensor.scale_m),
-        int(sensor.cloudy_pct),
+        cloudy,
         float(sensor.fill_value),
         str(sensor.composite),
     )
@@ -26,11 +26,12 @@ def select_prefetched_channels(x_chw: np.ndarray, idx: Tuple[int, ...]) -> np.nd
     return x_chw[list(idx), :, :]
 
 
-def build_gee_prefetch_plan(
+def build_prefetch_plan(
     *,
     models: List[str],
     resolved_sensor: Dict[str, Optional[SensorSpec]],
     model_type: Dict[str, str],
+    resolve_bands_fn: Optional[Callable[[str, Tuple[str, ...]], Tuple[str, ...]]] = None,
 ) -> Tuple[
     Dict[str, SensorSpec],  # sensor_by_key
     Dict[str, SensorSpec],  # fetch_sensor_by_key
@@ -51,7 +52,12 @@ def build_gee_prefetch_plan(
     groups: Dict[Tuple[str, int, int, float, str], List[Tuple[str, SensorSpec, Tuple[str, ...]]]] = {}
     for skey, sspec in sensor_by_key.items():
         gkey = sensor_fetch_group_key(sspec)
-        groups.setdefault(gkey, []).append((skey, sspec, _resolve_band_aliases(sspec.collection, sspec.bands)))
+        rbands = (
+            resolve_bands_fn(str(sspec.collection), tuple(sspec.bands))
+            if resolve_bands_fn is not None
+            else tuple(str(b) for b in sspec.bands)
+        )
+        groups.setdefault(gkey, []).append((skey, sspec, rbands))
 
     fetch_sensor_by_key: Dict[str, SensorSpec] = {}
     sensor_to_fetch: Dict[str, Tuple[str, Tuple[int, ...]]] = {}
@@ -73,7 +79,7 @@ def build_gee_prefetch_plan(
             collection=str(base.collection),
             bands=tuple(union_bands),
             scale_m=int(base.scale_m),
-            cloudy_pct=int(base.cloudy_pct),
+            cloudy_pct=(base.cloudy_pct if getattr(base, "cloudy_pct", None) is None else int(base.cloudy_pct)),
             fill_value=float(base.fill_value),
             composite=str(base.composite),
             check_input=bool(getattr(base, "check_input", False)),
@@ -92,3 +98,7 @@ def build_gee_prefetch_plan(
                 fetch_members[fetch_key].append(member_key)
 
     return sensor_by_key, fetch_sensor_by_key, sensor_to_fetch, sensor_models, fetch_members
+
+
+# Backwards-compatible alias kept for existing imports/tests.
+build_gee_prefetch_plan = build_prefetch_plan

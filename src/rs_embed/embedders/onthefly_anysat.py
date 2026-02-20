@@ -16,24 +16,21 @@ from ..core.embedding import Embedding
 from ..core.errors import ModelError
 from ..core.registry import register
 from ..core.specs import OutputSpec, SensorSpec, SpatialSpec, TemporalSpec
-from ..providers.gee import GEEProvider
+from ..providers import ProviderBase
 from .base import EmbedderBase
+from .runtime_utils import (
+    call_provider_getter as _call_provider_getter,
+    fetch_gee_patch_chw as _fetch_gee_patch_chw,
+    get_cached_provider,
+    is_provider_backend,
+    load_cached_with_device as _load_cached_with_device,
+)
 from .meta_utils import build_meta, temporal_midpoint_str, temporal_to_range
 from ._vit_mae_utils import ensure_torch
 
 
 _S2_10_BANDS = ["B2", "B3", "B4", "B5", "B6", "B7", "B8", "B8A", "B11", "B12"]
 
-
-def _resolve_device(device: str) -> str:
-    if device != "auto":
-        return device
-    try:
-        import torch
-
-        return "cuda" if torch.cuda.is_available() else "cpu"
-    except Exception:
-        return "cpu"
 
 
 def _resize_tchw(x_tchw: np.ndarray, *, out_hw: int) -> np.ndarray:
@@ -80,7 +77,7 @@ def _midpoint_doy0(temporal: TemporalSpec) -> int:
 
 
 def _fetch_s2_10_raw_chw(
-    provider: GEEProvider,
+    provider: ProviderBase,
     spatial: SpatialSpec,
     temporal: TemporalSpec,
     *,
@@ -89,28 +86,17 @@ def _fetch_s2_10_raw_chw(
     composite: str = "median",
     fill_value: float = 0.0,
 ) -> np.ndarray:
-    import ee
-
-    region = provider.get_region_3857(spatial)
-    col = (
-        ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
-        .filterDate(temporal.start, temporal.end)
-        .filterBounds(region)
-        .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", cloudy_pct))
+    raw = _fetch_gee_patch_chw(
+        provider,
+        spatial=spatial,
+        temporal=temporal,
+        collection="COPERNICUS/S2_SR_HARMONIZED",
+        bands=tuple(_S2_10_BANDS),
+        scale_m=scale_m,
+        cloudy_pct=cloudy_pct,
+        composite=composite,
+        fill_value=fill_value,
     )
-    if composite == "median":
-        img = col.median()
-    elif composite == "mosaic":
-        img = col.mosaic()
-    else:
-        raise ModelError(f"Unknown composite='{composite}'. Use 'median' or 'mosaic'.")
-
-    img = img.select(_S2_10_BANDS).reproject(crs="EPSG:3857", scale=scale_m)
-    rect = img.sampleRectangle(region=region, defaultValue=float(fill_value)).getInfo()
-    props = rect["properties"]
-    arrs = [np.array(props[b], dtype=np.float32) for b in _S2_10_BANDS]
-    raw = np.stack(arrs, axis=0).astype(np.float32)
-    raw = np.nan_to_num(raw, nan=0.0, posinf=0.0, neginf=0.0)
     return np.clip(raw, 0.0, 10000.0).astype(np.float32)
 
 
@@ -280,8 +266,9 @@ def _load_anysat(
     auto_download_repo: bool,
     device: str,
 ) -> Tuple[Any, Dict[str, Any], str]:
-    dev = _resolve_device(device)
-    model, meta = _load_anysat_cached(
+    (loaded, dev) = _load_cached_with_device(
+        _load_anysat_cached,
+        device=device,
         model_size=str(model_size),
         flash_attn=bool(flash_attn),
         pretrained=bool(pretrained),
@@ -290,8 +277,8 @@ def _load_anysat(
         repo_url=str(repo_url),
         repo_cache_root=str(repo_cache_root),
         auto_download_repo=bool(auto_download_repo),
-        dev=dev,
     )
+    model, meta = loaded
     return model, meta, dev
 
 
@@ -368,7 +355,7 @@ class AnySatEmbedder(EmbedderBase):
     def describe(self) -> Dict[str, Any]:
         return {
             "type": "on_the_fly",
-            "backend": ["gee"],
+            "backend": ["provider"],
             "inputs": {"collection": "COPERNICUS/S2_SR_HARMONIZED", "bands": _S2_10_BANDS},
             "temporal": {"mode": "range"},
             "output": ["pooled", "grid"],
@@ -388,14 +375,14 @@ class AnySatEmbedder(EmbedderBase):
         }
 
     def __init__(self) -> None:
-        self._provider: Optional[GEEProvider] = None
+        self._providers: Dict[str, ProviderBase] = {}
 
-    def _get_provider(self) -> GEEProvider:
-        if self._provider is None:
-            p = GEEProvider(auto_auth=True)
-            p.ensure_ready()
-            self._provider = p
-        return self._provider
+    def _get_provider(self, backend: str) -> ProviderBase:
+        return get_cached_provider(
+            self._providers,
+            backend=backend,
+            allow_auto=False,
+        )
 
     @staticmethod
     def _default_sensor() -> SensorSpec:
@@ -424,8 +411,8 @@ class AnySatEmbedder(EmbedderBase):
         device: str = "auto",
         input_chw: Optional[np.ndarray] = None,
     ) -> Embedding:
-        if backend.lower().strip() != "gee":
-            raise ModelError("anysat expects backend='gee'.")
+        if not is_provider_backend(backend, allow_auto=False):
+            raise ModelError("anysat expects a provider backend.")
 
         ss = sensor or self._default_sensor()
         t = temporal_to_range(temporal)
@@ -445,7 +432,7 @@ class AnySatEmbedder(EmbedderBase):
         pretrained = os.environ.get("RS_EMBED_ANYSAT_PRETRAINED", "1").strip() not in {"0", "false", "False"}
 
         if input_chw is None:
-            provider = self._get_provider()
+            provider = _call_provider_getter(self._get_provider, backend)
             raw = _fetch_s2_10_raw_chw(
                 provider,
                 spatial,
@@ -495,7 +482,7 @@ class AnySatEmbedder(EmbedderBase):
         meta = build_meta(
             model=self.model_name,
             kind="on_the_fly",
-            backend="gee",
+            backend=str(backend).lower(),
             source=ss.collection,
             sensor={
                 "collection": ss.collection,
@@ -564,12 +551,12 @@ class AnySatEmbedder(EmbedderBase):
         if not spatials:
             return []
 
-        if backend.lower().strip() != "gee":
-            raise ModelError("anysat expects backend='gee'.")
+        if not is_provider_backend(backend, allow_auto=False):
+            raise ModelError("anysat expects a provider backend.")
 
         t = temporal_to_range(temporal)
         ss = sensor or self._default_sensor()
-        provider = self._get_provider()
+        provider = _call_provider_getter(self._get_provider, backend)
 
         n = len(spatials)
         prefetched_raw: List[Optional[np.ndarray]] = [None] * n

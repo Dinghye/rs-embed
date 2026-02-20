@@ -12,8 +12,16 @@ from ..core.embedding import Embedding
 from ..core.errors import ModelError
 from ..core.registry import register
 from ..core.specs import OutputSpec, SensorSpec, SpatialSpec, TemporalSpec
-from ..providers.gee import GEEProvider
+from ..providers import ProviderBase
 from .base import EmbedderBase
+from .runtime_utils import (
+    call_provider_getter as _call_provider_getter,
+    fetch_gee_patch_chw as _fetch_gee_patch_chw,
+    get_cached_provider,
+    is_provider_backend,
+    load_cached_with_device as _load_cached_with_device,
+    resolve_device_auto_torch as _resolve_device,
+)
 from .meta_utils import build_meta, temporal_midpoint_str, temporal_to_range
 from ._vit_mae_utils import ensure_torch, pool_from_tokens, tokens_to_grid_dhw
 
@@ -69,16 +77,6 @@ _V01_STD = np.array(
 )
 
 
-def _resolve_device(device: str) -> str:
-    if device != "auto":
-        return device
-    try:
-        import torch
-
-        return "cuda" if torch.cuda.is_available() else "cpu"
-    except Exception:
-        return "cpu"
-
 
 def _resize_chw(x_chw: np.ndarray, *, size: int = 224) -> np.ndarray:
     ensure_torch()
@@ -93,7 +91,7 @@ def _resize_chw(x_chw: np.ndarray, *, size: int = 224) -> np.ndarray:
 
 
 def _fetch_s2_sr_12_raw_chw(
-    provider: GEEProvider,
+    provider: ProviderBase,
     spatial: SpatialSpec,
     temporal: TemporalSpec,
     *,
@@ -102,29 +100,17 @@ def _fetch_s2_sr_12_raw_chw(
     composite: str = "median",
     fill_value: float = 0.0,
 ) -> np.ndarray:
-    import ee
-
-    region = provider.get_region_3857(spatial)
-    col = (
-        ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
-        .filterDate(temporal.start, temporal.end)
-        .filterBounds(region)
-        .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", cloudy_pct))
+    raw = _fetch_gee_patch_chw(
+        provider,
+        spatial=spatial,
+        temporal=temporal,
+        collection="COPERNICUS/S2_SR_HARMONIZED",
+        bands=tuple(_S2_SR_12_BANDS),
+        scale_m=scale_m,
+        cloudy_pct=cloudy_pct,
+        composite=composite,
+        fill_value=fill_value,
     )
-
-    if composite == "median":
-        img = col.median()
-    elif composite == "mosaic":
-        img = col.mosaic()
-    else:
-        raise ModelError(f"Unknown composite='{composite}'. Use 'median' or 'mosaic'.")
-
-    img = img.select(_S2_SR_12_BANDS).reproject(crs="EPSG:3857", scale=scale_m)
-    rect = img.sampleRectangle(region=region, defaultValue=float(fill_value)).getInfo()
-    props = rect["properties"]
-    arrs = [np.array(props[b], dtype=np.float32) for b in _S2_SR_12_BANDS]
-    raw = np.stack(arrs, axis=0).astype(np.float32)
-    raw = np.nan_to_num(raw, nan=0.0, posinf=0.0, neginf=0.0)
     return np.clip(raw, 0.0, 10000.0).astype(np.float32)
 
 
@@ -209,13 +195,14 @@ def _load_terramind(
     modality: str,
     device: str,
 ) -> Tuple[Any, Dict[str, Any], str]:
-    dev = _resolve_device(device)
-    model, meta = _load_terramind_cached(
-        str(model_key),
-        bool(pretrained),
-        str(modality),
-        str(dev),
+    (loaded, dev) = _load_cached_with_device(
+        _load_terramind_cached,
+        device=device,
+        model_key=str(model_key),
+        pretrained=bool(pretrained),
+        modality=str(modality),
     )
+    model, meta = loaded
     return model, meta, dev
 
 
@@ -300,7 +287,7 @@ class TerraMindEmbedder(EmbedderBase):
     def describe(self) -> Dict[str, Any]:
         return {
             "type": "on_the_fly",
-            "backend": ["gee", "tensor"],
+            "backend": ["provider", "tensor"],
             "inputs": {
                 "s2_sr": {
                     "collection": "COPERNICUS/S2_SR_HARMONIZED",
@@ -325,14 +312,14 @@ class TerraMindEmbedder(EmbedderBase):
         }
 
     def __init__(self) -> None:
-        self._provider: Optional[GEEProvider] = None
+        self._providers: Dict[str, ProviderBase] = {}
 
-    def _get_provider(self) -> GEEProvider:
-        if self._provider is None:
-            p = GEEProvider(auto_auth=True)
-            p.ensure_ready()
-            self._provider = p
-        return self._provider
+    def _get_provider(self, backend: str) -> ProviderBase:
+        return get_cached_provider(
+            self._providers,
+            backend=backend,
+            allow_auto=False,
+        )
 
     @staticmethod
     def _resolve_fetch_workers(n_items: int) -> int:
@@ -404,11 +391,11 @@ class TerraMindEmbedder(EmbedderBase):
                 prepared.append(_terramind_zscore_s2(raw, model_key=model_key, mode=normalize_mode))
             x_bchw = np.stack(prepared, axis=0).astype(np.float32)
 
-        elif backend_l == "gee":
+        elif is_provider_backend(backend_l, allow_auto=False):
             t = temporal_to_range(temporal)
             temporal_used = t
             ss = sensor or self._default_sensor()
-            provider = self._get_provider()
+            provider = _call_provider_getter(self._get_provider, backend_l)
 
             scale_m = int(getattr(ss, "scale_m", 10))
             cloudy_pct = int(getattr(ss, "cloudy_pct", 30))
@@ -465,7 +452,7 @@ class TerraMindEmbedder(EmbedderBase):
             }
             source = sensor_meta["collection"]
         else:
-            raise ModelError("terramind supports backend='gee' or 'tensor' only.")
+            raise ModelError("terramind supports a provider backend or 'tensor' only.")
 
         model, wmeta, dev = _load_terramind(
             model_key=model_key,
@@ -547,7 +534,7 @@ class TerraMindEmbedder(EmbedderBase):
             return []
 
         backend_l = backend.lower().strip()
-        if backend_l != "gee":
+        if not is_provider_backend(backend_l, allow_auto=False):
             return super().get_embeddings_batch(
                 spatials=spatials,
                 temporal=temporal,
@@ -559,7 +546,7 @@ class TerraMindEmbedder(EmbedderBase):
 
         t = temporal_to_range(temporal)
         ss = sensor or self._default_sensor()
-        provider = self._get_provider()
+        provider = _call_provider_getter(self._get_provider, backend_l)
 
         scale_m = int(getattr(ss, "scale_m", 10))
         cloudy_pct = int(getattr(ss, "cloudy_pct", 30))

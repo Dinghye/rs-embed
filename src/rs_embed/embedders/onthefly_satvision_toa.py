@@ -10,10 +10,9 @@ import numpy as np
 
 from ..core.embedding import Embedding
 from ..core.errors import ModelError
-from ..core.gee_image import build_gee_image
 from ..core.registry import register
 from ..core.specs import OutputSpec, SensorSpec, SpatialSpec, TemporalSpec
-from ..providers.gee import GEEProvider
+from ..providers import ProviderBase
 from ._vit_mae_utils import (
     base_meta,
     ensure_torch,
@@ -22,6 +21,14 @@ from ._vit_mae_utils import (
     tokens_to_grid_dhw,
 )
 from .base import EmbedderBase
+from .runtime_utils import (
+    call_provider_getter as _call_provider_getter,
+    fetch_sensor_patch_chw as _fetch_sensor_patch_chw,
+    get_cached_provider,
+    is_provider_backend,
+    load_cached_with_device as _load_cached_with_device,
+    resolve_device_auto_torch as _resolve_device,
+)
 
 
 # SatVision-TOA model defaults from published config/model card.
@@ -38,16 +45,6 @@ _DEFAULT_EMISSIVE_MAXS = (352.7182, 261.2920, 282.5529, 319.0373, 295.0209, 324.
 _FALLBACK_MOD09_COLLECTION = "MODIS/061/MOD09GA"
 _FALLBACK_MOD21_COLLECTION = "MODIS/061/MOD21A1D"
 
-
-def _resolve_device(device: str) -> str:
-    if device != "auto":
-        return device
-    try:
-        import torch
-
-        return "cuda" if torch.cuda.is_available() else "cpu"
-    except Exception:
-        return "cpu"
 
 
 def _parse_int_list(s: str) -> Tuple[int, ...]:
@@ -533,14 +530,19 @@ def _load_satvision_toa(
     in_chans: int,
     device: str,
 ) -> Tuple[Any, Dict[str, Any]]:
-    dev = _resolve_device(device)
     ckpt_file, source = _resolve_ckpt(model_id=model_id, local_ckpt=local_ckpt, auto_download=auto_download)
-    model, meta = _load_satvision_toa_cached(ckpt_file=ckpt_file, dev=dev, in_chans=int(in_chans))
+    loaded, dev = _load_cached_with_device(
+        _load_satvision_toa_cached,
+        device=device,
+        ckpt_file=ckpt_file,
+        in_chans=int(in_chans),
+    )
+    model, meta = loaded
     return model, {**meta, "checkpoint_source": source, "model_id": model_id}
 
 
 def _fetch_toa_raw_chw_from_gee(
-    provider: GEEProvider,
+    provider: ProviderBase,
     spatial: SpatialSpec,
     temporal: TemporalSpec,
     sensor: SensorSpec,
@@ -550,18 +552,14 @@ def _fetch_toa_raw_chw_from_gee(
     When MOD021KM is unavailable in the current EE project, automatically
     fallback to a surrogate built from MOD09GA (reflectance) + MOD21A1D (thermal).
     """
-    region = provider.get_region_3857(spatial)
     try:
-        img = build_gee_image(sensor=sensor, temporal=temporal, region=region)
-        arr = provider.fetch_array_chw(
-            image=img,
-            bands=tuple(sensor.bands),
-            region=region,
-            scale_m=int(sensor.scale_m),
-            fill_value=float(sensor.fill_value),
-            collection=sensor.collection,
+        arr = _fetch_sensor_patch_chw(
+            provider,
+            spatial=spatial,
+            temporal=temporal,
+            sensor=sensor,
         )
-        return np.nan_to_num(np.asarray(arr, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0), {
+        return arr, {
             "source_collection": str(sensor.collection),
             "fallback_used": False,
             "already_unit_scaled": False,
@@ -590,28 +588,20 @@ def _fetch_toa_raw_chw_from_gee(
             fill_value=float(sensor.fill_value),
             composite=str(sensor.composite),
         )
-        ref_img = build_gee_image(sensor=ref_sensor, temporal=temporal, region=region).toFloat()
-        th_img = build_gee_image(sensor=th_sensor, temporal=temporal, region=region).toFloat()
-
-        ref = provider.fetch_array_chw(
-            image=ref_img,
-            bands=tuple(ref_sensor.bands),
-            region=region,
-            scale_m=int(ref_sensor.scale_m),
-            fill_value=float(ref_sensor.fill_value),
-            collection=ref_sensor.collection,
-        ).astype(np.float32)
-        th = provider.fetch_array_chw(
-            image=th_img,
-            bands=tuple(th_sensor.bands),
-            region=region,
-            scale_m=int(th_sensor.scale_m),
-            fill_value=float(th_sensor.fill_value),
-            collection=th_sensor.collection,
-        ).astype(np.float32)
-
-        ref = np.nan_to_num(ref, nan=0.0, posinf=0.0, neginf=0.0)
-        th = np.nan_to_num(th, nan=0.0, posinf=0.0, neginf=0.0)
+        ref = _fetch_sensor_patch_chw(
+            provider,
+            spatial=spatial,
+            temporal=temporal,
+            sensor=ref_sensor,
+            to_float_image=True,
+        )
+        th = _fetch_sensor_patch_chw(
+            provider,
+            spatial=spatial,
+            temporal=temporal,
+            sensor=th_sensor,
+            to_float_image=True,
+        )
 
         # Normalize proxies to [0,1].
         r01, r02, r03, r04, r06, r07 = [np.clip(ch / 10000.0, 0.0, 1.0) for ch in ref]
@@ -704,12 +694,12 @@ class SatVisionTOAEmbedder(EmbedderBase):
     DEFAULT_BATCH_CUDA = 8
 
     def __init__(self) -> None:
-        self._provider: Optional[GEEProvider] = None
+        self._providers: Dict[str, ProviderBase] = {}
 
     def describe(self) -> Dict[str, Any]:
         return {
             "type": "on_the_fly",
-            "backend": ["gee"],
+            "backend": ["provider"],
             "inputs": {
                 "collection": _DEFAULT_MODIS_COLLECTION,
                 "bands": list(_DEFAULT_MODIS_BANDS),
@@ -749,12 +739,12 @@ class SatVisionTOAEmbedder(EmbedderBase):
             composite=os.environ.get("RS_EMBED_SATVISION_TOA_COMPOSITE", "mosaic"),
         )
 
-    def _get_provider(self) -> GEEProvider:
-        if self._provider is None:
-            p = GEEProvider(auto_auth=True)
-            p.ensure_ready()
-            self._provider = p
-        return self._provider
+    def _get_provider(self, backend: str) -> ProviderBase:
+        return get_cached_provider(
+            self._providers,
+            backend=backend,
+            allow_auto=True,
+        )
 
     @staticmethod
     def _resolve_fetch_workers(n_items: int) -> int:
@@ -874,8 +864,8 @@ class SatVisionTOAEmbedder(EmbedderBase):
         device: str = "auto",
         input_chw: Optional[np.ndarray] = None,
     ) -> Embedding:
-        if backend.lower() not in ("gee", "auto"):
-            raise ModelError("satvision_toa expects backend='gee' (or 'auto').")
+        if not is_provider_backend(backend, allow_auto=True):
+            raise ModelError("satvision_toa expects a provider backend (or 'auto').")
         if sensor is None:
             sensor = self._default_sensor()
 
@@ -884,7 +874,7 @@ class SatVisionTOAEmbedder(EmbedderBase):
 
         if input_chw is None:
             raw, fetch_meta = _coerce_fetch_result(
-                _fetch_toa_raw_chw_from_gee(self._get_provider(), spatial, t, sensor)
+                _fetch_toa_raw_chw_from_gee(_call_provider_getter(self._get_provider, backend), spatial, t, sensor)
             )
         else:
             raw = np.asarray(input_chw, dtype=np.float32)
@@ -916,7 +906,7 @@ class SatVisionTOAEmbedder(EmbedderBase):
         meta = base_meta(
             model_name=self.model_name,
             hf_id=rt["model_id"],
-            backend="gee",
+            backend=str(backend).lower(),
             image_size=int(rt["image_size"]),
             sensor=sensor,
             temporal=t,
@@ -986,8 +976,8 @@ class SatVisionTOAEmbedder(EmbedderBase):
     ) -> list[Embedding]:
         if not spatials:
             return []
-        if backend.lower() not in ("gee", "auto"):
-            raise ModelError("satvision_toa expects backend='gee' (or 'auto').")
+        if not is_provider_backend(backend, allow_auto=True):
+            raise ModelError("satvision_toa expects a provider backend (or 'auto').")
         if sensor is None:
             sensor = self._default_sensor()
 
@@ -1000,7 +990,7 @@ class SatVisionTOAEmbedder(EmbedderBase):
 
         def _fetch_one(i: int, sp: SpatialSpec) -> Tuple[int, np.ndarray, Dict[str, Any]]:
             raw, fetch_meta = _coerce_fetch_result(
-                _fetch_toa_raw_chw_from_gee(self._get_provider(), sp, t, sensor)
+                _fetch_toa_raw_chw_from_gee(_call_provider_getter(self._get_provider, backend), sp, t, sensor)
             )
             return i, raw, fetch_meta
 
@@ -1064,7 +1054,7 @@ class SatVisionTOAEmbedder(EmbedderBase):
                 meta = base_meta(
                     model_name=self.model_name,
                     hf_id=rt["model_id"],
-                    backend="gee",
+                    backend=str(backend).lower(),
                     image_size=int(rt["image_size"]),
                     sensor=sensor,
                     temporal=t,

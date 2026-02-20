@@ -6,9 +6,8 @@ import numpy as np
 
 from ...core.errors import ModelError
 from ...core.export_helpers import jsonable as _jsonable
-from ...core.gee_image import build_gee_image as _build_gee_image
 from ...core.specs import SensorSpec, SpatialSpec, TemporalSpec
-from ...providers.gee import GEEProvider
+from ...providers.base import ProviderBase
 
 
 def normalize_model_name(model: str) -> str:
@@ -42,28 +41,27 @@ def normalize_input_chw(
     return x
 
 
-def fetch_gee_patch_raw(
-    provider: GEEProvider,
+def fetch_provider_patch_raw(
+    provider: ProviderBase,
     *,
     spatial: SpatialSpec,
     temporal: Optional[TemporalSpec],
     sensor: SensorSpec,
 ) -> np.ndarray:
-    region = provider.get_region_3857(spatial)
-    img = _build_gee_image(sensor=sensor, temporal=temporal, region=region)
-    x = provider.fetch_array_chw(
-        image=img,
-        bands=sensor.bands,
-        region=region,
-        scale_m=int(sensor.scale_m),
-        fill_value=float(sensor.fill_value),
-        collection=sensor.collection,
+    x = provider.fetch_sensor_patch_chw(
+        spatial=spatial,
+        temporal=temporal,
+        sensor=sensor,
     )
     return normalize_input_chw(
         x,
         expected_channels=len(sensor.bands),
         name=f"gee_input[{sensor.collection}]",
     )
+
+
+# Backwards-compatible alias kept for existing imports/tests.
+fetch_gee_patch_raw = fetch_provider_patch_raw
 
 
 def inspect_input_raw(x_chw: np.ndarray, *, sensor: SensorSpec, name: str) -> Dict[str, Any]:

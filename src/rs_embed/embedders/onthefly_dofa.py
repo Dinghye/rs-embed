@@ -14,8 +14,16 @@ from ..core.registry import register
 from ..core.embedding import Embedding
 from ..core.errors import ModelError
 from ..core.specs import SpatialSpec, TemporalSpec, SensorSpec, OutputSpec
-from ..providers.gee import GEEProvider
+from ..providers import ProviderBase
 from .base import EmbedderBase
+from .runtime_utils import (
+    call_provider_getter as _call_provider_getter,
+    fetch_gee_patch_chw as _fetch_gee_patch_chw,
+    get_cached_provider,
+    is_provider_backend,
+    load_cached_with_device as _load_cached_with_device,
+    resolve_device_auto_torch as _resolve_device_auto,
+)
 
 
 # -----------------------------
@@ -41,17 +49,6 @@ _S2_WAVELENGTHS_UM = {
     "B11": 1.610,
     "B12": 2.190,
 }
-
-
-# -----------------------------
-# Small utils
-# -----------------------------
-def _auto_device(device: str) -> str:
-    import torch
-
-    if device == "auto":
-        return "cuda" if torch.cuda.is_available() else "cpu"
-    return device
 
 
 def _infer_wavelengths_um(bands: List[str]) -> Optional[List[float]]:
@@ -89,7 +86,7 @@ def _resize_chw(
 # GEE fetch (generic SR scaling /10000)
 # -----------------------------
 def _fetch_gee_multiband_sr_chw(
-    provider: GEEProvider,
+    provider: ProviderBase,
     spatial: SpatialSpec,
     temporal: TemporalSpec,
     *,
@@ -100,62 +97,29 @@ def _fetch_gee_multiband_sr_chw(
     composite: str = "median",
     default_value: float = 0.0,
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
-    import ee
-
-    region = provider.get_region_3857(spatial)
-
-    col = (
-        ee.ImageCollection(collection)
-        .filterDate(temporal.start, temporal.end)
-        .filterBounds(region)
+    raw = _fetch_gee_patch_chw(
+        provider,
+        spatial=spatial,
+        temporal=temporal,
+        collection=str(collection),
+        bands=tuple(str(b) for b in bands),
+        scale_m=int(scale_m),
+        cloudy_pct=int(cloudy_pct),
+        composite=str(composite),
+        fill_value=float(default_value),
     )
-
-    cloud_filter_applied = False
-    try:
-        col = col.filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", cloudy_pct))
-        cloud_filter_applied = True
-    except Exception:
-        pass
-
-    n_img = None
-    t_min = None
-    t_max = None
-    try:
-        n_img = int(col.size().getInfo())
-        t_min = int(ee.Number(col.aggregate_min("system:time_start")).getInfo())
-        t_max = int(ee.Number(col.aggregate_max("system:time_start")).getInfo())
-    except Exception:
-        pass
-
-    if composite == "median":
-        img = col.median()
-    elif composite == "mosaic":
-        img = col.mosaic()
-    else:
-        raise ModelError(f"Unknown composite='{composite}'. Use 'median' or 'mosaic'.")
-
-    img = img.select(bands).reproject(crs="EPSG:3857", scale=scale_m)
-
-    rect = img.sampleRectangle(region=region, defaultValue=default_value).getInfo()
-    props = rect["properties"]
-
-    stack = []
-    for b in bands:
-        arr = np.array(props[b], dtype=np.float32) / 10000.0
-        stack.append(arr)
-
-    x = np.clip(np.stack(stack, axis=0), 0.0, 1.0).astype(np.float32)
+    x = np.clip(raw / 10000.0, 0.0, 1.0).astype(np.float32)
 
     meta: Dict[str, Any] = {
         "gee_collection": collection,
         "gee_bands": list(bands),
         "gee_scale_m": int(scale_m),
         "gee_cloudy_pct": int(cloudy_pct),
-        "gee_cloud_filter_applied": bool(cloud_filter_applied),
+        "gee_cloud_filter_applied": True,
         "gee_composite": str(composite),
-        "gee_n_images": n_img,
-        "gee_time_start_ms": t_min,
-        "gee_time_end_ms": t_max,
+        "gee_n_images": None,
+        "gee_time_start_ms": None,
+        "gee_time_end_ms": None,
         "raw_chw_shape": tuple(x.shape),
         "region_crs": "EPSG:3857",
     }
@@ -165,15 +129,6 @@ def _fetch_gee_multiband_sr_chw(
 # -----------------------------
 # DOFA model + forward adapters
 # -----------------------------
-
-def _resolve_device(device: str) -> str:
-    if device != "auto":
-        return device
-    try:
-        import torch
-        return "cuda" if torch.cuda.is_available() else "cpu"
-    except Exception:
-        return "cpu"
 
 
 @lru_cache(maxsize=4)
@@ -230,9 +185,13 @@ def _load_dofa_model(
     variant: str = "base",
     device: str = "auto",
 ) -> Tuple[Any, Dict[str, Any]]:
-    dev = _auto_device(device)
     variant_l = str(variant).lower().strip()
-    return _load_dofa_model_cached(variant_l, dev)
+    loaded, _dev = _load_cached_with_device(
+        _load_dofa_model_cached,
+        device=device,
+        variant=variant_l,
+    )
+    return loaded
 
 
 def _dofa_forward_tokens_and_pooled(
@@ -249,7 +208,7 @@ def _dofa_forward_tokens_and_pooled(
     """
     import torch
 
-    dev = _auto_device(device)
+    dev = _resolve_device_auto(device)
     x = torch.from_numpy(x_bchw).to(dev)
     if x.dtype != torch.float32:
         x = x.float()
@@ -310,7 +269,7 @@ def _dofa_forward_tokens_and_pooled_batch(
     """
     import torch
 
-    dev = _auto_device(device)
+    dev = _resolve_device_auto(device)
     x = torch.from_numpy(x_bchw).to(dev)
     if x.dtype != torch.float32:
         x = x.float()
@@ -375,7 +334,7 @@ class DOFAEmbedder(EmbedderBase):
     def describe(self) -> Dict[str, Any]:
         return {
             "type": "on_the_fly",
-            "backend": ["gee", "tensor"],
+            "backend": ["provider", "tensor"],
             "inputs": {
                 "gee_default": {
                     "collection": "COPERNICUS/S2_SR_HARMONIZED",
@@ -397,14 +356,14 @@ class DOFAEmbedder(EmbedderBase):
 
     
     def __init__(self) -> None:
-        self._provider: Optional[GEEProvider] = None
+        self._providers: Dict[str, ProviderBase] = {}
 
-    def _get_provider(self) -> GEEProvider:
-        if self._provider is None:
-            p = GEEProvider(auto_auth=True)
-            p.ensure_ready()
-            self._provider = p
-        return self._provider
+    def _get_provider(self, backend: str) -> ProviderBase:
+        return get_cached_provider(
+            self._providers,
+            backend=backend,
+            allow_auto=False,
+        )
 
     @staticmethod
     def _default_sensor() -> SensorSpec:
@@ -488,12 +447,12 @@ class DOFAEmbedder(EmbedderBase):
 
             gee_meta = {"backend_tensor": True}
 
-        elif backend_l == "gee":
+        elif is_provider_backend(backend_l, allow_auto=False):
             if temporal is None:
-                raise ModelError("dofa backend='gee' requires TemporalSpec.range(start,end).")
+                raise ModelError("dofa provider backend requires TemporalSpec.range(start,end).")
             temporal.validate()
             if temporal.mode != "range":
-                raise ModelError("dofa backend='gee' requires TemporalSpec.range in v0.1.")
+                raise ModelError("dofa provider backend requires TemporalSpec.range in v0.1.")
 
             # overrides
             collection = getattr(sensor, "collection", "COPERNICUS/S2_SR_HARMONIZED") if sensor else "COPERNICUS/S2_SR_HARMONIZED"
@@ -512,7 +471,7 @@ class DOFAEmbedder(EmbedderBase):
             wavelengths_um = [float(v) for v in wavelengths_um]
 
             if input_chw is None:
-                provider = self._get_provider()
+                provider = _call_provider_getter(self._get_provider, backend_l)
 
                 x_chw, gee_meta = _fetch_gee_multiband_sr_chw(
                     provider,
@@ -553,7 +512,7 @@ class DOFAEmbedder(EmbedderBase):
             x_bchw = x_chw[None, ...].astype(np.float32)
 
         else:
-            raise ModelError("dofa supports backend='gee' or 'tensor' only.")
+            raise ModelError("dofa supports a provider backend or 'tensor' only.")
 
         c = int(x_bchw.shape[1])
         if len(wavelengths_um) != c:
@@ -633,7 +592,7 @@ class DOFAEmbedder(EmbedderBase):
             return []
 
         backend_l = backend.lower().strip()
-        if backend_l != "gee":
+        if not is_provider_backend(backend_l, allow_auto=False):
             # tensor path stays sequential in v0.1
             return super().get_embeddings_batch(
                 spatials=spatials,
@@ -644,10 +603,10 @@ class DOFAEmbedder(EmbedderBase):
                 device=device,
             )
         if temporal is None:
-            raise ModelError("dofa backend='gee' requires TemporalSpec.range(start,end).")
+            raise ModelError("dofa provider backend requires TemporalSpec.range(start,end).")
         temporal.validate()
         if temporal.mode != "range":
-            raise ModelError("dofa backend='gee' requires TemporalSpec.range in v0.1.")
+            raise ModelError("dofa provider backend requires TemporalSpec.range in v0.1.")
 
         ss = sensor or self._default_sensor()
         collection = str(getattr(ss, "collection", "COPERNICUS/S2_SR_HARMONIZED"))
@@ -656,7 +615,7 @@ class DOFAEmbedder(EmbedderBase):
         cloudy_pct = int(getattr(ss, "cloudy_pct", 30))
         composite = str(getattr(ss, "composite", "median"))
 
-        provider = self._get_provider()
+        provider = _call_provider_getter(self._get_provider, backend_l)
         n = len(spatials)
         prefetched_raw: List[Optional[np.ndarray]] = [None] * n
 
@@ -722,7 +681,7 @@ class DOFAEmbedder(EmbedderBase):
             return []
 
         backend_l = backend.lower().strip()
-        if backend_l != "gee":
+        if not is_provider_backend(backend_l, allow_auto=False):
             return super().get_embeddings_batch_from_inputs(
                 spatials=spatials,
                 input_chws=input_chws,
@@ -733,10 +692,10 @@ class DOFAEmbedder(EmbedderBase):
                 device=device,
             )
         if temporal is None:
-            raise ModelError("dofa backend='gee' requires TemporalSpec.range(start,end).")
+            raise ModelError("dofa provider backend requires TemporalSpec.range(start,end).")
         temporal.validate()
         if temporal.mode != "range":
-            raise ModelError("dofa backend='gee' requires TemporalSpec.range in v0.1.")
+            raise ModelError("dofa provider backend requires TemporalSpec.range in v0.1.")
 
         ss = sensor or self._default_sensor()
         variant = getattr(ss, "variant", "base")

@@ -15,9 +15,16 @@ from ..core.embedding import Embedding
 from ..core.errors import ModelError
 from ..core.registry import register
 from ..core.specs import OutputSpec, SensorSpec, SpatialSpec, TemporalSpec
-from ..providers.gee import GEEProvider
+from ..providers import ProviderBase
 from ._vit_mae_utils import ensure_torch
 from .base import EmbedderBase
+from .runtime_utils import (
+    call_provider_getter as _call_provider_getter,
+    get_cached_provider,
+    is_provider_backend,
+    load_cached_with_device as _load_cached_with_device,
+    resolve_device_auto_torch as _resolve_device,
+)
 from .meta_utils import build_meta, temporal_midpoint_str, temporal_to_range
 from .onthefly_terramind import _fetch_s2_sr_12_raw_chw
 
@@ -86,16 +93,6 @@ _DEFAULT_CKPT_URL = (
 _DEFAULT_REPO_URL = "https://github.com/RolnickLab/FoMo-Bench.git"
 _DEFAULT_REPO_CACHE = "~/.cache/rs_embed/fomo"
 
-
-def _resolve_device(device: str) -> str:
-    if device != "auto":
-        return device
-    try:
-        import torch
-
-        return "cuda" if torch.cuda.is_available() else "cpu"
-    except Exception:
-        return "cpu"
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -384,8 +381,9 @@ def _load_fomo(
     num_classes: int,
     device: str,
 ) -> Tuple[Any, Dict[str, Any], str]:
-    dev = _resolve_device(device)
-    model, meta = _load_fomo_cached(
+    (loaded, dev) = _load_cached_with_device(
+        _load_fomo_cached,
+        device=device,
         ckpt_path=os.path.expanduser(ckpt_path),
         repo_path=(os.path.expanduser(repo_path) if repo_path else None),
         repo_url=str(repo_url),
@@ -398,8 +396,8 @@ def _load_fomo(
         heads=int(heads),
         mlp_dim=int(mlp_dim),
         num_classes=int(num_classes),
-        dev=dev,
     )
+    model, meta = loaded
     return model, meta, dev
 
 
@@ -536,12 +534,12 @@ class FoMoEmbedder(EmbedderBase):
     DEFAULT_FETCH_WORKERS = 8
 
     def __init__(self) -> None:
-        self._provider: Optional[GEEProvider] = None
+        self._providers: Dict[str, ProviderBase] = {}
 
     def describe(self) -> Dict[str, Any]:
         return {
             "type": "on_the_fly",
-            "backend": ["gee"],
+            "backend": ["provider"],
             "inputs": {
                 "collection": "COPERNICUS/S2_SR_HARMONIZED",
                 "bands": _S2_SR_12_BANDS,
@@ -569,12 +567,12 @@ class FoMoEmbedder(EmbedderBase):
             ],
         }
 
-    def _get_provider(self) -> GEEProvider:
-        if self._provider is None:
-            p = GEEProvider(auto_auth=True)
-            p.ensure_ready()
-            self._provider = p
-        return self._provider
+    def _get_provider(self, backend: str) -> ProviderBase:
+        return get_cached_provider(
+            self._providers,
+            backend=backend,
+            allow_auto=True,
+        )
 
     @staticmethod
     def _default_sensor() -> SensorSpec:
@@ -604,8 +602,8 @@ class FoMoEmbedder(EmbedderBase):
         input_chw: Optional[np.ndarray] = None,
     ) -> Embedding:
         backend_l = backend.lower().strip()
-        if backend_l not in {"gee", "auto"}:
-            raise ModelError("fomo expects backend='gee' (or 'auto').")
+        if not is_provider_backend(backend_l, allow_auto=True):
+            raise ModelError("fomo expects a provider backend (or 'auto').")
 
         ss = sensor or self._default_sensor()
         t = temporal_to_range(temporal)
@@ -628,7 +626,7 @@ class FoMoEmbedder(EmbedderBase):
 
         if input_chw is None:
             raw = _fetch_s2_sr_12_raw_chw(
-                self._get_provider(),
+                _call_provider_getter(self._get_provider, backend_l),
                 spatial,
                 t,
                 scale_m=int(ss.scale_m),
@@ -691,7 +689,7 @@ class FoMoEmbedder(EmbedderBase):
         meta = build_meta(
             model=self.model_name,
             kind="on_the_fly",
-            backend="gee",
+            backend=str(backend).lower(),
             source=ss.collection,
             sensor={
                 "collection": ss.collection,
@@ -757,12 +755,12 @@ class FoMoEmbedder(EmbedderBase):
             return []
 
         backend_l = backend.lower().strip()
-        if backend_l not in {"gee", "auto"}:
-            raise ModelError("fomo expects backend='gee' (or 'auto').")
+        if not is_provider_backend(backend_l, allow_auto=True):
+            raise ModelError("fomo expects a provider backend (or 'auto').")
 
         t = temporal_to_range(temporal)
         ss = sensor or self._default_sensor()
-        provider = self._get_provider()
+        provider = _call_provider_getter(self._get_provider, backend_l)
 
         n = len(spatials)
         prefetched_raw: List[Optional[np.ndarray]] = [None] * n

@@ -158,6 +158,7 @@ def run_pending_models(
     resolved_sensor: Dict[str, Optional[SensorSpec]],
     model_type: Dict[str, str],
     backend: str,
+    provider_enabled: bool,
     device: str,
     save_inputs: bool,
     save_embeddings: bool,
@@ -199,7 +200,7 @@ def run_pending_models(
                 m_entry["describe"] = {"error": repr(e)}
 
             needs_provider_input = (
-                backend == "gee"
+                provider_enabled
                 and sspec is not None
                 and "precomputed" not in (model_type.get(m) or "")
             )

@@ -12,9 +12,16 @@ from ..core.registry import register
 from ..core.embedding import Embedding
 from ..core.errors import ModelError
 from ..core.specs import SpatialSpec, TemporalSpec, SensorSpec, OutputSpec
-from ..providers.gee import GEEProvider
+from ..providers import ProviderBase
 from .base import EmbedderBase
 from .meta_utils import build_meta, temporal_to_range, temporal_midpoint_str
+from .runtime_utils import (
+    call_provider_getter as _call_provider_getter,
+    fetch_s2_rgb_chw as _fetch_s2_rgb_chw_shared,
+    get_cached_provider,
+    is_provider_backend,
+    resolve_device_auto_torch,
+)
 
 
 # -----------------------------
@@ -29,7 +36,7 @@ def _s2_rgb_u8_from_chw(s2_chw: np.ndarray) -> np.ndarray:
 
 
 def _fetch_s2_rgb_chw(
-    provider: GEEProvider,
+    provider: ProviderBase,
     spatial: SpatialSpec,
     temporal: TemporalSpec,
     *,
@@ -37,34 +44,14 @@ def _fetch_s2_rgb_chw(
     cloudy_pct: int = 30,
     composite: str = "median",
 ) -> np.ndarray:
-    import ee  # lazy
-
-    region = provider.get_region_3857(spatial)
-
-    col = (
-        ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
-        .filterDate(temporal.start, temporal.end)
-        .filterBounds(region)
-        .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", cloudy_pct))
+    return _fetch_s2_rgb_chw_shared(
+        provider,
+        spatial=spatial,
+        temporal=temporal,
+        scale_m=int(scale_m),
+        cloudy_pct=int(cloudy_pct),
+        composite=str(composite),
     )
-
-    if composite == "median":
-        img = col.median()
-    elif composite == "mosaic":
-        img = col.mosaic()
-    else:
-        raise ModelError(f"Unknown composite='{composite}'. Use 'median' or 'mosaic'.")
-
-    img = img.select(["B4", "B3", "B2"]).reproject(crs="EPSG:3857", scale=scale_m)
-
-    rect = img.sampleRectangle(region=region, defaultValue=0.0).getInfo()
-    props = rect["properties"]
-
-    # SR scaling: 0..10000
-    r = np.array(props["B4"], dtype=np.float32) / 10000.0
-    g = np.array(props["B3"], dtype=np.float32) / 10000.0
-    b = np.array(props["B2"], dtype=np.float32) / 10000.0
-    return np.stack([r, g, b], axis=0)
 
 
 # -----------------------------
@@ -464,7 +451,7 @@ class RemoteCLIPS2RGBEmbedder(EmbedderBase):
     def describe(self) -> Dict[str, Any]:
         return {
             "type": "on_the_fly",
-            "backend": ["gee"],
+            "backend": ["provider"],
             "inputs": {"collection": "COPERNICUS/S2_SR_HARMONIZED", "bands": ["B4", "B3", "B2"]},
             "temporal": {"mode": "range"},
             "output": ["pooled", "grid"],
@@ -481,25 +468,19 @@ class RemoteCLIPS2RGBEmbedder(EmbedderBase):
     
     def __init__(self) -> None:
         # Cache provider/model to avoid repeated auth + HF downloads inside batch loops.
-        self._provider: Optional[GEEProvider] = None
+        self._providers: Dict[str, ProviderBase] = {}
         # key: (ckpt, cache_dir, resolved_device) -> (model, weight_meta)
         self._model_cache: Dict[Tuple[str, str, str], Tuple[Any, Dict[str, Any]]] = {}
 
-    def _get_provider(self) -> GEEProvider:
-        if self._provider is None:
-            p = GEEProvider(auto_auth=True)
-            p.ensure_ready()
-            self._provider = p
-        return self._provider
+    def _get_provider(self, backend: str) -> ProviderBase:
+        return get_cached_provider(
+            self._providers,
+            backend=backend,
+            allow_auto=False,
+        )
 
     def _resolve_device(self, device: str) -> str:
-        if device != "auto":
-            return device
-        try:
-            import torch
-            return "cuda" if torch.cuda.is_available() else "cpu"
-        except Exception:
-            return "cpu"
+        return resolve_device_auto_torch(device)
 
     def _get_model(self, *, ckpt: str, cache_dir: Optional[str], device: str) -> Tuple[Any, Dict[str, Any], str]:
         dev = self._resolve_device(device)
@@ -544,8 +525,8 @@ class RemoteCLIPS2RGBEmbedder(EmbedderBase):
             device: str = "auto",
             input_chw: Optional[np.ndarray] = None,
         ) -> Embedding:
-            if backend.lower() != "gee":
-                raise ModelError("remoteclip_s2rgb only supports backend='gee' in v0.1.")
+            if not is_provider_backend(backend, allow_auto=False):
+                raise ModelError("remoteclip_s2rgb only supports a provider backend in v0.1.")
             if temporal is None:
                 raise ModelError("remoteclip_s2rgb requires TemporalSpec.range(start,end).")
             temporal.validate()
@@ -553,7 +534,7 @@ class RemoteCLIPS2RGBEmbedder(EmbedderBase):
                 raise ModelError("remoteclip_s2rgb requires TemporalSpec.range in v0.1.")
             t = temporal_to_range(temporal)
 
-            provider = self._get_provider()
+            provider = _call_provider_getter(self._get_provider, backend)
 
             # overrides via SensorSpec
             scale_m = sensor.scale_m if sensor else 10
@@ -654,7 +635,7 @@ class RemoteCLIPS2RGBEmbedder(EmbedderBase):
             base_meta = build_meta(
                 model=self.model_name,
                 kind="on_the_fly",
-                backend="gee",
+                backend=str(backend).lower(),
                 source="COPERNICUS/S2_SR_HARMONIZED",
                 sensor=sensor_meta,
                 temporal=t,
@@ -712,8 +693,8 @@ class RemoteCLIPS2RGBEmbedder(EmbedderBase):
     ) -> list[Embedding]:
         if not spatials:
             return []
-        if backend.lower() != "gee":
-            raise ModelError("remoteclip_s2rgb only supports backend='gee' in v0.1.")
+        if not is_provider_backend(backend, allow_auto=False):
+            raise ModelError("remoteclip_s2rgb only supports a provider backend in v0.1.")
         if temporal is None:
             raise ModelError("remoteclip_s2rgb requires TemporalSpec.range(start,end).")
         temporal.validate()
@@ -721,7 +702,7 @@ class RemoteCLIPS2RGBEmbedder(EmbedderBase):
             raise ModelError("remoteclip_s2rgb requires TemporalSpec.range in v0.1.")
 
         t = temporal_to_range(temporal)
-        provider = self._get_provider()
+        provider = _call_provider_getter(self._get_provider, backend)
         scale_m = sensor.scale_m if sensor else 10
         cloudy_pct = sensor.cloudy_pct if sensor else 30
         composite = sensor.composite if sensor else "median"
@@ -780,8 +761,8 @@ class RemoteCLIPS2RGBEmbedder(EmbedderBase):
         backend: str = "gee",
         device: str = "auto",
     ) -> list[Embedding]:
-        if backend.lower() != "gee":
-            raise ModelError("remoteclip_s2rgb only supports backend='gee' in v0.1.")
+        if not is_provider_backend(backend, allow_auto=False):
+            raise ModelError("remoteclip_s2rgb only supports a provider backend in v0.1.")
         if temporal is None:
             raise ModelError("remoteclip_s2rgb requires TemporalSpec.range(start,end).")
         temporal.validate()
@@ -863,7 +844,7 @@ class RemoteCLIPS2RGBEmbedder(EmbedderBase):
                     meta = build_meta(
                         model=self.model_name,
                         kind="on_the_fly",
-                        backend="gee",
+                        backend=str(backend).lower(),
                         source="COPERNICUS/S2_SR_HARMONIZED",
                         sensor=sensor_meta,
                         temporal=t,
@@ -900,7 +881,7 @@ class RemoteCLIPS2RGBEmbedder(EmbedderBase):
                 base_meta = build_meta(
                     model=self.model_name,
                     kind="on_the_fly",
-                    backend="gee",
+                    backend=str(backend).lower(),
                     source="COPERNICUS/S2_SR_HARMONIZED",
                     sensor=sensor_meta,
                     temporal=t,

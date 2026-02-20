@@ -16,10 +16,18 @@ from ..core.embedding import Embedding
 from ..core.errors import ModelError
 from ..core.registry import register
 from ..core.specs import OutputSpec, SensorSpec, SpatialSpec, TemporalSpec
+from ..providers.base import ProviderBase
 from ._vit_mae_utils import ensure_torch, pool_from_tokens, resize_rgb_u8, tokens_to_grid_dhw
 from .base import EmbedderBase
+from .runtime_utils import (
+    call_provider_getter as _call_provider_getter,
+    fetch_s2_rgb_chw as _fetch_s2_rgb_chw,
+    get_cached_provider,
+    is_provider_backend,
+    load_cached_with_device as _load_cached_with_device,
+    resolve_device_auto_torch as _resolve_device,
+)
 from .meta_utils import build_meta, temporal_midpoint_str, temporal_to_range
-from .onthefly_remoteclip import _fetch_s2_rgb_chw
 
 
 _SUPPORTED_ARCHES = {"vitb16", "vitl16", "resnet50", "swint"}
@@ -176,16 +184,6 @@ def _resolve_wildsat_ckpt_path() -> str:
         min_bytes=min_bytes,
     )
 
-
-def _resolve_device(device: str) -> str:
-    if device != "auto":
-        return device
-    try:
-        import torch
-
-        return "cuda" if torch.cuda.is_available() else "cpu"
-    except Exception:
-        return "cpu"
 
 
 def _normalize_arch_name(name: Optional[str]) -> Optional[str]:
@@ -494,13 +492,14 @@ def _load_wildsat(
     prefer_branch: int,
     device: str,
 ) -> Tuple[Any, Optional[Any], Dict[str, Any], str]:
-    dev = _resolve_device(device)
-    backbone, image_head, meta = _load_wildsat_cached(
+    (loaded, dev) = _load_cached_with_device(
+        _load_wildsat_cached,
+        device=device,
         ckpt_path=os.path.expanduser(ckpt_path),
         arch_hint=str(arch_hint),
         prefer_branch=int(prefer_branch),
-        dev=dev,
     )
+    backbone, image_head, meta = loaded
     return backbone, image_head, meta, dev
 
 
@@ -662,12 +661,12 @@ class WildSATEmbedder(EmbedderBase):
     DEFAULT_FETCH_WORKERS = 8
 
     def __init__(self) -> None:
-        self._provider: Optional[Any] = None
+        self._providers: Dict[str, ProviderBase] = {}
 
     def describe(self) -> Dict[str, Any]:
         return {
             "type": "on_the_fly",
-            "backend": ["gee"],
+            "backend": ["provider"],
             "inputs": {
                 "collection": "COPERNICUS/S2_SR_HARMONIZED",
                 "bands": ["B4", "B3", "B2"],
@@ -692,14 +691,12 @@ class WildSATEmbedder(EmbedderBase):
             ],
         }
 
-    def _get_provider(self):
-        if self._provider is None:
-            from ..providers.gee import GEEProvider
-
-            p = GEEProvider(auto_auth=True)
-            p.ensure_ready()
-            self._provider = p
-        return self._provider
+    def _get_provider(self, backend: str) -> ProviderBase:
+        return get_cached_provider(
+            self._providers,
+            backend=backend,
+            allow_auto=True,
+        )
 
     @staticmethod
     def _default_sensor() -> SensorSpec:
@@ -728,8 +725,8 @@ class WildSATEmbedder(EmbedderBase):
         input_chw: Optional[np.ndarray] = None,
     ) -> Embedding:
         backend_l = backend.lower().strip()
-        if backend_l not in {"gee", "auto"}:
-            raise ModelError("wildsat expects backend='gee' (or 'auto').")
+        if not is_provider_backend(backend_l, allow_auto=True):
+            raise ModelError("wildsat expects a provider backend (or 'auto').")
 
         ss = sensor or self._default_sensor()
         t = temporal_to_range(temporal)
@@ -754,7 +751,7 @@ class WildSATEmbedder(EmbedderBase):
 
         if input_chw is None:
             s2_rgb_chw = _fetch_s2_rgb_chw(
-                self._get_provider(),
+                _call_provider_getter(self._get_provider, backend_l),
                 spatial,
                 t,
                 scale_m=int(ss.scale_m),
@@ -794,7 +791,7 @@ class WildSATEmbedder(EmbedderBase):
         meta = build_meta(
             model=self.model_name,
             kind="on_the_fly",
-            backend="gee",
+            backend=str(backend).lower(),
             source=ss.collection,
             sensor={
                 "collection": ss.collection,
@@ -861,12 +858,12 @@ class WildSATEmbedder(EmbedderBase):
             return []
 
         backend_l = backend.lower().strip()
-        if backend_l not in {"gee", "auto"}:
-            raise ModelError("wildsat expects backend='gee' (or 'auto').")
+        if not is_provider_backend(backend_l, allow_auto=True):
+            raise ModelError("wildsat expects a provider backend (or 'auto').")
 
         t = temporal_to_range(temporal)
         ss = sensor or self._default_sensor()
-        provider = self._get_provider()
+        provider = _call_provider_getter(self._get_provider, backend_l)
         n = len(spatials)
 
         scale_m = int(ss.scale_m)

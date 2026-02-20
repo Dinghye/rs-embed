@@ -4,6 +4,7 @@ from typing import Optional
 
 from ...core.errors import ModelError
 from ...core.specs import OutputSpec, SpatialSpec, TemporalSpec
+from ...providers import has_provider
 
 
 def validate_specs(*, spatial: SpatialSpec, temporal: Optional[TemporalSpec], output: OutputSpec) -> None:
@@ -29,8 +30,18 @@ def assert_supported(embedder, *, backend: str, output: OutputSpec, temporal: Op
         return
 
     backends = desc.get("backend")
-    if isinstance(backends, list) and backend not in [b.lower() for b in backends]:
-        raise ModelError(f"Model '{embedder.model_name}' does not support backend='{backend}'. Supported: {backends}")
+    if isinstance(backends, list):
+        allowed = [str(b).lower() for b in backends]
+        auto_provider_compatible = backend == "auto" and ("provider" in allowed or "gee" in allowed)
+        provider_compatible = (
+            has_provider(backend)
+            and (
+                "provider" in allowed
+                or "gee" in allowed
+            )
+        )
+        if backend not in allowed and not provider_compatible and not auto_provider_compatible:
+            raise ModelError(f"Model '{embedder.model_name}' does not support backend='{backend}'. Supported: {backends}")
 
     outputs = desc.get("output")
     if isinstance(outputs, list) and output.mode not in outputs:

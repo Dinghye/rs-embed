@@ -1,5 +1,6 @@
 # src/rs_embed/core/registry.py
 from __future__ import annotations
+import importlib
 from typing import Dict, Type, Any, Optional
 
 from .errors import ModelError
@@ -16,24 +17,54 @@ def register(name: str):
     return deco
 
 def _ensure_registry_loaded() -> None:
-    """Populate registry on first use via a lightweight side-effect import."""
+    """Backward-compatible hook; registry loading is now per-model lazy import."""
+    return
+
+
+def _try_lazy_load_model(name: str) -> None:
+    """Load only the module that owns `name`, then backfill registration if needed."""
     global _REGISTRY_IMPORT_ERROR
-    if _REGISTRY:
+
+    if name in _REGISTRY:
         return
     try:
-        import rs_embed.embedders  # noqa: F401
-        _REGISTRY_IMPORT_ERROR = None
+        from rs_embed.embedders.catalog import MODEL_SPECS
     except Exception as e:
         _REGISTRY_IMPORT_ERROR = e
         return
+
+    spec = MODEL_SPECS.get(name)
+    if spec is None:
+        return
+    module_name, class_name = spec
+    fqmn = f"rs_embed.embedders.{module_name}"
+    try:
+        mod = importlib.import_module(fqmn)
+    except Exception as e:
+        _REGISTRY_IMPORT_ERROR = e
+        return
+
+    try:
+        cls = getattr(mod, class_name)
+    except Exception as e:
+        _REGISTRY_IMPORT_ERROR = e
+        return
+
+    # If decorators did not run in this process state (e.g. registry was cleared),
+    # repopulate from the imported module class symbol.
+    _REGISTRY[name] = cls
+    setattr(cls, "model_name", name)
+    _REGISTRY_IMPORT_ERROR = None
 
 def get_embedder_cls(name: str) -> Type[Any]:
     _ensure_registry_loaded()
     k = name.lower()
     if k not in _REGISTRY:
+        _try_lazy_load_model(k)
+    if k not in _REGISTRY:
         msg = (
             f"Unknown model '{name}'. Available: {sorted(_REGISTRY.keys())}. "
-            f"If this list is empty, ensure embedders are importable "
+            f"If this list is empty, ensure requested embedder module is importable "
             f"(e.g. optional deps like torch/ee are installed)."
         )
         if (not _REGISTRY) and (_REGISTRY_IMPORT_ERROR is not None):

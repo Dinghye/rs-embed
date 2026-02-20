@@ -1,13 +1,26 @@
 from __future__ import annotations
 
 import inspect
+import time
 from functools import lru_cache
-from typing import Any, Dict, Optional, Tuple
+from threading import RLock
+from typing import Any, Callable, Dict, Optional, Tuple, TypeVar
 
 import numpy as np
 
 from ...core.embedding import Embedding
+from ...core.registry import get_embedder_cls
 from ...core.specs import OutputSpec, SensorSpec, SpatialSpec, TemporalSpec
+
+_T = TypeVar("_T")
+
+
+@lru_cache(maxsize=32)
+def get_embedder_bundle_cached(model: str, backend: str, device: str, sensor_k: Tuple):
+    """Return (embedder instance, instance lock)."""
+    cls = get_embedder_cls(model)
+    emb = cls()
+    return emb, RLock()
 
 
 def sensor_key(sensor: Optional[SensorSpec]) -> Tuple:
@@ -82,3 +95,27 @@ def call_embedder_get_embedding(
     if input_chw is not None and embedder_accepts_input_chw(type(embedder)):
         kwargs["input_chw"] = input_chw
     return embedder.get_embedding(**kwargs)
+
+
+def run_with_retry(
+    fn: Callable[[], _T],
+    *,
+    retries: int = 0,
+    backoff_s: float = 0.0,
+) -> _T:
+    """Run a callable with bounded retries and optional exponential backoff."""
+    tries = max(0, int(retries))
+    backoff = max(0.0, float(backoff_s))
+    last_err: Optional[Exception] = None
+    for attempt in range(tries + 1):
+        try:
+            return fn()
+        except Exception as e:  # pragma: no cover - exercised by call-sites
+            last_err = e
+            if attempt >= tries:
+                raise
+            if backoff > 0:
+                time.sleep(backoff * (2 ** attempt))
+    if last_err is not None:
+        raise last_err
+    raise RuntimeError("unreachable retry state")

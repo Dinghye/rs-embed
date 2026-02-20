@@ -11,7 +11,14 @@ from ..core.embedding import Embedding
 from ..core.errors import ModelError
 from ..core.registry import register
 from ..core.specs import SpatialSpec, TemporalSpec, SensorSpec, OutputSpec
+from ..providers.base import ProviderBase
 from .base import EmbedderBase
+from .runtime_utils import (
+    call_provider_getter as _call_provider_getter,
+    get_cached_provider,
+    is_provider_backend,
+    load_cached_with_device as _load_cached_with_device,
+)
 
 from ._vit_mae_utils import (
     fetch_s2_rgb_u8_from_gee,
@@ -25,15 +32,6 @@ from ._vit_mae_utils import (
 )
 
 
-
-def _resolve_device(device: str) -> str:
-    if device != "auto":
-        return device
-    try:
-        import torch
-        return "cuda" if torch.cuda.is_available() else "cpu"
-    except Exception:
-        return "cpu"
 
 
 @lru_cache(maxsize=8)
@@ -56,8 +54,8 @@ def _load_scalemae_cached(model_id: str, dev: str):
     return model, meta
 
 def _load_scalemae(model_id: str, device: str = "auto"):
-    dev = _resolve_device(device)
-    return _load_scalemae_cached(model_id, dev)
+    loaded, _dev = _load_cached_with_device(_load_scalemae_cached, device=device, model_id=model_id)
+    return loaded
 
 
 def _infer_patch_size(model) -> int:
@@ -311,7 +309,7 @@ class ScaleMAERGBEmbedder(EmbedderBase):
     def describe(self) -> Dict[str, Any]:
         return {
             "type": "onthefly",
-            "backend": ["gee"],
+            "backend": ["provider"],
             "model_id_default": self.DEFAULT_MODEL_ID,
             "image_size": self.DEFAULT_IMAGE_SIZE,
             "output": ["pooled", "grid"],
@@ -319,15 +317,14 @@ class ScaleMAERGBEmbedder(EmbedderBase):
 
     
     def __init__(self) -> None:
-        self._provider: Optional[Any] = None
+        self._providers: Dict[str, ProviderBase] = {}
 
-    def _get_provider(self):
-        if self._provider is None:
-            from ..providers.gee import GEEProvider
-            p = GEEProvider(auto_auth=True)
-            p.ensure_ready()
-            self._provider = p
-        return self._provider
+    def _get_provider(self, backend: str) -> ProviderBase:
+        return get_cached_provider(
+            self._providers,
+            backend=backend,
+            allow_auto=True,
+        )
 
     @staticmethod
     def _default_sensor() -> SensorSpec:
@@ -361,8 +358,8 @@ class ScaleMAERGBEmbedder(EmbedderBase):
             device: str = "auto",
             input_chw: Optional[np.ndarray] = None,
         ) -> Embedding:
-            if backend.lower() not in ("gee", "auto"):
-                raise ModelError("scalemae_rgb expects backend='gee' (or 'auto').")
+            if not is_provider_backend(backend, allow_auto=True):
+                raise ModelError("scalemae_rgb expects a provider backend (or 'auto').")
 
             if sensor is None:
                 sensor = self._default_sensor()
@@ -378,7 +375,7 @@ class ScaleMAERGBEmbedder(EmbedderBase):
                     temporal=t,
                     sensor=sensor,
                     out_size=image_size,
-                    provider=self._get_provider(),
+                    provider=_call_provider_getter(self._get_provider, backend),
                 )
             else:
                 # input_chw expected to be raw S2 SR values in band order (B4,B3,B2)
@@ -405,7 +402,7 @@ class ScaleMAERGBEmbedder(EmbedderBase):
             meta = base_meta(
                 model_name=self.model_name,
                 hf_id=model_id,
-                backend="gee",
+                backend=str(backend).lower(),
                 image_size=image_size,
                 sensor=sensor,
                 temporal=t,
@@ -463,8 +460,8 @@ class ScaleMAERGBEmbedder(EmbedderBase):
     ) -> list[Embedding]:
         if not spatials:
             return []
-        if backend.lower() not in ("gee", "auto"):
-            raise ModelError("scalemae_rgb expects backend='gee' (or 'auto').")
+        if not is_provider_backend(backend, allow_auto=True):
+            raise ModelError("scalemae_rgb expects a provider backend (or 'auto').")
 
         if sensor is None:
             sensor = self._default_sensor()
@@ -473,7 +470,7 @@ class ScaleMAERGBEmbedder(EmbedderBase):
         image_size = int(os.environ.get("RS_EMBED_SCALEMAE_IMG", str(self.DEFAULT_IMAGE_SIZE)))
         t = temporal_to_range(temporal)
 
-        provider = self._get_provider()
+        provider = _call_provider_getter(self._get_provider, backend)
         n = len(spatials)
         rgb_u8_all: List[Optional[np.ndarray]] = [None] * n
 
@@ -556,7 +553,7 @@ class ScaleMAERGBEmbedder(EmbedderBase):
                 meta = base_meta(
                     model_name=self.model_name,
                     hf_id=model_id,
-                    backend="gee",
+                    backend=str(backend).lower(),
                     image_size=image_size,
                     sensor=sensor,
                     temporal=t,
@@ -617,8 +614,8 @@ class ScaleMAERGBEmbedder(EmbedderBase):
         backend: str = "gee",
         device: str = "auto",
     ) -> list[Embedding]:
-        if backend.lower() not in ("gee", "auto"):
-            raise ModelError("scalemae_rgb expects backend='gee' (or 'auto').")
+        if not is_provider_backend(backend, allow_auto=True):
+            raise ModelError("scalemae_rgb expects a provider backend (or 'auto').")
         if len(spatials) != len(input_chws):
             raise ModelError(
                 f"spatials/input_chws length mismatch: {len(spatials)} != {len(input_chws)}"
@@ -678,7 +675,7 @@ class ScaleMAERGBEmbedder(EmbedderBase):
                 meta = base_meta(
                     model_name=self.model_name,
                     hf_id=model_id,
-                    backend="gee",
+                    backend=str(backend).lower(),
                     image_size=image_size,
                     sensor=sensor,
                     temporal=t,

@@ -23,7 +23,7 @@ class PointPayloadDeps:
     fetch_gee_patch_raw: Callable[..., np.ndarray]
     inspect_input_raw: Callable[..., Dict[str, Any]]
     call_embedder_get_embedding: Callable[..., Any]
-    provider_factory: Callable[[], Any]
+    provider_factory: Optional[Callable[[], Any]]
 
 
 def build_one_point_payload(
@@ -91,8 +91,9 @@ def build_one_point_payload(
 
             input_chw: Optional[np.ndarray] = None
             report: Optional[Dict[str, Any]] = None
+            provider_enabled = deps.provider_factory is not None
             needs_provider_input = (
-                backend == "gee"
+                provider_enabled
                 and sspec is not None
                 and "precomputed" not in (model_type.get(m) or "")
             )
@@ -115,6 +116,10 @@ def build_one_point_payload(
                             raise RuntimeError(
                                 f"Prefetch previously failed for model={m}, "
                                 f"index={point_index}, sensor={skey}: {pref_err}"
+                            )
+                        if deps.provider_factory is None:
+                            raise RuntimeError(
+                                f"Missing provider factory for model={m}, index={point_index}, sensor={skey}"
                             )
                         prov = deps.provider_factory()
                         deps.run_with_retry(

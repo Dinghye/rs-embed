@@ -1,12 +1,6 @@
 from __future__ import annotations
 
-"""Utilities for inspecting raw patches downloaded from providers.
-
-This module is intentionally model-free: it lets you sanity-check the *input imagery*
-you would feed into an on-the-fly embedder, without running the model.
-
-Currently we support Google Earth Engine (backend="gee").
-"""
+"""Utilities for inspecting raw patches downloaded from provider backends."""
 
 from dataclasses import asdict
 from typing import Any, Dict, Optional, Tuple
@@ -14,13 +8,12 @@ from typing import Any, Dict, Optional, Tuple
 import numpy as np
 
 from .core.errors import ProviderError
-from .core.gee_image import build_gee_image as _build_gee_image
 from .core.input_checks import inspect_chw, checks_save_dir, save_quicklook_rgb
 from .core.specs import SensorSpec, SpatialSpec, TemporalSpec
-from .providers.gee import GEEProvider
+from .providers import get_provider
 
 
-def inspect_gee_patch(
+def inspect_provider_patch(
     *,
     spatial: SpatialSpec,
     temporal: Optional[TemporalSpec] = None,
@@ -30,7 +23,7 @@ def inspect_gee_patch(
     value_range: Optional[Tuple[float, float]] = None,
     return_array: bool = False,
 ) -> Dict[str, Any]:
-    """Download a patch from GEE and return an input inspection report.
+    """Download a patch from a provider and return an input inspection report.
 
     This does **not** run any embedding model.
 
@@ -41,22 +34,16 @@ def inspect_gee_patch(
         includes a non-serializable `array_chw` entry with the numpy array.
     """
 
-    if backend != "gee":
-        raise ProviderError(f"inspect_gee_patch currently only supports backend='gee', got {backend!r}")
-
-    provider = GEEProvider(auto_auth=True)
+    backend_name = str(backend).strip().lower()
+    if not backend_name:
+        raise ProviderError("backend must be a non-empty provider name.")
+    kwargs = {"auto_auth": True} if backend_name == "gee" else {}
+    provider = get_provider(backend_name, **kwargs)
     provider.ensure_ready()
-
-    region = provider.get_region_3857(spatial)
-    img = _build_gee_image(sensor=sensor, temporal=temporal, region=region)
-
-    x_chw = provider.fetch_array_chw(
-        image=img,
-        bands=sensor.bands,
-        region=region,
-        scale_m=int(sensor.scale_m),
-        fill_value=float(sensor.fill_value),
-        collection=sensor.collection,
+    x_chw = provider.fetch_sensor_patch_chw(
+        spatial=spatial,
+        temporal=temporal,
+        sensor=sensor,
     )
 
     report = inspect_chw(
@@ -87,9 +74,31 @@ def inspect_gee_patch(
         "report": report,
         "sensor": asdict(sensor),
         "temporal": asdict(temporal) if temporal is not None else None,
-        "backend": backend,
+        "backend": backend_name,
         "artifacts": artifacts or None,
     }
     if return_array:
         out["array_chw"] = x_chw
     return out
+
+
+def inspect_gee_patch(
+    *,
+    spatial: SpatialSpec,
+    temporal: Optional[TemporalSpec] = None,
+    sensor: SensorSpec,
+    backend: str = "gee",
+    name: str = "gee_patch",
+    value_range: Optional[Tuple[float, float]] = None,
+    return_array: bool = False,
+) -> Dict[str, Any]:
+    """Backwards-compatible wrapper around inspect_provider_patch."""
+    return inspect_provider_patch(
+        spatial=spatial,
+        temporal=temporal,
+        sensor=sensor,
+        backend=backend,
+        name=name,
+        value_range=value_range,
+        return_array=return_array,
+    )

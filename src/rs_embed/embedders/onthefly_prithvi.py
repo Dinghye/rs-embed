@@ -13,8 +13,15 @@ from ..core.embedding import Embedding
 from ..core.errors import ModelError
 from ..core.registry import register
 from ..core.specs import SpatialSpec, TemporalSpec, SensorSpec, OutputSpec
-from ..providers.gee import GEEProvider
+from ..providers import ProviderBase
 from .base import EmbedderBase
+from .runtime_utils import (
+    call_provider_getter as _call_provider_getter,
+    fetch_gee_patch_chw as _fetch_gee_patch_chw,
+    get_cached_provider,
+    is_provider_backend,
+    load_cached_with_device as _load_cached_with_device,
+)
 
 from ._vit_mae_utils import (
     ensure_torch,
@@ -34,7 +41,7 @@ PRITHVI_S2_BANDS_DST = ["BLUE", "GREEN", "RED", "NIR_NARROW", "SWIR_1", "SWIR_2"
 
 
 def _fetch_s2_prithvi6_chw(
-    provider: GEEProvider,
+    provider: ProviderBase,
     spatial: SpatialSpec,
     temporal: TemporalSpec,
     *,
@@ -47,34 +54,18 @@ def _fetch_s2_prithvi6_chw(
     Returns CHW float32 [6,H,W] normalized to [0,1] from S2 SR (scaled by 1/10000).
     Uses provider.get_region_3857(spatial) to define the sampling rectangle.
     """
-    import ee  # lazy
-
-    region = provider.get_region_3857(spatial)
-
-    col = (
-        ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
-        .filterDate(temporal.start, temporal.end)
-        .filterBounds(region)
-        .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", cloudy_pct))
+    # Use semantic aliases (BLUE/GREEN/...) so provider alias resolution stays centralized.
+    x_chw = _fetch_gee_patch_chw(
+        provider,
+        spatial=spatial,
+        temporal=temporal,
+        collection="COPERNICUS/S2_SR_HARMONIZED",
+        bands=tuple(PRITHVI_S2_BANDS_DST),
+        scale_m=scale_m,
+        cloudy_pct=cloudy_pct,
+        composite=composite,
+        fill_value=fill_value,
     )
-
-    if composite == "median":
-        img = col.median()
-    elif composite == "mosaic":
-        img = col.mosaic()
-    else:
-        raise ModelError(f"Unknown composite='{composite}'. Use 'median' or 'mosaic'.")
-
-    img = (
-        img.select(PRITHVI_S2_BANDS_SRC, PRITHVI_S2_BANDS_DST)
-        .reproject(crs="EPSG:3857", scale=scale_m)
-    )
-
-    rect = img.sampleRectangle(region=region, defaultValue=float(fill_value)).getInfo()
-    props = rect["properties"]
-
-    arrs = [np.array(props[b], dtype=np.float32) for b in PRITHVI_S2_BANDS_DST]  # HxW each
-    x_chw = np.stack(arrs, axis=0)  # [6,H,W]
 
     # S2 SR scaling: 0..10000
     x_chw = x_chw / 10000.0
@@ -115,15 +106,6 @@ def _spatial_center_lon_lat(spatial: SpatialSpec) -> Tuple[float, float]:
 # -------------------------
 # Prithvi model loading (TerraTorch)
 # -------------------------
-
-def _resolve_device(device: str) -> str:
-    if device != "auto":
-        return device
-    try:
-        import torch
-        return "cuda" if torch.cuda.is_available() else "cpu"
-    except Exception:
-        return "cpu"
 
 
 @lru_cache(maxsize=8)
@@ -185,15 +167,16 @@ def _load_prithvi(
 
     Returns: (model, meta, resolved_device)
     """
-    dev = _resolve_device(device)
-    m, meta = _load_prithvi_cached(
-        model_key,
-        bool(pretrained),
-        tuple(bands),
-        int(num_frames),
-        tuple(coords_encoding),
-        dev,
+    (loaded, dev) = _load_cached_with_device(
+        _load_prithvi_cached,
+        device=device,
+        model_key=model_key,
+        pretrained=bool(pretrained),
+        bands=tuple(bands),
+        num_frames=int(num_frames),
+        coords_encoding=tuple(coords_encoding),
     )
+    m, meta = loaded
     return m, meta, dev
 
 def _prithvi_forward_tokens(
@@ -334,7 +317,7 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
     def describe(self) -> Dict[str, Any]:
         return {
             "type": "onthefly",
-            "backend": ["gee"],
+            "backend": ["provider"],
             "model_key_default": self.DEFAULT_MODEL_KEY,
             "input_bands": PRITHVI_S2_BANDS_DST,
             "output": ["pooled", "grid"],
@@ -346,14 +329,14 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
 
     
     def __init__(self) -> None:
-        self._provider: Optional[GEEProvider] = None
+        self._providers: Dict[str, ProviderBase] = {}
 
-    def _get_provider(self) -> GEEProvider:
-        if self._provider is None:
-            p = GEEProvider(auto_auth=True)
-            p.ensure_ready()
-            self._provider = p
-        return self._provider
+    def _get_provider(self, backend: str) -> ProviderBase:
+        return get_cached_provider(
+            self._providers,
+            backend=backend,
+            allow_auto=True,
+        )
 
     def _default_sensor(self) -> SensorSpec:
         return SensorSpec(
@@ -387,8 +370,8 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
             device: str = "auto",
             input_chw: Optional[np.ndarray] = None,
         ) -> Embedding:
-            if backend.lower() not in ("gee", "auto"):
-                raise ModelError("prithvi_eo_v2_s2_6b expects backend='gee' (or 'auto').")
+            if not is_provider_backend(backend, allow_auto=True):
+                raise ModelError("prithvi_eo_v2_s2_6b expects a provider backend (or 'auto').")
 
             # Defaults for Prithvi inputs
             if sensor is None:
@@ -412,7 +395,7 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
             )
 
             # Fetch S2 6-band patch from GEE
-            provider = self._get_provider()
+            provider = _call_provider_getter(self._get_provider, backend)
 
             # Fetch S2 6-band patch from GEE (optionally reuse pre-fetched raw patch)
             if input_chw is None:
@@ -486,7 +469,7 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
             meta = base_meta(
                 model_name=self.model_name,
                 hf_id=model_key,  # for terratorch we store model key here
-                backend="gee",
+                backend=str(backend).lower(),
                 image_size=int(x_chw.shape[-1]),  # not fixed 224; depends on ROI/scale
                 sensor=sensor,
                 temporal=t,
@@ -543,14 +526,14 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
     ) -> list[Embedding]:
         if not spatials:
             return []
-        if backend.lower() not in ("gee", "auto"):
-            raise ModelError("prithvi_eo_v2_s2_6b expects backend='gee' (or 'auto').")
+        if not is_provider_backend(backend, allow_auto=True):
+            raise ModelError("prithvi_eo_v2_s2_6b expects a provider backend (or 'auto').")
 
         if sensor is None:
             sensor = self._default_sensor()
 
         t = temporal_to_range(temporal)
-        provider = self._get_provider()
+        provider = _call_provider_getter(self._get_provider, backend)
         n = len(spatials)
         prefetched_raw: List[Optional[np.ndarray]] = [None] * n
 
@@ -606,8 +589,8 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
         backend: str = "gee",
         device: str = "auto",
     ) -> list[Embedding]:
-        if backend.lower() not in ("gee", "auto"):
-            raise ModelError("prithvi_eo_v2_s2_6b expects backend='gee' (or 'auto').")
+        if not is_provider_backend(backend, allow_auto=True):
+            raise ModelError("prithvi_eo_v2_s2_6b expects a provider backend (or 'auto').")
         if len(spatials) != len(input_chws):
             raise ModelError(
                 f"spatials/input_chws length mismatch: {len(spatials)} != {len(input_chws)}"
@@ -686,7 +669,7 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
                     meta = base_meta(
                         model_name=self.model_name,
                         hf_id=model_key,
-                        backend="gee",
+                        backend=str(backend).lower(),
                         image_size=int(x_chw.shape[-1]),
                         sensor=sensor,
                         temporal=t,

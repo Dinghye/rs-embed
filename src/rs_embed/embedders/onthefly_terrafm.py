@@ -13,9 +13,18 @@ from ..core.registry import register
 from ..core.embedding import Embedding
 from ..core.errors import ModelError
 from ..core.specs import SpatialSpec, TemporalSpec, SensorSpec, OutputSpec
-from ..providers.gee import GEEProvider
+from ..providers import ProviderBase
 from .base import EmbedderBase
 from .meta_utils import build_meta, temporal_midpoint_str
+from .runtime_utils import (
+    call_provider_getter as _call_provider_getter,
+    fetch_gee_patch_chw as _fetch_gee_patch_chw,
+    fetch_s1_vvvh_raw_chw as _fetch_s1_vvvh_raw_chw_shared,
+    get_cached_provider,
+    is_provider_backend,
+    normalize_s1_vvvh_chw as _normalize_s1_vvvh_chw,
+    resolve_device_auto_torch as _auto_device,
+)
 
 
 HF_REPO_ID = "MBZUAI/TerraFM"
@@ -26,14 +35,6 @@ HF_WEIGHT_FILE_B = "TerraFM-B.pth"
 # -----------------------------
 # Small utils
 # -----------------------------
-def _auto_device(device: str) -> str:
-    import torch
-
-    if device == "auto":
-        return "cuda" if torch.cuda.is_available() else "cpu"
-    return device
-
-
 def _resize_chw_to_224(x_chw: np.ndarray, *, size: int = 224) -> np.ndarray:
     """Resize CHW float32 -> CHW float32 (bilinear)."""
     import torch
@@ -56,7 +57,7 @@ _S2_SR_12_BANDS = [
 
 
 def _fetch_s2_sr_12_chw(
-    provider: GEEProvider,
+    provider: ProviderBase,
     spatial: SpatialSpec,
     temporal: TemporalSpec,
     *,
@@ -64,48 +65,26 @@ def _fetch_s2_sr_12_chw(
     cloudy_pct: int = 30,
     composite: str = "median",
 ) -> np.ndarray:
-    """
-    Returns CHW float32 in [0,1] approx, resized later to 224.
-    COPERNICUS/S2_SR_HARMONIZED bands are UINT16 SR scaled by 10000.  [oai_citation:3‡Google for Developers](https://developers.google.com/earth-engine/datasets/catalog/COPERNICUS_S2_SR_HARMONIZED?utm_source=chatgpt.com)
-    """
-    import ee  # lazy
-
-    region = provider.get_region_3857(spatial)
-
-    col = (
-        ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED")
-        .filterDate(temporal.start, temporal.end)
-        .filterBounds(region)
-        .filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", cloudy_pct))
+    """Returns CHW float32 in [0,1], resized later to 224."""
+    raw = _fetch_gee_patch_chw(
+        provider,
+        spatial=spatial,
+        temporal=temporal,
+        collection="COPERNICUS/S2_SR_HARMONIZED",
+        bands=tuple(_S2_SR_12_BANDS),
+        scale_m=int(scale_m),
+        cloudy_pct=int(cloudy_pct),
+        composite=str(composite),
+        fill_value=0.0,
     )
-
-    if composite == "median":
-        img = col.median()
-    elif composite == "mosaic":
-        img = col.mosaic()
-    else:
-        raise ModelError(f"Unknown composite='{composite}'. Use 'median' or 'mosaic'.")
-
-    img = img.select(_S2_SR_12_BANDS).reproject(crs="EPSG:3857", scale=scale_m)
-
-    rect = img.sampleRectangle(region=region, defaultValue=0).getInfo()
-    props = rect["properties"]
-
-    bands = []
-    for b in _S2_SR_12_BANDS:
-        arr = np.array(props[b], dtype=np.float32) / 10000.0
-        bands.append(arr)
-
-    x = np.stack(bands, axis=0).astype(np.float32)  # [12,H,W]
-    x = np.clip(x, 0.0, 1.0)
-    return x
+    return np.clip(raw / 10000.0, 0.0, 1.0).astype(np.float32)
 
 
 # -----------------------------
 # GEE: Fetch S1 (VV/VH)
 # -----------------------------
 def _fetch_s1_vvvh_chw(
-    provider: GEEProvider,
+    provider: ProviderBase,
     spatial: SpatialSpec,
     temporal: TemporalSpec,
     *,
@@ -114,62 +93,22 @@ def _fetch_s1_vvvh_chw(
     use_float_linear: bool = True,
     composite: str = "median",
 ) -> np.ndarray:
-    """
-    Returns CHW float32 [2,H,W].
-
-    Notes:
-    - COPERNICUS/S1_GRD catalog mentions "log scaling" in description.  [oai_citation:4‡Google for Developers](https://developers.google.com/earth-engine/datasets/catalog/COPERNICUS_S1_GRD?utm_source=chatgpt.com)
-    - For linear data, community notes COPERNICUS/S1_GRD_FLOAT exists.  [oai_citation:5‡STEP Forum](https://forum.step.esa.int/t/is-google-earth-engine-sentinel-1-grd-product-sigma0/27239?utm_source=chatgpt.com)
-
-    This function defaults to S1_GRD_FLOAT (linear). We then apply a mild log1p compression
-    + normalization to keep values numerically sane for a vision backbone.
-    """
-    import ee  # lazy
-
-    region = provider.get_region_3857(spatial)
-
-    collection_id = "COPERNICUS/S1_GRD_FLOAT" if use_float_linear else "COPERNICUS/S1_GRD"
-    col = (
-        ee.ImageCollection(collection_id)
-        .filterDate(temporal.start, temporal.end)
-        .filterBounds(region)
-        .filter(ee.Filter.eq("instrumentMode", "IW"))
-        .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VV"))
-        .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VH"))
+    """Returns normalized S1 VV/VH CHW float32 [2,H,W] in [0,1]."""
+    raw = _fetch_s1_vvvh_raw_chw_shared(
+        provider,
+        spatial=spatial,
+        temporal=temporal,
+        scale_m=int(scale_m),
+        orbit=orbit,
+        use_float_linear=bool(use_float_linear),
+        composite=str(composite),
+        fill_value=0.0,
     )
-
-    if orbit:
-        col = col.filter(ee.Filter.eq("orbitProperties_pass", orbit))
-
-    if composite == "median":
-        img = col.median()
-    elif composite == "mosaic":
-        img = col.mosaic()
-    else:
-        raise ModelError(f"Unknown composite='{composite}'. Use 'median' or 'mosaic'.")
-
-    img = img.select(["VV", "VH"]).reproject(crs="EPSG:3857", scale=scale_m)
-
-    rect = img.sampleRectangle(region=region, defaultValue=0.0).getInfo()
-    props = rect["properties"]
-
-    vv = np.array(props["VV"], dtype=np.float32)
-    vh = np.array(props["VH"], dtype=np.float32)
-
-    x = np.stack([vv, vh], axis=0).astype(np.float32)  # [2,H,W]
-
-    # simple, robust compression/normalization (works whether linear or dB-ish)
-    x = np.log1p(np.maximum(x, 0.0))
-    # normalize per-chip (avoid division by 0)
-    denom = np.percentile(x, 99) if np.isfinite(x).all() else 1.0
-    denom = float(denom) if denom > 0 else 1.0
-    x = np.clip(x / denom, 0.0, 1.0)
-
-    return x
+    return _normalize_s1_vvvh_chw(raw)
 
 
 def _fetch_s1_vvvh_raw_chw(
-    provider: GEEProvider,
+    provider: ProviderBase,
     spatial: SpatialSpec,
     temporal: TemporalSpec,
     *,
@@ -179,35 +118,16 @@ def _fetch_s1_vvvh_raw_chw(
     composite: str = "median",
 ) -> np.ndarray:
     """Returns raw VV/VH CHW without log/normalization."""
-    import ee
-
-    region = provider.get_region_3857(spatial)
-    collection_id = "COPERNICUS/S1_GRD_FLOAT" if use_float_linear else "COPERNICUS/S1_GRD"
-    col = (
-        ee.ImageCollection(collection_id)
-        .filterDate(temporal.start, temporal.end)
-        .filterBounds(region)
-        .filter(ee.Filter.eq("instrumentMode", "IW"))
-        .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VV"))
-        .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VH"))
+    return _fetch_s1_vvvh_raw_chw_shared(
+        provider,
+        spatial=spatial,
+        temporal=temporal,
+        scale_m=int(scale_m),
+        orbit=orbit,
+        use_float_linear=bool(use_float_linear),
+        composite=str(composite),
+        fill_value=0.0,
     )
-
-    if orbit:
-        col = col.filter(ee.Filter.eq("orbitProperties_pass", orbit))
-
-    if composite == "median":
-        img = col.median()
-    elif composite == "mosaic":
-        img = col.mosaic()
-    else:
-        raise ModelError(f"Unknown composite='{composite}'. Use 'median' or 'mosaic'.")
-
-    img = img.select(["VV", "VH"]).reproject(crs="EPSG:3857", scale=scale_m)
-    rect = img.sampleRectangle(region=region, defaultValue=0.0).getInfo()
-    props = rect["properties"]
-    vv = np.array(props["VV"], dtype=np.float32)
-    vh = np.array(props["VH"], dtype=np.float32)
-    return np.stack([vv, vh], axis=0).astype(np.float32)
 
 
 # -----------------------------
@@ -416,7 +336,7 @@ class TerraFMBEmbedder(EmbedderBase):
     def describe(self) -> Dict[str, Any]:
         return {
             "type": "on_the_fly",
-            "backend": ["gee", "tensor"],
+            "backend": ["provider", "tensor"],
             "inputs": {
                 "s2_sr": {"collection": "COPERNICUS/S2_SR_HARMONIZED", "bands": _S2_SR_12_BANDS},
                 "s1": {"collection": "COPERNICUS/S1_GRD_FLOAT (default) or COPERNICUS/S1_GRD", "bands": ["VV", "VH"]},
@@ -437,14 +357,14 @@ class TerraFMBEmbedder(EmbedderBase):
 
     
     def __init__(self) -> None:
-        self._provider: Optional[GEEProvider] = None
+        self._providers: Dict[str, ProviderBase] = {}
 
-    def _get_provider(self) -> GEEProvider:
-        if self._provider is None:
-            p = GEEProvider(auto_auth=True)
-            p.ensure_ready()
-            self._provider = p
-        return self._provider
+    def _get_provider(self, backend: str) -> ProviderBase:
+        return get_cached_provider(
+            self._providers,
+            backend=backend,
+            allow_auto=False,
+        )
 
     @staticmethod
     def _resolve_fetch_workers(n_items: int) -> int:
@@ -516,14 +436,14 @@ class TerraFMBEmbedder(EmbedderBase):
                 if x_bchw.shape[-2:] != (image_size, image_size):
                     x_bchw = np.stack([_resize_chw_to_224(xi, size=image_size) for xi in x_bchw], axis=0)
 
-            elif backend_l == "gee":
+            elif is_provider_backend(backend_l, allow_auto=False):
                 if temporal is None:
                     raise ModelError("terrafm_b_gee requires TemporalSpec.range(start,end).")
                 temporal.validate()
                 if temporal.mode != "range":
                     raise ModelError("terrafm_b_gee requires TemporalSpec.range in v0.1.")
 
-                provider = self._get_provider()
+                provider = _call_provider_getter(self._get_provider, backend_l)
 
                 if input_chw is None:
                     if modality == "s2":
@@ -584,7 +504,7 @@ class TerraFMBEmbedder(EmbedderBase):
                 x_bchw = x_chw[None, ...].astype(np.float32)
 
             else:
-                raise ModelError("terrafm_b_gee supports backend='gee' or 'tensor' only.")
+                raise ModelError("terrafm_b_gee supports a provider backend or 'tensor' only.")
 
             # channel sanity: TerraFM HF terrafm.py routes by C==2 (S1) else (S2). Keep it strict.
             c = int(x_bchw.shape[1])
@@ -603,10 +523,10 @@ class TerraFMBEmbedder(EmbedderBase):
                 want_grid=(output.mode == "grid"),
             )
 
-            temporal_used = temporal if backend_l == "gee" else None
+            temporal_used = temporal if is_provider_backend(backend_l, allow_auto=False) else None
             sensor_meta = None
             source = None
-            if backend_l == "gee":
+            if is_provider_backend(backend_l, allow_auto=False):
                 if modality == "s2":
                     sensor_meta = {
                         "collection": "COPERNICUS/S2_SR_HARMONIZED",
@@ -639,11 +559,11 @@ class TerraFMBEmbedder(EmbedderBase):
                 input_time=temporal_midpoint_str(temporal_used),
                 extra={
                     "modality": modality,
-                    "scale_m": scale_m if backend_l == "gee" else None,
-                    "cloudy_pct": cloudy_pct if backend_l == "gee" else None,
-                    "composite": composite if backend_l == "gee" else None,
-                    "orbit": orbit if (backend_l == "gee" and modality == "s1") else None,
-                    "use_float_linear": use_float_linear if (backend_l == "gee" and modality == "s1") else None,
+                    "scale_m": scale_m if is_provider_backend(backend_l, allow_auto=False) else None,
+                    "cloudy_pct": cloudy_pct if is_provider_backend(backend_l, allow_auto=False) else None,
+                    "composite": composite if is_provider_backend(backend_l, allow_auto=False) else None,
+                    "orbit": orbit if (is_provider_backend(backend_l, allow_auto=False) and modality == "s1") else None,
+                    "use_float_linear": use_float_linear if (is_provider_backend(backend_l, allow_auto=False) and modality == "s1") else None,
                     "start": getattr(temporal_used, "start", None),
                     "end": getattr(temporal_used, "end", None),
                     "image_size": image_size,
@@ -693,7 +613,7 @@ class TerraFMBEmbedder(EmbedderBase):
             return []
 
         backend_l = backend.lower().strip()
-        if backend_l != "gee":
+        if not is_provider_backend(backend_l, allow_auto=False):
             # tensor path stays sequential in v0.1
             return super().get_embeddings_batch(
                 spatials=spatials,
@@ -717,7 +637,7 @@ class TerraFMBEmbedder(EmbedderBase):
         orbit = getattr(sensor, "orbit", None) if sensor else None
         use_float_linear = bool(getattr(sensor, "use_float_linear", True)) if sensor else True
 
-        provider = self._get_provider()
+        provider = _call_provider_getter(self._get_provider, backend_l)
         n = len(spatials)
         prefetched_raw: List[Optional[np.ndarray]] = [None] * n
 
@@ -810,7 +730,7 @@ class TerraFMBEmbedder(EmbedderBase):
             return []
 
         backend_l = backend.lower().strip()
-        if backend_l != "gee":
+        if not is_provider_backend(backend_l, allow_auto=False):
             return super().get_embeddings_batch_from_inputs(
                 spatials=spatials,
                 input_chws=input_chws,

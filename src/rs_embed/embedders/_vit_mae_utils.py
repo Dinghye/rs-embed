@@ -6,11 +6,9 @@ import numpy as np
 
 from ..core.errors import ModelError
 from ..core.specs import TemporalSpec, SensorSpec, SpatialSpec, OutputSpec
-from ..providers.gee import GEEProvider
+from ..providers import ProviderBase, get_provider
 from .meta_utils import temporal_to_range, temporal_midpoint_str, build_meta
-
-# Reuse your RemoteCLIP S2 fetcher (single source of truth)
-from .onthefly_remoteclip import _fetch_s2_rgb_chw, _s2_rgb_u8_from_chw
+from .runtime_utils import fetch_gee_patch_chw, resolve_provider_backend_name
 
 
 # -------------------------
@@ -31,36 +29,54 @@ def resize_rgb_u8(rgb_u8: np.ndarray, out_size: int) -> np.ndarray:
     return np.array(im, dtype=np.uint8)
 
 
+def _s2_rgb_u8_from_chw(s2_chw: np.ndarray) -> np.ndarray:
+    """s2_chw: [3,H,W] float in [0,1] -> uint8 [H,W,3]."""
+    if s2_chw.ndim != 3 or s2_chw.shape[0] != 3:
+        raise ModelError(f"Expected S2 RGB CHW with 3 bands, got shape={s2_chw.shape}")
+    x = np.clip(s2_chw, 0.0, 1.0)
+    return (x.transpose(1, 2, 0) * 255.0).astype(np.uint8)
+
+
 def fetch_s2_rgb_u8_from_gee(
     *,
     spatial: SpatialSpec,
     temporal: Optional[TemporalSpec],
     sensor: SensorSpec,
     out_size: int,
-    provider: Optional[GEEProvider] = None,
+    provider: Optional[ProviderBase] = None,
+    backend: str = "gee",
     default_temporal: Tuple[str, str] = ("2022-06-01", "2022-09-01"),
 ) -> np.ndarray:
     """
     Single source of truth for "ROI+time -> uint8 RGB patch".
 
-    Uses RemoteCLIP's:
-      - _fetch_s2_rgb_chw (float [0,1] CHW)
-      - _s2_rgb_u8_from_chw (-> uint8 HWC)
+    Uses shared runtime helpers to fetch S2 RGB CHW, converts to uint8 HWC,
     then resizes to out_size.
     """
     t = temporal_to_range(temporal, default_temporal)
 
-    p = provider or GEEProvider(auto_auth=True)
+    if provider is None:
+        backend_name = resolve_provider_backend_name(backend, allow_auto=True)
+        if backend_name is None:
+            raise ModelError(f"Unsupported provider backend={backend!r}.")
+        kwargs = {"auto_auth": True} if backend_name == "gee" else {}
+        p = get_provider(backend_name, **kwargs)
+    else:
+        p = provider
     p.ensure_ready()
 
-    s2_chw = _fetch_s2_rgb_chw(
+    s2_raw = fetch_gee_patch_chw(
         p,
-        spatial,
-        t,
+        spatial=spatial,
+        temporal=t,
+        collection="COPERNICUS/S2_SR_HARMONIZED",
+        bands=("B4", "B3", "B2"),
         scale_m=sensor.scale_m,
         cloudy_pct=sensor.cloudy_pct,
         composite=sensor.composite,
+        fill_value=0.0,
     )
+    s2_chw = np.clip(s2_raw / 10000.0, 0.0, 1.0).astype(np.float32)
 
     # Optional: inspect on-the-fly GEE input (shared by multiple embedders)
     from ..core.input_checks import maybe_inspect_chw, checks_should_raise
