@@ -2,33 +2,129 @@
 
 This page lists supported model backends and their I/O characteristics.
 
+## Precomputed Embeddings
 
-
-## 🧊 **Precomputed Embeddings**
-
-|**Model**|**ID**|**Output**|**Resolution**|**Dim**|**Time Coverage**|**Notes**|
+| **Model** | **ID** | **Output** | **Resolution** | **Dim** | **Time Coverage** | **Notes** |
 |---|---|---|---|---|---|---|
-|**Tessera**|tessera|pooled / grid|0.1°|128|2017–2025|GeoTessera global tile embeddings|
-|**Google Satellite Embedding (Alpha Earth)**|gse_annual|pooled / grid|10 m|64|2017–2024|Annual embeddings via GEE|
-|**Copernicus Embed**|copernicus_embed|pooled / grid|0.25°|768|2021|Official Copernicus embeddings|
+| **Tessera** | `tessera` | pooled / grid | 0.1° | 128 | 2017–2025 | GeoTessera global tile embeddings |
+| **Google Satellite Embedding (Alpha Earth)** | `gse_annual` | pooled / grid | 10 m | 64 | 2017–2024 | Annual embeddings via GEE |
+| **Copernicus Embed** | `copernicus_embed` | pooled / grid | 0.25° | 768 | 2021 | Official Copernicus embeddings |
 
 ---
-## 🔥  **On-the-fly Foundation Models**
 
-| **Model**  | **ID**          | **Architecture**                                | **Input**       | **Preprocessing / Normalization**                        | **Raw output dimension(s)**                                                        | **Note**        ｜
-|------------|------------------|-------------------------------------------------|---------------------------|------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------------------------|------------------|
-| RemoteClip | remoteclip_s2rgb | CLIP-style Vision Transformer (ViT-B/32)        | S2 → RGB composite        | RGB → uint8 + CLIP image normalization (mean/std); optional GEE patch checks + quicklook                                         | pooled: [512] (projection dim) ; grid: [768, 7, 7] (ViT width + 224/32 tokens)     |                  |
-| SatMAE     | satmae_rgb     | ViT-L/16 (Masked Autoencoder-style pretraining) | S2 → RGB composite        | RGB → uint8 + CLIP image normalization; optional GEE patch checks + quicklook                                                   | pooled: [1024] ; grid: [1024, 14, 14]                                              |                  |
-| ScaleMAE   | scalemae_rgb   | ViT-L/16 (Masked Autoencoder-style)             | S2 → RGB composite        | RGB → uint8 + CLIP image normalization; optional GEE patch checks + quicklook                                                | pooled: [1024] ; grid: [1024, 14, 14]                                              |                  |
-| AnySat     | anysat         | Multi-modal EO transformer (AnySat base)        | S2 10 bands (single-step composite) | S2 SR raw → optional per-tile normalization; uses AnySat patch output as embedding grid                                        | pooled: [D] (patch mean/max) ; grid: [D, H, W]                                     | From AnySat      |
-| DynamicVis | dynamicvis     | Dynamic sparse visual backbone (Mamba-based)    | S2 → RGB composite        | RGB → ImageNet normalization; requires DynamicVis/OpenMMLab runtime deps + HF checkpoint                                        | pooled: last-stage feature mean/max ; grid: last-stage feature map [D, H, W]        | From DynamicVis  |
-| Galileo    | galileo        | Multi-modal EO transformer encoder (Galileo)    | S2 10 bands (single-step composite) | S2 SR raw → unit/minmax normalization; auto-loads official Galileo repo + nano weights                                          | pooled: token-mean vector [D] ; grid: S2-group patch tokens [D, H, W]               | From Galileo     |
-| WildSAT    | wildsat        | Wildlife-guided satellite encoder (WildSAT checkpoint) | S2 → RGB composite   | S2 SR raw → unit/minmax normalization; auto-downloads default WildSAT ckpt if `RS_EMBED_WILDSAT_CKPT` not set (configurable via env) | pooled: image-head/backbone vector [D] ; grid: ViT patch tokens [D, H, W] or [D,1,1] | From WildSAT     |
-| Prithvi    | prithvi_eo_v2_s2_6b   | Temporal ViT encoder (Prithvi ViT-100 style)    | S2 6 bands         | Scales S2 SR by /10000, then clamps to [0,1]; optional GEE patch checks + quicklook                                                 | pooled: [768] ; grid: [768, 14, 14]                                                | From TerraTorch  |
-| DOFA       | dofa          | ViT (Base/Large variants)                       | S2 bands            | Scales by /10000, clamps to [0,1]; optional GEE patch checks + quicklook                                                       | base: pooled [768], grid [768, 14, 14] ; large: pooled [1024], grid [1024, 14, 14] | From TorchGeo    |
-| THOR       | thor_1_0_base | THOR ViT backbone (v1 base)                     | S2 10 bands         | Uses S2 SR DN (0–10000) with configurable normalization (`thor_stats` default), then resize; loads via terratorch + thor_terratorch_ext | pooled: token mean/max [D] ; grid: THOR grouped token grid [D, H, W]               | From FM4CS/THOR  |
-| TerraFM-B  | terrafm_b        | ViT-Base style (embed dim 768, patch 16)        | S1/S2 depending on config | Applies TerraFM-specific normalization (including scaling/clamping and per-sensor handling); optional GEE patch checks + quicklook | pooled: [768] ; grid: [768, 14, 14]                                                |                  |
-| TerraMind  | terramind        | Multi-modal ViT backbone (TerraMind v1 family) | S2 L2A 12 bands     | Uses raw S2 SR DN (0–10000) + TerraMind S2L2A z-score stats, then 224 resize; optional GEE patch checks                              | pooled: variant dependent (tiny/small/base/large) ; grid: [D, 14, 14]              | From TerraTorch  |
-| AgriFM     | agrifm           | Multi-source temporal Video Swin encoder (AgriFM) | S2 10 bands multi-temporal [T, C, H, W] | Uses S2 raw DN (0–10000), default `agrifm_stats` z-score normalization, then resize to 256; supports temporal binning from GEE | pooled: spatial mean/max of encoder feature map [D] ; grid: encoder feature map [D, H, W] | From AgriFM      |
-| SatVision-TOA | satvision_toa | Swin Transformer V2 (SatVision TOA giant, default) | MODIS TOA 14 bands (`1,2,3,26,6,20,7,27,28,29,31,32,33,34`) | Raw mode: reflectance/emissive channel-wise scaling to [0,1]; unit mode: clip to [0,1]; auto mode picks by value range. If `MODIS/061/MOD021KM` is unavailable, auto-fallback uses `MODIS/061/MOD09GA` + `MODIS/061/MOD21A1D` proxy channels. | pooled: token mean/max [D] ; grid: patch tokens/feature map [D, H, W] (default giant: D=4096) | From NASA CISTO SatVision |
-| FoMo       | fomo             | MultiSpectral ViT (FoMo-Net_1 style)          | S2 SR 12 bands      | Uses S2 raw DN (0-10000), default unit-scale normalization, 64 resize; loads FoMo-Bench code + FoMo-Net checkpoint                | pooled: token mean/max [768] ; grid: spectral-averaged patch tokens [768, H, W]    | From FoMo-Bench  |
+## On-the-fly Foundation Models
+
+Source of truth:
+
+- `rs-embed/src/rs_embed/embedders/catalog.py`
+- `rs-embed/src/rs_embed/embedders/onthefly_*.py`
+- `rs-embed/src/rs_embed/embedders/_vit_mae_utils.py`
+- `rs-embed/src/rs_embed/embedders/runtime_utils.py`
+
+Registered on-the-fly IDs:
+
+- `remoteclip_s2rgb`
+- `satmae_rgb`
+- `scalemae_rgb`
+- `anysat`
+- `dynamicvis`
+- `galileo`
+- `wildsat`
+- `prithvi_eo_v2_s2_6b`
+- `terrafm_b`
+- `terramind`
+- `dofa`
+- `fomo`
+- `thor_1_0_base`
+- `agrifm`
+- `satvision_toa`
+
+### Quick Comparison
+
+| Model ID | Architecture / Backbone | Input | Default Preprocessing | Resize / Crop / Pad | Output Structure | Training Alignment |
+|---|---|---|---|---|---|---|
+| `remoteclip_s2rgb` | `rshf.remoteclip.RemoteCLIP` (open_clip style CLIP ViT) | S2 RGB (`B4,B3,B2`) | raw SR `0..10000` -> `/10000` -> RGB `uint8`; then model transform if available, else CLIP norm | image size 224; fallback path uses `Resize + CenterCrop`; no pad | pooled vector or ViT token grid | Medium (high if wrapper transform matches training; fallback is generic CLIP pipeline) |
+| `satmae_rgb` | `rshf.satmae.SatMAE` | S2 RGB (`B4,B3,B2`) | raw SR -> `/10000` -> RGB `uint8`; prefer model transform, else CLIP norm | default 224; CLIP fallback has `Resize + CenterCrop`; no pad | token sequence -> pooled or patch-token grid | Medium |
+| `scalemae_rgb` | `rshf.scalemae.ScaleMAE` (ViT style) | S2 RGB (`B4,B3,B2`) + `input_res_m` | raw SR -> `/10000` -> RGB `uint8`; CLIP norm tensor; pass `input_res_m` | default 224; CLIP path has `Resize + CenterCrop`; no pad | token sequence or pooled vector depending on wrapper output | Medium |
+| `anysat` | AnySat from upstream `hubconf.py` (`AnySat`) | S2 10-band CHW or TCHW | clip to `0..10000`; normalize mode default `per_tile_zscore` | resize TCHW to default 24; no crop, no pad | patch output `[D,H,W]`, pooled by spatial mean/max | Low-Medium (code notes: model expects time series, integration uses single composite step) |
+| `dynamicvis` | `DynamicVisBackbone` (official repo) | S2 RGB (`B4,B3,B2`) | raw SR -> `/10000` -> RGB `uint8` -> ImageNet mean/std | default 512; resize to square; no pad | last feature map `[D,H,W]`, pooled by spatial mean/max | Medium |
+| `galileo` | `Encoder` from official `single_file_galileo.py` | S2 10-band CHW | clip to `0..10000`; normalize mode default `unit_scale`; constructs Galileo tensors (`T=1`, month, masks), optional NDVI channel | default 64 with patch 8; bilinear resize; no pad | pooled token vector and S2-group token grid | Medium |
+| `wildsat` | WildSAT backbone + optional image head from checkpoint | S2 RGB CHW | clip to `0..10000` then `/10000`; default normalization `minmax`; convert to `uint8` then unit tensor | default 224; resize RGB; no pad | pooled branch output and optional grid (token or feature path) | Medium-Low |
+| `prithvi_eo_v2_s2_6b` | TerraTorch `BACKBONE_REGISTRY` Prithvi backbone | S2 6-band (`BLUE,GREEN,RED,NIR_NARROW,SWIR_1,SWIR_2`) | raw SR -> `/10000` -> clamp `[0,1]`; prep mode from env | default mode `resize` to 224; optional `pad` to patch multiple (legacy) | token sequence -> pooled or patch-token grid | Medium |
+| `terrafm_b` | TerraFM-B from HF code/weights | S2 12-band or S1 VV/VH | S2: `/10000` to `[0,1]`; S1: `log1p` + p99 scaling to `[0,1]` | resize to 224; no pad | pooled embedding, optional feature-map grid | Medium |
+| `terramind` | TerraTorch `BACKBONE_REGISTRY` TerraMind backbone | S2 SR 12-band | raw `0..10000`; resize 224; z-score with TerraMind v1/v01 pretrained mean/std | fixed 224; no pad | token sequence -> pooled or patch-token grid | High |
+| `dofa` | TorchGeo DOFA (`dofa_base_patch16_224` / `dofa_large_patch16_224`) | multi-band SR CHW + wavelengths | raw SR -> `/10000` to `[0,1]`; provide/infer wavelengths | bilinear resize to 224; explicitly no crop/pad | pooled vector or token grid (usually 14x14) | Medium-High |
+| `fomo` | FoMo `MultiSpectralViT` (FoMo-Bench) | S2 SR 12-band | clip `0..10000`; default `unit_scale` (optional minmax/none) | default 64; bilinear resize; no pad | token sequence pooled; grid as spectral-mean patch-token map | Medium |
+| `thor_1_0_base` | THOR via TerraTorch + `thor_terratorch_ext` | S2 SR 10-band | clip `0..10000`; default `thor_stats` z-score after reflectance scaling | default 288; bilinear resize; no pad | pooled tokens and grouped token grid | Medium-High |
+| `agrifm` | AgriFM `PretrainingSwinTransformer3DEncoder` | S2 10-band time series `[T,C,H,W]` | clip `0..10000`; default `agrifm_stats` z-score using official config stats | default 224; TCHW resize; no pad | feature map grid `[D,H,W]`, pooled by spatial mean/max | High |
+| `satvision_toa` | `timm` `SwinTransformerV2` (SatVision-TOA checkpoints) | TOA 14 channels in strict order | channel-aware normalization to `[0,1]` (`auto/raw/unit`, reflectance + emissive calibration) | default 128; bilinear resize; no pad | model output as pooled or grid depending on tensor shape | High (if band order and calibration match checkpoint) |
+
+### Modality and Extra Inputs Matrix
+
+Interpretation:
+
+- "Backbone multimodal" means the upstream foundation model family supports multiple modalities.
+- "Current rs-embed path" means what this implementation currently feeds in practice.
+- "Requires extra metadata" means additional non-image inputs required by the forward path (hard requirement).
+
+| Model ID | Backbone multimodal? | Current rs-embed path uses multiple modalities? | Multi-input forward (beyond image tensor)? | Requires extra metadata? |
+|---|---|---|---|---|
+| `remoteclip_s2rgb` | No | No | No | No |
+| `satmae_rgb` | No | No | No | No |
+| `scalemae_rgb` | No | No | Yes (`input_res_m`) | Yes: scale/resolution (`sensor.scale_m`) |
+| `anysat` | Yes | No (S2 path only in current adapter) | Yes (`s2`, `s2_dates`) | Yes: day-of-year/date signal (derived from temporal range) |
+| `dynamicvis` | No | No | No | No |
+| `galileo` | Yes | Mostly S2 path in current adapter | Yes (multiple tensors + masks + `months`) | Yes: month/time signal (derived from temporal range) |
+| `wildsat` | No | No | No | No |
+| `prithvi_eo_v2_s2_6b` | No (this adapter path) | No | Yes (`x`, `temporal_coords`, `location_coords`) | Yes: location + time are required |
+| `terrafm_b` | Yes (`S1`/`S2`) | Yes (select one modality per call: `s1` or `s2`) | No | No hard extra metadata (optional S1 options: orbit, linear/DB path) |
+| `terramind` | Yes | Usually single selected modality (`S2L2A` default) | No (single selected modality tensor in this adapter) | No hard extra metadata |
+| `dofa` | Yes (spectral generalization) | Yes (multi-band spectral input) | Yes (image + wavelength list) | Yes: per-band wavelengths (explicit or inferable from bands) |
+| `fomo` | No | No | No | No |
+| `thor_1_0_base` | No (this adapter path) | No | No | No |
+| `agrifm` | No (this adapter path) | No | No extra side tensor, but temporal stack `[T,C,H,W]` required | Temporal coverage is important (no separate metadata tensor) |
+| `satvision_toa` | No (this adapter path) | No | No separate side tensor | Yes: strict 14-channel order/calibration schema (band semantics) |
+
+Practically multi-input models:
+
+- `prithvi_eo_v2_s2_6b`: image + temporal coords + location coords
+- `anysat`: image/time-series + date tokens (`s2_dates`)
+- `galileo`: image-derived tensors + masks + month
+- `dofa`: image + wavelength vector
+- `scalemae_rgb`: image + `input_res_m`
+
+### Environment Variables That Directly Change Preprocessing
+
+| Model ID | Main preprocessing env keys |
+|---|---|
+| `remoteclip_s2rgb` | fixed `image_size=224` in code path; no per-model preprocess env switch |
+| `satmae_rgb` | `RS_EMBED_SATMAE_IMG` |
+| `scalemae_rgb` | `RS_EMBED_SCALEMAE_IMG` |
+| `anysat` | `RS_EMBED_ANYSAT_IMG`, `RS_EMBED_ANYSAT_NORM` |
+| `dynamicvis` | `RS_EMBED_DYNAMICVIS_IMG` |
+| `galileo` | `RS_EMBED_GALILEO_IMG`, `RS_EMBED_GALILEO_PATCH`, `RS_EMBED_GALILEO_NORM`, `RS_EMBED_GALILEO_INCLUDE_NDVI` |
+| `wildsat` | `RS_EMBED_WILDSAT_IMG`, `RS_EMBED_WILDSAT_NORM` |
+| `prithvi_eo_v2_s2_6b` | `RS_EMBED_PRITHVI_PREP`, `RS_EMBED_PRITHVI_IMG`, `RS_EMBED_PRITHVI_PATCH_MULT` |
+| `terrafm_b` | modality and sensor-side options (`s2`/`s1`); image size fixed to 224 in implementation |
+| `terramind` | `RS_EMBED_TERRAMIND_NORMALIZE` (default z-score stats), image size fixed 224 |
+| `dofa` | image size fixed 224; provider/tensor channels and wavelengths drive preprocessing |
+| `fomo` | `RS_EMBED_FOMO_IMG`, `RS_EMBED_FOMO_NORM` |
+| `thor_1_0_base` | `RS_EMBED_THOR_IMG`, `RS_EMBED_THOR_NORMALIZE` |
+| `agrifm` | `RS_EMBED_AGRIFM_IMG`, `RS_EMBED_AGRIFM_NORM`, `RS_EMBED_AGRIFM_FRAMES` |
+| `satvision_toa` | `RS_EMBED_SATVISION_TOA_IMG`, `RS_EMBED_SATVISION_TOA_NORM`, channel-index and calibration env keys |
+
+### Practical Guidance
+
+- For highest reproducibility, keep each model's default normalization mode unless you can match the original training pipeline exactly.
+- For strict-schema models (`satvision_toa`, `terramind`, `thor_1_0_base`, `agrifm`), do not change channel order unless checkpoint metadata explicitly allows it.
+- If comparing embeddings across models, standardize ROI and temporal compositing first; model preprocessing differences are substantial.
+
+## Code Consistency Check
+
+Checked against current code in `rs-embed/src/rs_embed/embedders/`:
+
+- Model registration list in this page matches `catalog.py`.
+- `prithvi_eo_v2_s2_6b` defaults are `resize` + target `224`, optional `pad` legacy mode.
+- `prithvi_eo_v2_s2_6b` location input order is `(lon, lat)` in both single and batch forward.
+- `agrifm` default image size is `224` (updated from older `256` wording).
+- `anysat` passes `s2_dates`; `galileo` passes `months`; `dofa` passes wavelength vector; `scalemae_rgb` passes `input_res_m`.
