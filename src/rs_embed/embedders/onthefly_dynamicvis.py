@@ -25,7 +25,7 @@ from .runtime_utils import (
     resolve_device_auto_torch as _resolve_device,
 )
 from .meta_utils import build_meta, temporal_midpoint_str, temporal_to_range
-from ._vit_mae_utils import fetch_s2_rgb_u8_from_gee, resize_rgb_u8, ensure_torch
+from ._vit_mae_utils import fetch_s2_rgb_u8_from_provider, resize_rgb_u8, ensure_torch
 
 
 
@@ -498,7 +498,7 @@ class DynamicVisEmbedder(EmbedderBase):
         )
 
         if input_chw is None:
-            rgb_u8 = fetch_s2_rgb_u8_from_gee(
+            rgb_u8 = fetch_s2_rgb_u8_from_provider(
                 spatial=spatial,
                 temporal=t,
                 sensor=sensor,
@@ -598,7 +598,7 @@ class DynamicVisEmbedder(EmbedderBase):
         temporal: Optional[TemporalSpec] = None,
         sensor: Optional[SensorSpec] = None,
         output: OutputSpec = OutputSpec.pooled(),
-        backend: str = "gee",
+        backend: str = "auto",
         device: str = "auto",
     ) -> list[Embedding]:
         if not spatials:
@@ -621,8 +621,8 @@ class DynamicVisEmbedder(EmbedderBase):
         def _fetch_one(i: int, sp: SpatialSpec) -> Tuple[int, np.ndarray]:
             s2_rgb_chw = _fetch_s2_rgb_chw(
                 provider,
-                sp,
-                t,
+                spatial=sp,
+                temporal=t,
                 scale_m=scale_m,
                 cloudy_pct=cloudy_pct,
                 composite=composite,

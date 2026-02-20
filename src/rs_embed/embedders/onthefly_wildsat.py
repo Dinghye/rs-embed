@@ -752,8 +752,8 @@ class WildSATEmbedder(EmbedderBase):
         if input_chw is None:
             s2_rgb_chw = _fetch_s2_rgb_chw(
                 _call_provider_getter(self._get_provider, backend_l),
-                spatial,
-                t,
+                spatial=spatial,
+                temporal=t,
                 scale_m=int(ss.scale_m),
                 cloudy_pct=int(ss.cloudy_pct),
                 composite=str(ss.composite),
@@ -851,7 +851,7 @@ class WildSATEmbedder(EmbedderBase):
         temporal: Optional[TemporalSpec] = None,
         sensor: Optional[SensorSpec] = None,
         output: OutputSpec = OutputSpec.pooled(),
-        backend: str = "gee",
+        backend: str = "auto",
         device: str = "auto",
     ) -> list[Embedding]:
         if not spatials:
@@ -875,8 +875,8 @@ class WildSATEmbedder(EmbedderBase):
         def _fetch_one(i: int, sp: SpatialSpec) -> Tuple[int, np.ndarray]:
             s2_rgb_chw = _fetch_s2_rgb_chw(
                 provider,
-                sp,
-                t,
+                spatial=sp,
+                temporal=t,
                 scale_m=scale_m,
                 cloudy_pct=cloudy_pct,
                 composite=composite,

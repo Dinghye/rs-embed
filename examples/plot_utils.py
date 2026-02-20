@@ -21,6 +21,21 @@ def _robust_scale01(x, lo=2.0, hi=98.0, eps=1e-8):
     y = np.clip((x - a) / (b - a + eps), 0.0, 1.0)
     return y
 
+def _stabilize_pca_sign(components: np.ndarray) -> np.ndarray:
+    """
+    Make PCA component signs deterministic.
+    For each component row, enforce the element with max abs value to be positive.
+    """
+    comps = np.asarray(components, dtype=np.float32).copy()
+    for i in range(comps.shape[0]):
+        row = comps[i]
+        if row.size == 0:
+            continue
+        j = int(np.argmax(np.abs(row)))
+        if row[j] < 0:
+            comps[i] = -row
+    return comps
+
 def fit_pca_rgb(
     emb,
     *,
@@ -54,7 +69,7 @@ def fit_pca_rgb(
     # Xc = U S Vt, rows are samples
     # PCs are rows of Vt
     U, S, Vt = np.linalg.svd(Xc, full_matrices=False)
-    comps = Vt[:3].astype(np.float32)  # [3, D]
+    comps = _stabilize_pca_sign(Vt[:3].astype(np.float32))  # [3, D]
 
     return {
         "mean": mean.astype(np.float32),
@@ -114,7 +129,7 @@ def plot_embedding_pseudocolor(
         pca = fit_pca_rgb(emb, n_samples=n_samples, seed=seed)
 
     rgb = transform_pca_rgb(emb, pca, robust_lo=robust_lo, robust_hi=robust_hi)
-    rgb = np.flipud(rgb)
+    # rgb = np.flipud(rgb)
 
     plt.figure(figsize=figsize)
     plt.imshow(rgb)

@@ -21,7 +21,7 @@ from ._vit_mae_utils import ensure_torch
 from .base import EmbedderBase
 from .runtime_utils import (
     call_provider_getter as _call_provider_getter,
-    fetch_gee_patch_chw as _fetch_gee_patch_chw,
+    fetch_collection_patch_chw as _fetch_collection_patch_chw,
     get_cached_provider,
     is_provider_backend,
     load_cached_with_device as _load_cached_with_device,
@@ -80,7 +80,7 @@ def _fetch_s2_10_raw_chw(
     composite: str = "median",
     fill_value: float = 0.0,
 ) -> np.ndarray:
-    raw = _fetch_gee_patch_chw(
+    raw = _fetch_collection_patch_chw(
         provider,
         spatial=spatial,
         temporal=temporal,
@@ -671,7 +671,7 @@ class GalileoEmbedder(EmbedderBase):
         temporal: Optional[TemporalSpec] = None,
         sensor: Optional[SensorSpec] = None,
         output: OutputSpec = OutputSpec.pooled(),
-        backend: str = "gee",
+        backend: str = "auto",
         device: str = "auto",
     ) -> list[Embedding]:
         if not spatials:

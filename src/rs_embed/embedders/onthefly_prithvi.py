@@ -17,7 +17,7 @@ from ..providers import ProviderBase
 from .base import EmbedderBase
 from .runtime_utils import (
     call_provider_getter as _call_provider_getter,
-    fetch_gee_patch_chw as _fetch_gee_patch_chw,
+    fetch_collection_patch_chw as _fetch_collection_patch_chw,
     get_cached_provider,
     is_provider_backend,
     load_cached_with_device as _load_cached_with_device,
@@ -34,7 +34,7 @@ from ._vit_mae_utils import (
 
 
 # -------------------------
-# GEE: Sentinel-2 -> Prithvi 6-band (CHW float32 in [0,1])
+# Provider: Sentinel-2 -> Prithvi 6-band (CHW float32 in [0,1])
 # -------------------------
 PRITHVI_S2_BANDS_SRC = ["B2", "B3", "B4", "B8", "B11", "B12"]
 PRITHVI_S2_BANDS_DST = ["BLUE", "GREEN", "RED", "NIR_NARROW", "SWIR_1", "SWIR_2"]
@@ -55,7 +55,7 @@ def _fetch_s2_prithvi6_chw(
     Uses provider.get_region_3857(spatial) to define the sampling rectangle.
     """
     # Use semantic aliases (BLUE/GREEN/...) so provider alias resolution stays centralized.
-    x_chw = _fetch_gee_patch_chw(
+    x_chw = _fetch_collection_patch_chw(
         provider,
         spatial=spatial,
         temporal=temporal,
@@ -88,6 +88,51 @@ def _pad_chw_to_multiple(x_chw: np.ndarray, mult: int = 16, value: float = 0.0) 
     out = np.full((c, nh, nw), float(value), dtype=np.float32)
     out[:, :h, :w] = x_chw.astype(np.float32)
     return out
+
+
+def _resize_chw(x_chw: np.ndarray, *, size: int = 224) -> np.ndarray:
+    """Resize CHW to square (size,size) using bilinear interpolation."""
+    ensure_torch()
+    import torch
+    import torch.nn.functional as F
+
+    if x_chw.ndim != 3:
+        raise ModelError(f"Expected CHW array, got {x_chw.shape}")
+    x = torch.from_numpy(x_chw.astype(np.float32, copy=False)).unsqueeze(0)
+    y = F.interpolate(x, size=(int(size), int(size)), mode="bilinear", align_corners=False)
+    return y[0].detach().cpu().numpy().astype(np.float32)
+
+
+def _prepare_prithvi_chw(
+    x_chw: np.ndarray,
+    *,
+    fill_value: float,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """
+    Prepare CHW input before Prithvi forward.
+
+    RS_EMBED_PRITHVI_PREP:
+      - "resize": resize to RS_EMBED_PRITHVI_IMG (default 224)
+      - "pad": pad H/W to RS_EMBED_PRITHVI_PATCH_MULT (default 16, legacy behavior)
+    """
+    prep = os.environ.get("RS_EMBED_PRITHVI_PREP", "resize").strip().lower()
+    patch_mult = max(1, int(os.environ.get("RS_EMBED_PRITHVI_PATCH_MULT", "16")))
+    target_size = max(16, int(os.environ.get("RS_EMBED_PRITHVI_IMG", "224")))
+
+    if prep == "resize":
+        y = _resize_chw(x_chw, size=target_size)
+    elif prep == "pad":
+        y = _pad_chw_to_multiple(x_chw, mult=patch_mult, value=float(fill_value))
+    else:
+        raise ModelError(
+            f"Unknown RS_EMBED_PRITHVI_PREP='{prep}'. Use 'resize' or 'pad'."
+        )
+
+    return y, {
+        "prep_mode": prep,
+        "patch_mult": int(patch_mult),
+        "target_image_size": int(target_size),
+    }
 
 
 def _spatial_center_lon_lat(spatial: SpatialSpec) -> Tuple[float, float]:
@@ -299,7 +344,7 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
     Inputs:
       - spatial: BBox/PointBuffer (EPSG:4326)
       - temporal: range/year (year->full year)
-      - sensor: controls GEE fetch (scale/cloudy/composite)
+      - sensor: controls provider fetch (scale/cloudy/composite)
 
     Outputs (aligned with _vit_mae_utils):
       - pooled: patch-token mean/max (exclude CLS if present)
@@ -394,10 +439,10 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
                 device=device,
             )
 
-            # Fetch S2 6-band patch from GEE
+            # Fetch S2 6-band patch from provider
             provider = _call_provider_getter(self._get_provider, backend)
 
-            # Fetch S2 6-band patch from GEE (optionally reuse pre-fetched raw patch)
+            # Fetch S2 6-band patch from provider (optionally reuse pre-fetched raw patch)
             if input_chw is None:
                 x_chw = _fetch_s2_prithvi6_chw(
                     provider,
@@ -418,7 +463,7 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
                 x_chw = np.clip(x_chw, 0.0, 1.0)
                 x_chw = np.nan_to_num(x_chw, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
 
-            # Optional: inspect on-the-fly GEE input
+            # Optional: inspect on-the-fly provider input
             from ..core.input_checks import (
                 maybe_inspect_chw,
                 checks_should_raise,
@@ -429,14 +474,14 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
             report = maybe_inspect_chw(
                 x_chw,
                 sensor=sensor,
-                name="gee_s2_prithvi6_chw",
+                name="provider_s2_prithvi6_chw",
                 expected_channels=6,
                 value_range=(0.0, 1.0),
                 fill_value=float(sensor.fill_value),
                 meta=check_meta,
             )
             if report is not None and (not report.get("ok", True)) and checks_should_raise(sensor):
-                raise ModelError("GEE input inspection failed: " + "; ".join(report.get("issues", [])))
+                raise ModelError("Provider input inspection failed: " + "; ".join(report.get("issues", [])))
 
             # Optional quicklook (RGB from RED/GREEN/BLUE)
             sd = checks_save_dir(sensor)
@@ -448,9 +493,10 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
                     check_meta.setdefault("input_checks_artifacts", []).append({"name": "quicklook_rgb", "path": os.path.join(sd, fn)})
                 except Exception as _e:
                     check_meta.setdefault("input_checks_artifacts", []).append({"name": "quicklook_rgb", "error": repr(_e)})
-            # Prithvi patch_size usually 16; pad to avoid border being ignored
-            patch_mult = int(os.environ.get("RS_EMBED_PRITHVI_PATCH_MULT", "16"))
-            x_chw = _pad_chw_to_multiple(x_chw, mult=patch_mult, value=float(sensor.fill_value))
+            x_chw, prep_meta = _prepare_prithvi_chw(
+                x_chw,
+                fill_value=float(sensor.fill_value),
+            )
 
             # coords: use temporal mid-date and ROI center (EPSG:4326).
             lon, lat = _spatial_center_lon_lat(spatial)
@@ -484,7 +530,7 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
                     "coords_encoding": coords_encoding,
                     "num_frames": num_frames,
                     "input_hw":(int(x_chw.shape[1]), int(x_chw.shape[2])),
-                    "patch_mult": patch_mult,
+                    **prep_meta,
                     **check_meta,
                 },
             )
@@ -521,7 +567,7 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
         temporal: Optional[TemporalSpec] = None,
         sensor: Optional[SensorSpec] = None,
         output: OutputSpec = OutputSpec.pooled(),
-        backend: str = "gee",
+        backend: str = "auto",
         device: str = "auto",
     ) -> list[Embedding]:
         if not spatials:
@@ -586,7 +632,7 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
         temporal: Optional[TemporalSpec] = None,
         sensor: Optional[SensorSpec] = None,
         output: OutputSpec = OutputSpec.pooled(),
-        backend: str = "gee",
+        backend: str = "auto",
         device: str = "auto",
     ) -> list[Embedding]:
         if not is_provider_backend(backend, allow_auto=True):
@@ -606,7 +652,9 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
         pretrained = os.environ.get("RS_EMBED_PRITHVI_PRETRAINED", "1").strip() not in ("0", "false", "False")
         coords_encoding = ("time", "location")
         num_frames = 1
-        patch_mult = int(os.environ.get("RS_EMBED_PRITHVI_PATCH_MULT", "16"))
+        prep_mode = os.environ.get("RS_EMBED_PRITHVI_PREP", "resize").strip().lower()
+        patch_mult = max(1, int(os.environ.get("RS_EMBED_PRITHVI_PATCH_MULT", "16")))
+        target_size = max(16, int(os.environ.get("RS_EMBED_PRITHVI_IMG", "224")))
 
         model, wmeta, dev = _load_prithvi(
             model_key,
@@ -628,7 +676,10 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
             x_chw = input_chw.astype(np.float32) / 10000.0
             x_chw = np.clip(x_chw, 0.0, 1.0)
             x_chw = np.nan_to_num(x_chw, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
-            x_chw = _pad_chw_to_multiple(x_chw, mult=patch_mult, value=float(sensor.fill_value))
+            x_chw, _ = _prepare_prithvi_chw(
+                x_chw,
+                fill_value=float(sensor.fill_value),
+            )
             x_prepared.append(x_chw)
             lon_lat.append(_spatial_center_lon_lat(spatials[i]))
 
@@ -684,7 +735,9 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
                             "coords_encoding": coords_encoding,
                             "num_frames": num_frames,
                             "input_hw": (int(x_chw.shape[1]), int(x_chw.shape[2])),
+                            "prep_mode": str(prep_mode),
                             "patch_mult": patch_mult,
+                            "target_image_size": target_size,
                             "batch_infer": True,
                             "input_override": True,
                             **wmeta,

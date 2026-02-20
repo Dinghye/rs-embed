@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import inspect
+import os
 from typing import Any, Callable, Dict, Optional, Sequence, Tuple, TypeVar
 
 import numpy as np
 
 from ..core.errors import ModelError
 from ..core.specs import SensorSpec, SpatialSpec, TemporalSpec
-from ..providers import get_provider, has_provider
+from ..providers import get_provider, has_provider, list_providers
 from ..providers.base import ProviderBase
 
 _T = TypeVar("_T")
@@ -17,15 +18,30 @@ def normalize_backend_name(backend: str) -> str:
     return str(backend).strip().lower()
 
 
+def default_provider_backend_name() -> Optional[str]:
+    configured = normalize_backend_name(os.environ.get("RS_EMBED_DEFAULT_PROVIDER", ""))
+    if configured:
+        return configured if has_provider(configured) else None
+    providers = list_providers()
+    if not providers:
+        return None
+    if "gee" in providers:
+        return "gee"
+    return str(providers[0]).strip().lower()
+
+
 def resolve_provider_backend_name(
     backend: str,
     *,
     allow_auto: bool = True,
-    auto_backend: str = "gee",
+    auto_backend: Optional[str] = None,
 ) -> Optional[str]:
     b = normalize_backend_name(backend)
     if allow_auto and b == "auto":
-        b = normalize_backend_name(auto_backend)
+        resolved_auto = normalize_backend_name(auto_backend) if auto_backend is not None else default_provider_backend_name()
+        if not resolved_auto:
+            return None
+        b = resolved_auto
     if has_provider(b):
         return b
     return None
@@ -35,7 +51,7 @@ def is_provider_backend(
     backend: str,
     *,
     allow_auto: bool = True,
-    auto_backend: str = "gee",
+    auto_backend: Optional[str] = None,
 ) -> bool:
     return resolve_provider_backend_name(
         backend,
@@ -49,7 +65,7 @@ def get_cached_provider(
     *,
     backend: str,
     allow_auto: bool = True,
-    auto_backend: str = "gee",
+    auto_backend: Optional[str] = None,
 ) -> ProviderBase:
     b = resolve_provider_backend_name(
         backend,
@@ -60,11 +76,35 @@ def get_cached_provider(
         raise ModelError(f"Unsupported provider backend={backend!r}.")
     p = provider_cache.get(b)
     if p is None:
-        kwargs: Dict[str, Any] = {}
-        if b == "gee":
-            kwargs["auto_auth"] = True
+        kwargs = provider_init_kwargs(b)
         p = get_provider(b, **kwargs)
         provider_cache[b] = p
+    p.ensure_ready()
+    return p
+
+
+def provider_init_kwargs(backend: str) -> Dict[str, Any]:
+    """Provider-specific constructor kwargs, centralized outside embedders."""
+    b = normalize_backend_name(backend)
+    if b == "gee":
+        return {"auto_auth": True}
+    return {}
+
+
+def create_provider_for_backend(
+    backend: str,
+    *,
+    allow_auto: bool = True,
+    auto_backend: Optional[str] = None,
+) -> ProviderBase:
+    b = resolve_provider_backend_name(
+        backend,
+        allow_auto=allow_auto,
+        auto_backend=auto_backend,
+    )
+    if b is None:
+        raise ModelError(f"Unsupported provider backend={backend!r}.")
+    p = get_provider(b, **provider_init_kwargs(b))
     p.ensure_ready()
     return p
 
@@ -92,7 +132,7 @@ def load_cached_with_device(
     return loaded, dev
 
 
-def fetch_gee_patch_chw(
+def fetch_collection_patch_chw(
     provider: ProviderBase,
     *,
     spatial: SpatialSpec,
@@ -118,6 +158,32 @@ def fetch_gee_patch_chw(
         spatial=spatial,
         temporal=temporal,
         sensor=sensor,
+    )
+
+
+def fetch_gee_patch_chw(
+    provider: ProviderBase,
+    *,
+    spatial: SpatialSpec,
+    temporal: Optional[TemporalSpec],
+    collection: str,
+    bands: Tuple[str, ...],
+    scale_m: int = 10,
+    cloudy_pct: Optional[int] = 30,
+    composite: str = "median",
+    fill_value: float = 0.0,
+) -> np.ndarray:
+    """Backward-compatible alias for historical helper name."""
+    return fetch_collection_patch_chw(
+        provider,
+        spatial=spatial,
+        temporal=temporal,
+        collection=collection,
+        bands=bands,
+        scale_m=scale_m,
+        cloudy_pct=cloudy_pct,
+        composite=composite,
+        fill_value=fill_value,
     )
 
 
@@ -157,7 +223,7 @@ def fetch_s2_rgb_chw(
     composite: str = "median",
 ) -> np.ndarray:
     """Fetch Sentinel-2 RGB as float32 CHW in [0,1]."""
-    raw = fetch_gee_patch_chw(
+    raw = fetch_collection_patch_chw(
         provider,
         spatial=spatial,
         temporal=temporal,

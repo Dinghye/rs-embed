@@ -19,7 +19,7 @@ from .runtime_utils import call_provider_getter as _call_provider_getter, get_ca
 @register("gse_annual")
 class GSEAnnualEmbedder(EmbedderBase):
     """
-    Precomputed embeddings on GEE:
+    Precomputed embeddings on Provider:
       ImageCollection("GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL")
     """
 
@@ -118,7 +118,7 @@ class GSEAnnualEmbedder(EmbedderBase):
         temporal: Optional[TemporalSpec] = None,
         sensor: Optional[SensorSpec] = None,
         output: OutputSpec = OutputSpec.pooled(),
-        backend: str = "gee",
+        backend: str = "auto",
         device: str = "auto",
     ) -> list[Embedding]:
         if not spatials:

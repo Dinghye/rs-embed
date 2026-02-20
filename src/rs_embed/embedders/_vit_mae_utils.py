@@ -6,13 +6,13 @@ import numpy as np
 
 from ..core.errors import ModelError
 from ..core.specs import TemporalSpec, SensorSpec, SpatialSpec, OutputSpec
-from ..providers import ProviderBase, get_provider
+from ..providers import ProviderBase
 from .meta_utils import temporal_to_range, temporal_midpoint_str, build_meta
-from .runtime_utils import fetch_gee_patch_chw, resolve_provider_backend_name
+from .runtime_utils import create_provider_for_backend, fetch_collection_patch_chw
 
 
 # -------------------------
-# Image resize / fetch from GEE
+# Image resize / provider-backed fetch
 # -------------------------
 def resize_rgb_u8(rgb_u8: np.ndarray, out_size: int) -> np.ndarray:
     """
@@ -37,14 +37,14 @@ def _s2_rgb_u8_from_chw(s2_chw: np.ndarray) -> np.ndarray:
     return (x.transpose(1, 2, 0) * 255.0).astype(np.uint8)
 
 
-def fetch_s2_rgb_u8_from_gee(
+def fetch_s2_rgb_u8_from_provider(
     *,
     spatial: SpatialSpec,
     temporal: Optional[TemporalSpec],
     sensor: SensorSpec,
     out_size: int,
     provider: Optional[ProviderBase] = None,
-    backend: str = "gee",
+    backend: str = "auto",
     default_temporal: Tuple[str, str] = ("2022-06-01", "2022-09-01"),
 ) -> np.ndarray:
     """
@@ -56,16 +56,12 @@ def fetch_s2_rgb_u8_from_gee(
     t = temporal_to_range(temporal, default_temporal)
 
     if provider is None:
-        backend_name = resolve_provider_backend_name(backend, allow_auto=True)
-        if backend_name is None:
-            raise ModelError(f"Unsupported provider backend={backend!r}.")
-        kwargs = {"auto_auth": True} if backend_name == "gee" else {}
-        p = get_provider(backend_name, **kwargs)
+        p = create_provider_for_backend(backend, allow_auto=True)
     else:
         p = provider
     p.ensure_ready()
 
-    s2_raw = fetch_gee_patch_chw(
+    s2_raw = fetch_collection_patch_chw(
         p,
         spatial=spatial,
         temporal=t,
@@ -78,22 +74,44 @@ def fetch_s2_rgb_u8_from_gee(
     )
     s2_chw = np.clip(s2_raw / 10000.0, 0.0, 1.0).astype(np.float32)
 
-    # Optional: inspect on-the-fly GEE input (shared by multiple embedders)
+    # Optional: inspect on-the-fly provider input (shared by multiple embedders)
     from ..core.input_checks import maybe_inspect_chw, checks_should_raise
     report = maybe_inspect_chw(
         s2_chw,
         sensor=sensor,
-        name="gee_s2_rgb_chw",
+        name="provider_s2_rgb_chw",
         expected_channels=3,
         value_range=(0.0, 1.0),
         fill_value=0.0,
         meta=None,
     )
     if report is not None and (not report.get("ok", True)) and checks_should_raise(sensor):
-        raise ModelError("GEE input inspection failed: " + "; ".join(report.get("issues", [])))
+        raise ModelError("Provider input inspection failed: " + "; ".join(report.get("issues", [])))
 
     rgb_u8 = _s2_rgb_u8_from_chw(s2_chw)
     return resize_rgb_u8(rgb_u8, out_size)
+
+
+def fetch_s2_rgb_u8_from_gee(
+    *,
+    spatial: SpatialSpec,
+    temporal: Optional[TemporalSpec],
+    sensor: SensorSpec,
+    out_size: int,
+    provider: Optional[ProviderBase] = None,
+    backend: str = "auto",
+    default_temporal: Tuple[str, str] = ("2022-06-01", "2022-09-01"),
+) -> np.ndarray:
+    """Backward-compatible alias for historical helper name."""
+    return fetch_s2_rgb_u8_from_provider(
+        spatial=spatial,
+        temporal=temporal,
+        sensor=sensor,
+        out_size=out_size,
+        provider=provider,
+        backend=backend,
+        default_temporal=default_temporal,
+    )
 
 
 # -------------------------

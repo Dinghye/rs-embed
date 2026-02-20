@@ -21,7 +21,8 @@ from .runtime_utils import (
 )
 
 from ._vit_mae_utils import (
-    fetch_s2_rgb_u8_from_gee,
+    fetch_s2_rgb_u8_from_provider,
+    fetch_s2_rgb_u8_from_gee,  # backward-compatible symbol for tests/monkeypatch
     resize_rgb_u8,
     pool_from_tokens,
     tokens_to_grid_dhw,
@@ -120,7 +121,7 @@ def _satmae_forward_tokens_batch(
 @register("satmae_rgb")
 class SatMAERGBEmbedder(EmbedderBase):
     """
-    SatMAE (ViT/MAE) on-the-fly embeddings from Sentinel-2 RGB patch (GEE).
+    SatMAE (ViT/MAE) on-the-fly embeddings from Sentinel-2 RGB patch (provider backend).
 
     Strategy aligned via _vit_mae_utils:
       - pooled: pool patch tokens by OutputSpec.pooling (exclude CLS if present)
@@ -261,7 +262,7 @@ class SatMAERGBEmbedder(EmbedderBase):
         temporal: Optional[TemporalSpec] = None,
         sensor: Optional[SensorSpec] = None,
         output: OutputSpec = OutputSpec.pooled(),
-        backend: str = "gee",
+        backend: str = "auto",
         device: str = "auto",
     ) -> list[Embedding]:
         if not is_provider_backend(backend, allow_auto=True):
@@ -372,7 +373,7 @@ class SatMAERGBEmbedder(EmbedderBase):
         temporal: Optional[TemporalSpec] = None,
         sensor: Optional[SensorSpec] = None,
         output: OutputSpec = OutputSpec.pooled(),
-        backend: str = "gee",
+        backend: str = "auto",
         device: str = "auto",
     ) -> list[Embedding]:
         if not is_provider_backend(backend, allow_auto=True):

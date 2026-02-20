@@ -18,7 +18,7 @@ from ..providers import ProviderBase
 from .base import EmbedderBase
 from .runtime_utils import (
     call_provider_getter as _call_provider_getter,
-    fetch_gee_patch_chw as _fetch_gee_patch_chw,
+    fetch_collection_patch_chw as _fetch_collection_patch_chw,
     get_cached_provider,
     is_provider_backend,
     load_cached_with_device as _load_cached_with_device,
@@ -83,9 +83,9 @@ def _resize_chw(
 
 
 # -----------------------------
-# GEE fetch (generic SR scaling /10000)
+# Provider fetch (generic SR scaling /10000)
 # -----------------------------
-def _fetch_gee_multiband_sr_chw(
+def _fetch_provider_multiband_sr_chw(
     provider: ProviderBase,
     spatial: SpatialSpec,
     temporal: TemporalSpec,
@@ -97,7 +97,7 @@ def _fetch_gee_multiband_sr_chw(
     composite: str = "median",
     default_value: float = 0.0,
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
-    raw = _fetch_gee_patch_chw(
+    raw = _fetch_collection_patch_chw(
         provider,
         spatial=spatial,
         temporal=temporal,
@@ -111,19 +111,45 @@ def _fetch_gee_multiband_sr_chw(
     x = np.clip(raw / 10000.0, 0.0, 1.0).astype(np.float32)
 
     meta: Dict[str, Any] = {
-        "gee_collection": collection,
-        "gee_bands": list(bands),
-        "gee_scale_m": int(scale_m),
-        "gee_cloudy_pct": int(cloudy_pct),
-        "gee_cloud_filter_applied": True,
-        "gee_composite": str(composite),
-        "gee_n_images": None,
-        "gee_time_start_ms": None,
-        "gee_time_end_ms": None,
+        "provider_collection": collection,
+        "provider_bands": list(bands),
+        "provider_scale_m": int(scale_m),
+        "provider_cloudy_pct": int(cloudy_pct),
+        "provider_cloud_filter_applied": True,
+        "provider_composite": str(composite),
+        "provider_n_images": None,
+        "provider_time_start_ms": None,
+        "provider_time_end_ms": None,
         "raw_chw_shape": tuple(x.shape),
         "region_crs": "EPSG:3857",
     }
     return x, meta
+
+
+def _fetch_gee_multiband_sr_chw(
+    provider: ProviderBase,
+    spatial: SpatialSpec,
+    temporal: TemporalSpec,
+    *,
+    collection: str,
+    bands: List[str],
+    scale_m: int = 10,
+    cloudy_pct: int = 30,
+    composite: str = "median",
+    default_value: float = 0.0,
+) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """Backward-compatible alias for historical helper name."""
+    return _fetch_provider_multiband_sr_chw(
+        provider,
+        spatial,
+        temporal,
+        collection=collection,
+        bands=bands,
+        scale_m=scale_m,
+        cloudy_pct=cloudy_pct,
+        composite=composite,
+        default_value=default_value,
+    )
 
 
 # -----------------------------
@@ -319,7 +345,7 @@ class DOFAEmbedder(EmbedderBase):
     """
     DOFA (TorchGeo) embeddings.
 
-    - backend="gee": ROI -> S2 SR -> resize to 224 -> DOFA -> pooled/grid
+    - backend="provider"/"auto": ROI -> S2 SR -> resize to 224 -> DOFA -> pooled/grid
     - backend="tensor": sensor.data (CHW/BCHW) -> resize to 224 -> DOFA
 
     Output:
@@ -336,7 +362,7 @@ class DOFAEmbedder(EmbedderBase):
             "type": "on_the_fly",
             "backend": ["provider", "tensor"],
             "inputs": {
-                "gee_default": {
+                "provider_default": {
                     "collection": "COPERNICUS/S2_SR_HARMONIZED",
                     "bands": _S2_SR_12_BANDS,
                     "wavelengths_um": "auto for S2 bands",
@@ -445,7 +471,7 @@ class DOFAEmbedder(EmbedderBase):
                 )
             wavelengths_um = [float(v) for v in wavelengths_um]
 
-            gee_meta = {"backend_tensor": True}
+            provider_meta = {"backend_tensor": True}
 
         elif is_provider_backend(backend_l, allow_auto=False):
             if temporal is None:
@@ -473,7 +499,7 @@ class DOFAEmbedder(EmbedderBase):
             if input_chw is None:
                 provider = _call_provider_getter(self._get_provider, backend_l)
 
-                x_chw, gee_meta = _fetch_gee_multiband_sr_chw(
+                x_chw, provider_meta = _fetch_gee_multiband_sr_chw(
                     provider,
                     spatial,
                     temporal,
@@ -491,22 +517,22 @@ class DOFAEmbedder(EmbedderBase):
                         f"input_chw must be CHW with {len(bands)} bands for DOFA, got {getattr(input_chw,'shape',None)}"
                     )
                 x_chw = np.clip(input_chw.astype(np.float32) / 10000.0, 0.0, 1.0).astype(np.float32)
-                gee_meta = {"raw_chw_shape": tuple(x_chw.shape), "input_override": True}
+                provider_meta = {"raw_chw_shape": tuple(x_chw.shape), "input_override": True}
 
-            # Optional: inspect on-the-fly GEE input
+            # Optional: inspect on-the-fly provider input
             from ..core.input_checks import maybe_inspect_chw, checks_should_raise
             check_meta.clear()
             report = maybe_inspect_chw(
                 x_chw,
                 sensor=sensor,
-                name="gee_multiband_sr_chw",
+                name="provider_multiband_sr_chw",
                 expected_channels=len(bands),
                 value_range=(0.0, 1.0),
                 fill_value=0.0,
                 meta=check_meta,
             )
             if report is not None and (not report.get("ok", True)) and checks_should_raise(sensor):
-                raise ModelError("GEE input inspection failed: " + "; ".join(report.get("issues", [])))
+                raise ModelError("Provider input inspection failed: " + "; ".join(report.get("issues", [])))
 
             x_chw, resize_meta = _resize_chw(x_chw, size=image_size)
             x_bchw = x_chw[None, ...].astype(np.float32)
@@ -541,7 +567,7 @@ class DOFAEmbedder(EmbedderBase):
             "token_meta": tmeta,
             **check_meta,
             **mmeta,
-            **gee_meta,
+            **provider_meta,
         }
 
         if output.mode == "pooled":
@@ -585,7 +611,7 @@ class DOFAEmbedder(EmbedderBase):
         temporal: Optional[TemporalSpec] = None,
         sensor: Optional[SensorSpec] = None,
         output: OutputSpec = OutputSpec.pooled(),
-        backend: str = "gee",
+        backend: str = "auto",
         device: str = "auto",
     ) -> list[Embedding]:
         if not spatials:
@@ -670,7 +696,7 @@ class DOFAEmbedder(EmbedderBase):
         temporal: Optional[TemporalSpec] = None,
         sensor: Optional[SensorSpec] = None,
         output: OutputSpec = OutputSpec.pooled(),
-        backend: str = "gee",
+        backend: str = "auto",
         device: str = "auto",
     ) -> list[Embedding]:
         if len(spatials) != len(input_chws):

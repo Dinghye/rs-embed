@@ -16,7 +16,7 @@ from ..providers import ProviderBase
 from .base import EmbedderBase
 from .runtime_utils import (
     call_provider_getter as _call_provider_getter,
-    fetch_gee_patch_chw as _fetch_gee_patch_chw,
+    fetch_collection_patch_chw as _fetch_collection_patch_chw,
     get_cached_provider,
     is_provider_backend,
     load_cached_with_device as _load_cached_with_device,
@@ -100,7 +100,7 @@ def _fetch_s2_sr_12_raw_chw(
     composite: str = "median",
     fill_value: float = 0.0,
 ) -> np.ndarray:
-    raw = _fetch_gee_patch_chw(
+    raw = _fetch_collection_patch_chw(
         provider,
         spatial=spatial,
         temporal=temporal,
@@ -428,14 +428,14 @@ class TerraMindEmbedder(EmbedderBase):
             report = maybe_inspect_chw(
                 raw_chw,
                 sensor=sensor,
-                name="gee_s2_sr_12_raw_chw",
+                name="provider_s2_sr_12_raw_chw",
                 expected_channels=len(_S2_SR_12_BANDS),
                 value_range=(0.0, 10000.0),
                 fill_value=fill_value,
                 meta=check_meta,
             )
             if report is not None and (not report.get("ok", True)) and checks_should_raise(sensor):
-                raise ModelError("GEE input inspection failed: " + "; ".join(report.get("issues", [])))
+                raise ModelError("Provider input inspection failed: " + "; ".join(report.get("issues", [])))
 
             raw_chw = _resize_chw(raw_chw, size=image_size)
             x_chw = _terramind_zscore_s2(raw_chw, model_key=model_key, mode=normalize_mode)
@@ -527,7 +527,7 @@ class TerraMindEmbedder(EmbedderBase):
         temporal: Optional[TemporalSpec] = None,
         sensor: Optional[SensorSpec] = None,
         output: OutputSpec = OutputSpec.pooled(),
-        backend: str = "gee",
+        backend: str = "auto",
         device: str = "auto",
     ) -> list[Embedding]:
         if not spatials:

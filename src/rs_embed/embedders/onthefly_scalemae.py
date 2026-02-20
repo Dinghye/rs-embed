@@ -21,7 +21,8 @@ from .runtime_utils import (
 )
 
 from ._vit_mae_utils import (
-    fetch_s2_rgb_u8_from_gee,
+    fetch_s2_rgb_u8_from_provider,
+    fetch_s2_rgb_u8_from_gee,  # backward-compatible symbol for tests/monkeypatch
     resize_rgb_u8,
     temporal_to_range,
     pool_from_tokens,
@@ -292,7 +293,7 @@ def _scalemae_forward_tokens_or_vec_batch(
 @register("scalemae_rgb")
 class ScaleMAERGBEmbedder(EmbedderBase):
     """
-    ScaleMAE on-the-fly embedding from Sentinel-2 RGB patch (GEE).
+    ScaleMAE on-the-fly embedding from Sentinel-2 RGB patch (provider backend).
 
     Strategy aligned via _vit_mae_utils:
       - pooled: pool patch tokens by OutputSpec.pooling (exclude CLS if present)
@@ -455,7 +456,7 @@ class ScaleMAERGBEmbedder(EmbedderBase):
         temporal: Optional[TemporalSpec] = None,
         sensor: Optional[SensorSpec] = None,
         output: OutputSpec = OutputSpec.pooled(),
-        backend: str = "gee",
+        backend: str = "auto",
         device: str = "auto",
     ) -> list[Embedding]:
         if not spatials:
@@ -611,7 +612,7 @@ class ScaleMAERGBEmbedder(EmbedderBase):
         temporal: Optional[TemporalSpec] = None,
         sensor: Optional[SensorSpec] = None,
         output: OutputSpec = OutputSpec.pooled(),
-        backend: str = "gee",
+        backend: str = "auto",
         device: str = "auto",
     ) -> list[Embedding]:
         if not is_provider_backend(backend, allow_auto=True):

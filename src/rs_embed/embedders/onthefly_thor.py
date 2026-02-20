@@ -17,7 +17,7 @@ from ._vit_mae_utils import ensure_torch, pool_from_tokens, tokens_to_grid_dhw
 from .base import EmbedderBase
 from .runtime_utils import (
     call_provider_getter as _call_provider_getter,
-    fetch_gee_patch_chw as _fetch_gee_patch_chw,
+    fetch_collection_patch_chw as _fetch_collection_patch_chw,
     get_cached_provider,
     is_provider_backend,
     load_cached_with_device as _load_cached_with_device,
@@ -122,7 +122,7 @@ def _fetch_s2_sr_10_raw_chw(
     composite: str = "median",
     fill_value: float = 0.0,
 ) -> np.ndarray:
-    raw = _fetch_gee_patch_chw(
+    raw = _fetch_collection_patch_chw(
         provider,
         spatial=spatial,
         temporal=temporal,
@@ -555,14 +555,14 @@ class THORBaseEmbedder(EmbedderBase):
         report = maybe_inspect_chw(
             raw_chw,
             sensor=ss,
-            name="gee_s2_sr_10_raw_chw",
+            name="provider_s2_sr_10_raw_chw",
             expected_channels=len(_S2_SR_10_BANDS),
             value_range=(0.0, 10000.0),
             fill_value=fill_value,
             meta=check_meta,
         )
         if report is not None and (not report.get("ok", True)) and checks_should_raise(ss):
-            raise ModelError("GEE input inspection failed: " + "; ".join(report.get("issues", [])))
+            raise ModelError("Provider input inspection failed: " + "; ".join(report.get("issues", [])))
 
         x_chw = _normalize_s2_for_thor(raw_chw, mode=normalize_mode)
         if x_chw.shape[-1] != image_size or x_chw.shape[-2] != image_size:
@@ -654,7 +654,7 @@ class THORBaseEmbedder(EmbedderBase):
         temporal: Optional[TemporalSpec] = None,
         sensor: Optional[SensorSpec] = None,
         output: OutputSpec = OutputSpec.pooled(),
-        backend: str = "gee",
+        backend: str = "auto",
         device: str = "auto",
     ) -> list[Embedding]:
         if not spatials:

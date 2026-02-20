@@ -547,7 +547,7 @@ def _fetch_toa_raw_chw_from_gee(
     temporal: TemporalSpec,
     sensor: SensorSpec,
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
-    """Fetch generic CHW patch from GEE according to SensorSpec.
+    """Fetch generic CHW patch from provider according to SensorSpec.
 
     When MOD021KM is unavailable in the current EE project, automatically
     fallback to a surrogate built from MOD09GA (reflectance) + MOD21A1D (thermal).
@@ -682,7 +682,7 @@ def _satvision_forward_batch(
 @register("satvision_toa")
 class SatVisionTOAEmbedder(EmbedderBase):
     """
-    SatVision-TOA on-the-fly embedding from generic GEE multi-band TOA inputs.
+    SatVision-TOA on-the-fly embedding from generic provider multi-band TOA inputs.
 
     Notes:
     - This model expects 14 channels in a specific training order.
@@ -719,7 +719,7 @@ class SatVisionTOAEmbedder(EmbedderBase):
             "notes": [
                 "If sensor is omitted, rs-embed uses MODIS SatVision default band order.",
                 "Use RS_EMBED_SATVISION_TOA_CKPT for local checkpoints, or HF token for gated repos.",
-                "If MODIS L1B is unavailable in your GEE project, set a custom SensorSpec collection.",
+                "If MODIS L1B is unavailable in your Google Earth Engine project, set a custom SensorSpec collection.",
             ],
         }
 
@@ -971,7 +971,7 @@ class SatVisionTOAEmbedder(EmbedderBase):
         temporal: Optional[TemporalSpec] = None,
         sensor: Optional[SensorSpec] = None,
         output: OutputSpec = OutputSpec.pooled(),
-        backend: str = "gee",
+        backend: str = "auto",
         device: str = "auto",
     ) -> list[Embedding]:
         if not spatials:

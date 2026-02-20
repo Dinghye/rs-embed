@@ -625,7 +625,7 @@ def _agrifm_forward_grid(model, x_tchw: np.ndarray, *, device: str) -> Tuple[np.
 @register("agrifm")
 class AgriFMEmbedder(EmbedderBase):
     DEFAULT_FETCH_WORKERS = 8
-    DEFAULT_IMAGE_SIZE = 256
+    DEFAULT_IMAGE_SIZE = 224
     DEFAULT_FRAMES = 8
     DEFAULT_REPO_URL = "https://github.com/flyakon/AgriFM"
     DEFAULT_REPO_CACHE_ROOT = "~/.cache/rs_embed"
@@ -750,14 +750,14 @@ class AgriFMEmbedder(EmbedderBase):
         report = maybe_inspect_chw(
             np.clip(raw_tchw[0] / 10000.0, 0.0, 1.0).astype(np.float32),
             sensor=sensor,
-            name="gee_s2_agrifm_frame0_chw",
+            name="provider_s2_agrifm_frame0_chw",
             expected_channels=len(_S2_10_BANDS),
             value_range=(0.0, 1.0),
             fill_value=float(sensor.fill_value),
             meta=check_meta,
         )
         if report is not None and (not report.get("ok", True)) and checks_should_raise(sensor):
-            raise ModelError("GEE input inspection failed: " + "; ".join(report.get("issues", [])))
+            raise ModelError("Provider input inspection failed: " + "; ".join(report.get("issues", [])))
 
         x_tchw = _normalize_s2_for_agrifm(raw_tchw, mode=norm_mode)
         x_tchw = _resize_tchw(x_tchw, out_hw=image_size)
@@ -826,7 +826,7 @@ class AgriFMEmbedder(EmbedderBase):
         temporal: Optional[TemporalSpec] = None,
         sensor: Optional[SensorSpec] = None,
         output: OutputSpec = OutputSpec.pooled(),
-        backend: str = "gee",
+        backend: str = "auto",
         device: str = "auto",
     ) -> list[Embedding]:
         if not spatials:

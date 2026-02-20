@@ -18,7 +18,7 @@ from .base import EmbedderBase
 from .meta_utils import build_meta, temporal_midpoint_str
 from .runtime_utils import (
     call_provider_getter as _call_provider_getter,
-    fetch_gee_patch_chw as _fetch_gee_patch_chw,
+    fetch_collection_patch_chw as _fetch_collection_patch_chw,
     fetch_s1_vvvh_raw_chw as _fetch_s1_vvvh_raw_chw_shared,
     get_cached_provider,
     is_provider_backend,
@@ -48,7 +48,7 @@ def _resize_chw_to_224(x_chw: np.ndarray, *, size: int = 224) -> np.ndarray:
 
 
 # -----------------------------
-# GEE: Fetch S2 (12 bands, SR)
+# Provider: Fetch S2 (12 bands, SR)
 # -----------------------------
 _S2_SR_12_BANDS = [
     "B1", "B2", "B3", "B4", "B5", "B6",
@@ -66,7 +66,7 @@ def _fetch_s2_sr_12_chw(
     composite: str = "median",
 ) -> np.ndarray:
     """Returns CHW float32 in [0,1], resized later to 224."""
-    raw = _fetch_gee_patch_chw(
+    raw = _fetch_collection_patch_chw(
         provider,
         spatial=spatial,
         temporal=temporal,
@@ -81,7 +81,7 @@ def _fetch_s2_sr_12_chw(
 
 
 # -----------------------------
-# GEE: Fetch S1 (VV/VH)
+# Provider: Fetch S1 (VV/VH)
 # -----------------------------
 def _fetch_s1_vvvh_chw(
     provider: ProviderBase,
@@ -323,7 +323,7 @@ def _terrafm_pooled_and_grid_batch(
 @register("terrafm_b")
 class TerraFMBEmbedder(EmbedderBase):
     """
-    ROI -> (GEE S2 SR 12-band OR S1 VV/VH) -> TerraFM-B -> pooled or grid embedding
+    ROI -> (provider S2 SR 12-band OR S1 VV/VH) -> TerraFM-B -> pooled or grid embedding
 
     - OutputSpec.pooled(): vec [D]
     - OutputSpec.grid():  grid [D, Ht, Wt] (model-native feature map grid)
@@ -483,21 +483,21 @@ class TerraFMBEmbedder(EmbedderBase):
                     else:
                         raise ModelError("modality must be 's2' or 's1'.")
 
-                # Optional: inspect on-the-fly GEE input
+                # Optional: inspect on-the-fly provider input
                 from ..core.input_checks import maybe_inspect_chw, checks_should_raise
                 check_meta.clear()
                 exp_c = 12 if modality == "s2" else 2
                 report = maybe_inspect_chw(
                     x_chw,
                     sensor=sensor,
-                    name=f"gee_{modality}_chw",
+                    name=f"provider_{modality}_chw",
                     expected_channels=exp_c,
                     value_range=(0.0, 1.0),
                     fill_value=0.0,
                     meta=check_meta,
                 )
                 if report is not None and (not report.get("ok", True)) and checks_should_raise(sensor):
-                    raise ModelError("GEE input inspection failed: " + "; ".join(report.get("issues", [])))
+                    raise ModelError("Provider input inspection failed: " + "; ".join(report.get("issues", [])))
 
                 # resize to 224
                 x_chw = _resize_chw_to_224(x_chw, size=image_size)
@@ -606,7 +606,7 @@ class TerraFMBEmbedder(EmbedderBase):
         temporal: Optional[TemporalSpec] = None,
         sensor: Optional[SensorSpec] = None,
         output: OutputSpec = OutputSpec.pooled(),
-        backend: str = "gee",
+        backend: str = "auto",
         device: str = "auto",
     ) -> list[Embedding]:
         if not spatials:
@@ -719,7 +719,7 @@ class TerraFMBEmbedder(EmbedderBase):
         temporal: Optional[TemporalSpec] = None,
         sensor: Optional[SensorSpec] = None,
         output: OutputSpec = OutputSpec.pooled(),
-        backend: str = "gee",
+        backend: str = "auto",
         device: str = "auto",
     ) -> list[Embedding]:
         if len(spatials) != len(input_chws):

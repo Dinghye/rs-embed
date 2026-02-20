@@ -25,7 +25,7 @@ from .runtime_utils import (
 
 
 # -----------------------------
-# GEE: Fetch S2 RGB
+# Provider: Fetch S2 RGB
 # -----------------------------
 def _s2_rgb_u8_from_chw(s2_chw: np.ndarray) -> np.ndarray:
     """s2_chw: [3,H,W] float in [0,1] -> uint8 [H,W,3]"""
@@ -438,7 +438,7 @@ def _remoteclip_encode_pooled_batch(
 @register("remoteclip_s2rgb")
 class RemoteCLIPS2RGBEmbedder(EmbedderBase):
     """
-    ROI -> (GEE S2 SR Harmonized RGB composite) -> RemoteCLIP -> pooled or token-grid embedding
+    ROI -> (provider S2 SR Harmonized RGB composite) -> RemoteCLIP -> pooled or token-grid embedding
 
     - OutputSpec.pooled(): returns vec [D]
     - OutputSpec.grid(): returns token grid [D, Ht, Wt] (ViT patch grid, NOT pixel grid)
@@ -561,7 +561,7 @@ class RemoteCLIPS2RGBEmbedder(EmbedderBase):
                     )
                 s2_rgb_chw = np.clip(input_chw.astype(np.float32) / 10000.0, 0.0, 1.0)
 
-            # Optional: inspect on-the-fly GEE input
+            # Optional: inspect on-the-fly provider input
             from ..core.input_checks import (
                 maybe_inspect_chw,
                 checks_save_dir,
@@ -572,14 +572,14 @@ class RemoteCLIPS2RGBEmbedder(EmbedderBase):
             report = maybe_inspect_chw(
                 s2_rgb_chw,
                 sensor=sensor,
-                name="gee_s2_rgb_chw",
+                name="provider_s2_rgb_chw",
                 expected_channels=3,
                 value_range=(0.0, 1.0),
                 fill_value=0.0,
                 meta=extra_checks,
             )
             if report is not None and (not report.get("ok", True)) and checks_should_raise(sensor):
-                raise ModelError("GEE input inspection failed: " + "; ".join(report.get("issues", [])))
+                raise ModelError("Provider input inspection failed: " + "; ".join(report.get("issues", [])))
             sd = checks_save_dir(sensor)
             if sd and report is not None:
                 try:
@@ -688,7 +688,7 @@ class RemoteCLIPS2RGBEmbedder(EmbedderBase):
         temporal: Optional[TemporalSpec] = None,
         sensor: Optional[SensorSpec] = None,
         output: OutputSpec = OutputSpec.pooled(),
-        backend: str = "gee",
+        backend: str = "auto",
         device: str = "auto",
     ) -> list[Embedding]:
         if not spatials:
@@ -758,7 +758,7 @@ class RemoteCLIPS2RGBEmbedder(EmbedderBase):
         temporal: Optional[TemporalSpec] = None,
         sensor: Optional[SensorSpec] = None,
         output: OutputSpec = OutputSpec.pooled(),
-        backend: str = "gee",
+        backend: str = "auto",
         device: str = "auto",
     ) -> list[Embedding]:
         if not is_provider_backend(backend, allow_auto=False):
