@@ -1,7 +1,7 @@
 <div align="center">
 
 # <img src="./docs/assets/icon.png" width="35" alt="icon" />  rs-embed
-**One line of code to get embeddings from any Remote Sensing foundation model for a given ROI.**
+**A single line of code to get embeddings from Any supported model for Any location and Any time**
 
 
 <!-- Badges: replace YOUR_USER/YOUR_REPO + workflow file name -->

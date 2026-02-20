@@ -38,6 +38,10 @@ vec = emb.data  # shape: (D,)
 meta = emb.meta
 ```
 
+!!! note
+    `TemporalSpec.range(start, end)` is treated as a temporal window (half-open: `[start, end)`).
+    On GEE-backed on-the-fly paths, inputs are typically composites over that window (`median` by default), not an auto-selected single-day scene.
+
 ### 2. Batch compute embeddings for many points
 
 ```python

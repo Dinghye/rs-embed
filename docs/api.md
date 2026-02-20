@@ -55,6 +55,18 @@ TemporalSpec.year(2022)
 TemporalSpec.range("2022-06-01", "2022-09-01")
 ```
 
+Temporal semantics in provider/on-the-fly paths:
+
+- `TemporalSpec.range(start, end)` is interpreted as a half-open window `[start, end)`, where `end` is excluded.
+- In GEE-backed on-the-fly fetch, `range` is used to filter an image collection over the full window, then apply a compositing reducer (default `median`, optional `mosaic`).
+- So the fetched input is usually a composite over the whole time window, not an automatically selected single-day scene.
+- To approximate a single-day query, pass a one-day window such as `TemporalSpec.range("2022-06-01", "2022-06-02")`.
+
+About `input_time` in metadata:
+
+- Many embedders store `meta["input_time"]` as the midpoint date of the temporal window.
+- This midpoint is metadata (and for some models, an auxiliary time signal), not evidence that imagery was fetched from exactly that single date.
+
 ---
 
 ### SensorSpec
@@ -80,7 +92,7 @@ SensorSpec(
 - `scale_m`: sampling resolution (meters)
 - `cloudy_pct`: cloud filter (best-effort; depends on collection properties)
 - `fill_value`: no-data fill value
-- `composite`: image compositing method (median/mosaic)
+- `composite`: image compositing method over the temporal window (median/mosaic)
 - `check_*`: optional input checks and quicklook saving (see `inspect_gee_patch`)
 
 !!! note

@@ -59,6 +59,13 @@ Registered on-the-fly IDs:
 | `agrifm` | AgriFM `PretrainingSwinTransformer3DEncoder` | S2 10-band time series `[T,C,H,W]` | clip `0..10000`; default `agrifm_stats` z-score using official config stats | default 224; TCHW resize; no pad | feature map grid `[D,H,W]`, pooled by spatial mean/max | High |
 | `satvision_toa` | `timm` `SwinTransformerV2` (SatVision-TOA checkpoints) | TOA 14 channels in strict order | channel-aware normalization to `[0,1]` (`auto/raw/unit`, reflectance + emissive calibration) | default 128; bilinear resize; no pad | model output as pooled or grid depending on tensor shape | High (if band order and calibration match checkpoint) |
 
+### Temporal Handling (Current Adapters)
+
+- For most on-the-fly adapters, `TemporalSpec.range(start, end)` means: filter imagery in `[start, end)`, then build one composite patch for model input (`median` by default, or `mosaic` if configured via `SensorSpec.composite`).
+- In these adapters, `meta.input_time` is typically the midpoint of the temporal window and is mainly metadata (or an auxiliary time signal for models that require it), not a guaranteed single-scene acquisition date.
+- Current multi-frame exception: `agrifm` fetches a TCHW sequence by splitting the requested range into sub-windows and compositing each sub-window into one frame.
+- Current single-composite adapters include: `remoteclip_s2rgb`, `satmae_rgb`, `scalemae_rgb`, `dynamicvis`, `wildsat`, `prithvi_eo_v2_s2_6b`, `terrafm_b`, `terramind`, `dofa`, `fomo`, `thor_1_0_base`, `satvision_toa`, and the current `anysat`/`galileo` integration paths.
+
 ### Modality and Extra Inputs Matrix
 
 Interpretation:
@@ -118,4 +125,3 @@ Practically multi-input models:
 - For highest reproducibility, keep each model's default normalization mode unless you can match the original training pipeline exactly.
 - For strict-schema models (`satvision_toa`, `terramind`, `thor_1_0_base`, `agrifm`), do not change channel order unless checkpoint metadata explicitly allows it.
 - If comparing embeddings across models, standardize ROI and temporal compositing first; model preprocessing differences are substantial.
-
