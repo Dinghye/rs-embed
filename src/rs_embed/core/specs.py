@@ -96,11 +96,19 @@ class OutputSpec:
     mode: Literal["grid", "pooled"]
     scale_m: int = 10
     pooling: Literal["mean", "max"] = "mean"
+    # Grid orientation policy:
+    # - north_up: normalize y-axis to north->south when metadata permits.
+    # - native: keep model/provider native orientation.
+    grid_orientation: Literal["north_up", "native"] = "north_up"
 
     @staticmethod
-    def grid(scale_m: int = 10) -> "OutputSpec":
-        return OutputSpec(mode="grid", scale_m=scale_m)
+    def grid(
+        scale_m: int = 10,
+        *,
+        grid_orientation: Literal["north_up", "native"] = "north_up",
+    ) -> "OutputSpec":
+        return OutputSpec(mode="grid", scale_m=scale_m, grid_orientation=grid_orientation)
 
     @staticmethod
     def pooled(pooling: Literal["mean","max"]="mean") -> "OutputSpec":
-        return OutputSpec(mode="pooled", scale_m=10, pooling=pooling)
+        return OutputSpec(mode="pooled", scale_m=10, pooling=pooling, grid_orientation="north_up")

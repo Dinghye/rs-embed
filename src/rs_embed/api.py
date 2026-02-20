@@ -48,6 +48,7 @@ from .internal.api.progress_helpers import create_progress as _create_progress
 from .internal.api.model_defaults_helpers import (
     default_sensor_for_model as _default_sensor_for_model,
 )
+from .internal.api.output_helpers import normalize_embedding_output as _normalize_embedding_output
 from .core.embedding import Embedding
 from .core.errors import ModelError
 from .core.registry import get_embedder_cls
@@ -333,7 +334,7 @@ def get_embedding(
     _assert_supported(embedder, backend=backend_n, output=output, temporal=temporal)
 
     with lock:
-        return embedder.get_embedding(
+        emb = embedder.get_embedding(
             spatial=spatial,
             temporal=temporal,
             sensor=sensor,
@@ -341,6 +342,7 @@ def get_embedding(
             backend=backend_n,
             device=device,
         )
+    return _normalize_embedding_output(emb=emb, output=output)
 
 
 def get_embeddings_batch(
@@ -374,7 +376,7 @@ def get_embeddings_batch(
     _assert_supported(embedder, backend=backend_n, output=output, temporal=temporal)
 
     with lock:
-        return embedder.get_embeddings_batch(
+        embs = embedder.get_embeddings_batch(
             spatials=spatials,
             temporal=temporal,
             sensor=sensor,
@@ -382,6 +384,7 @@ def get_embeddings_batch(
             backend=backend_n,
             device=device,
         )
+    return [_normalize_embedding_output(emb=e, output=output) for e in embs]
 
 
 # -----------------------------------------------------------------------------

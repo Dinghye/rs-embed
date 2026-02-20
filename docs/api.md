@@ -105,14 +105,20 @@ SensorSpec(
 `OutputSpec` controls the embedding output shape: a **pooled vector** or a **dense grid**.
 
 ```python
-OutputSpec(mode: Literal["grid", "pooled"], scale_m: int = 10, pooling: Literal["mean", "max"] = "mean")
+OutputSpec(
+    mode: Literal["grid", "pooled"],
+    scale_m: int = 10,
+    pooling: Literal["mean", "max"] = "mean",
+    grid_orientation: Literal["north_up", "native"] = "north_up",
+)
 ```
 
 Recommended constructors:
 
 ```python
 OutputSpec.pooled(pooling="mean")   # shape: (D,)
-OutputSpec.grid(scale_m=10)         # shape: (D, H, W)
+OutputSpec.grid(scale_m=10)         # shape: (D, H, W), normalized to north-up when possible
+OutputSpec.grid(scale_m=10, grid_orientation="native")  # keep model/provider native orientation
 ```
 
 ---

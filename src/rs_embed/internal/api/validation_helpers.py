@@ -21,6 +21,8 @@ def validate_specs(*, spatial: SpatialSpec, temporal: Optional[TemporalSpec], ou
         raise ModelError("output.scale_m must be positive.")
     if output.mode == "pooled" and output.pooling not in ("mean", "max"):
         raise ModelError(f"Unknown pooling method: {output.pooling}")
+    if getattr(output, "grid_orientation", "north_up") not in ("north_up", "native"):
+        raise ModelError(f"Unknown grid orientation policy: {getattr(output, 'grid_orientation', None)}")
 
 
 def assert_supported(embedder, *, backend: str, output: OutputSpec, temporal: Optional[TemporalSpec]) -> None:

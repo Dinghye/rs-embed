@@ -7,6 +7,7 @@ import numpy as np
 
 from ...core.embedding import Embedding
 from ...core.specs import OutputSpec, SensorSpec, SpatialSpec, TemporalSpec
+from .output_helpers import normalize_embedding_output
 
 
 @dataclass(frozen=True)
@@ -339,6 +340,7 @@ def run_pending_models(
                                         f"{len(sub_spatials)} prefetched inputs."
                                     )
                                 for j, emb in enumerate(batch_out):
+                                    emb = normalize_embedding_output(emb=emb, output=output)
                                     i = sub_indices[j]
                                     embs_by_idx[i] = deps.embedding_to_numpy(emb)
                                     metas_by_idx[i] = deps.jsonable(emb.meta)
@@ -382,6 +384,7 @@ def run_pending_models(
                                     f"Model {m} returned {len(batch_out)} embeddings for {len(sub_spatials)} inputs."
                                 )
                             for j, emb in enumerate(batch_out):
+                                emb = normalize_embedding_output(emb=emb, output=output)
                                 i = start + j
                                 embs_by_idx[i] = deps.embedding_to_numpy(emb)
                                 metas_by_idx[i] = deps.jsonable(emb.meta)

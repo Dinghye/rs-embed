@@ -1,5 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from collections import defaultdict
+import json
+from pathlib import Path
 
 def _to_dhw(arr):
     if hasattr(arr, "values"):  # xarray
@@ -13,6 +16,50 @@ def _to_dhw(arr):
     if arr.shape[-1] in (32, 64, 128, 256, 512, 768, 1024) and arr.shape[0] not in (32, 64, 128, 256, 512, 768, 1024):
         arr = np.moveaxis(arr, -1, 0)
     return arr.astype(np.float32)
+
+def _infer_should_flipud_from_meta(meta):
+    """
+    Infer whether image rows should be flipped to enforce north-up display.
+
+    Returns:
+      (should_flip: bool, reason: str)
+    """
+    if not isinstance(meta, dict):
+        return False, "meta is not a dict"
+
+    # If OutputSpec-level normalization has already been applied upstream,
+    # do not auto-flip again in visualization.
+    policy = str(meta.get("grid_orientation_policy", "")).strip().lower()
+    if policy == "north_up":
+        return False, "grid_orientation_policy=north_up (already normalized upstream)"
+    if policy == "native":
+        y_axis = str(meta.get("y_axis_direction", "")).strip().lower()
+        if y_axis in {"south_to_north", "bottom_to_top"}:
+            return True, f"grid_orientation_policy=native, y_axis_direction={y_axis}"
+        if y_axis in {"north_to_south", "top_to_bottom"}:
+            return False, f"grid_orientation_policy=native, y_axis_direction={y_axis}"
+
+    # Highest-confidence signal: affine transform y-scale sign.
+    # For north-up rasters, transform.e is typically negative.
+    transform = meta.get("global_transform")
+    if transform is not None and hasattr(transform, "e"):
+        try:
+            e = float(transform.e)
+            if e > 0:
+                return True, f"global_transform.e={e:.6g} (>0, south-up)"
+            if e < 0:
+                return False, f"global_transform.e={e:.6g} (<0, north-up)"
+        except Exception:
+            pass
+
+    # Optional explicit metadata (if embedders add it in the future).
+    y_axis = str(meta.get("y_axis_direction", "")).strip().lower()
+    if y_axis in {"south_to_north", "bottom_to_top"}:
+        return True, f"y_axis_direction={y_axis}"
+    if y_axis in {"north_to_south", "top_to_bottom"}:
+        return False, f"y_axis_direction={y_axis}"
+
+    return False, "no orientation metadata; keep as-is"
 
 def _robust_scale01(x, lo=2.0, hi=98.0, eps=1e-8):
     """Scale array to [0,1] with percentile clipping."""
@@ -116,9 +163,20 @@ def plot_embedding_pseudocolor(
     robust_hi=98.0,
     figsize=(6, 5),
     show_colorbars=False,
+    flipud=None,
+    print_orientation=False,
 ):
     """
-    Plot PCA pseudocolor image. If pca is None, fit PCA on this embedding.
+    Plot PCA pseudocolor image.
+    If pca is None, fit PCA on this embedding.
+
+    Args:
+      flipud:
+        - None (default): auto-detect from emb.meta (north-up alignment).
+        - True/False: force behavior.
+      print_orientation:
+        Print orientation decision for debugging.
+
     Returns fitted pca for reuse across images.
     """
     meta = getattr(emb, "meta", {})
@@ -129,7 +187,14 @@ def plot_embedding_pseudocolor(
         pca = fit_pca_rgb(emb, n_samples=n_samples, seed=seed)
 
     rgb = transform_pca_rgb(emb, pca, robust_lo=robust_lo, robust_hi=robust_hi)
-    # rgb = np.flipud(rgb)
+    auto_flipud, flip_reason = _infer_should_flipud_from_meta(meta)
+    do_flipud = auto_flipud if flipud is None else bool(flipud)
+    if do_flipud:
+        rgb = np.flipud(rgb)
+
+    if print_orientation:
+        mode = "auto" if flipud is None else "manual"
+        print(f"[{title}] flipud={do_flipud} ({mode}: {flip_reason})")
 
     plt.figure(figsize=figsize)
     plt.imshow(rgb)
@@ -147,6 +212,8 @@ def plot_embedding_pseudocolor(
         Y = Xc @ pca["components"].T
         for k in range(3):
             img = _robust_scale01(Y[:, k], lo=robust_lo, hi=robust_hi).reshape(H, W)
+            if do_flipud:
+                img = np.flipud(img)
             plt.figure(figsize=figsize)
             plt.imshow(img)
             plt.title(f"{title} | PC{k+1}")
@@ -198,3 +265,174 @@ def show_input_chw(x_chw: np.ndarray, title: str, rgb_idx=(0, 1, 2), p_low=1, p_
     plt.title(f"{title}  (C={c}, H={h}, W={w})")
     plt.axis("off")
     plt.show()
+
+
+def print_band_quantiles_preview(report: dict, n_preview: int = 3):
+    """Print a compact preview for report['band_quantiles']."""
+    band_q = (report or {}).get("band_quantiles")
+    if not band_q:
+        print("band_quantiles not available")
+        return
+    preview = {k: v[:n_preview] for k, v in band_q.items()}
+    print(f"band_quantiles (first {n_preview} bins):")
+    print(preview)
+
+
+def plot_histogram_from_report(report: dict, band_index: int = 0, figsize=(6, 3)):
+    """Plot histogram for one band from inspect_gee_patch report."""
+    hist = (report or {}).get("hist")
+    if not hist or not hist.get("bins") or not hist.get("counts"):
+        print("histogram not available")
+        return
+
+    bins = hist["bins"]
+    counts = hist["counts"][band_index]
+    plt.figure(figsize=figsize)
+    plt.bar(bins[:-1], counts, width=bins[1] - bins[0], align="edge")
+    plt.title(f"Band {band_index} histogram")
+    plt.xlabel("DN")
+    plt.ylabel("Count")
+    plt.show()
+
+
+def show_quicklook_artifact(
+    artifacts: dict,
+    *,
+    flipud: bool = True,
+    figsize=(3.5, 3.5),
+    title: str = "quicklook_rgb",
+):
+    """Display quicklook image from inspect_gee_patch artifacts."""
+    quicklook_path = (artifacts or {}).get("quicklook_rgb")
+    if not quicklook_path:
+        print("quicklook not saved; artifacts:", artifacts)
+        return
+    try:
+        from pathlib import Path
+    except Exception:
+        print("pathlib is not available")
+        return
+
+    if Path(quicklook_path).exists():
+        try:
+            img = plt.imread(quicklook_path)
+        except Exception as e:
+            print(f"failed to read quicklook image: {e!r}")
+            print("quicklook path:", quicklook_path)
+            return
+
+        if bool(flipud):
+            img = np.flipud(img)
+
+        plt.figure(figsize=figsize)
+        plt.imshow(img)
+        plt.title(title)
+        plt.axis("off")
+        plt.show()
+    else:
+        print("quicklook not found on disk:", quicklook_path)
+
+
+def infer_rgb_idx_from_sensor(sensor_meta, channels: int):
+    """Infer RGB channel indices from sensor metadata when possible."""
+    if channels < 3:
+        return None
+
+    bands = []
+    if isinstance(sensor_meta, dict):
+        bands = [str(b).upper() for b in (sensor_meta.get("bands") or [])]
+
+    if bands:
+        idx = {b: i for i, b in enumerate(bands)}
+        if all(k in idx for k in ("B4", "B3", "B2")):
+            return (idx["B4"], idx["B3"], idx["B2"])
+        if all(k in idx for k in ("RED", "GREEN", "BLUE")):
+            return (idx["RED"], idx["GREEN"], idx["BLUE"])
+
+    return (0, 1, 2)
+
+
+def visualize_manifest_inputs(manifest: dict, npz_obj, p_low: float = 1, p_high: float = 99):
+    """Visualize exact model inputs using manifest.models[*].input.npz_key."""
+    models = (manifest or {}).get("models") or []
+    by_key = defaultdict(list)
+    sensor_for_key = {}
+
+    for m in models:
+        model_name = m.get("model", "<unknown>")
+        input_meta = m.get("input") or {}
+        key = input_meta.get("npz_key")
+        if not key:
+            print(f"[skip] {model_name}: no saved input")
+            continue
+        by_key[key].append(model_name)
+        sensor_for_key.setdefault(key, m.get("sensor") or {})
+
+    if not by_key:
+        print("No model inputs found in manifest.models[*].input.npz_key")
+        return
+
+    npz_keys = set(npz_obj.files) if hasattr(npz_obj, "files") else set(npz_obj.keys())
+    print("\n=== Visualizing exact model inputs ===")
+    for key, model_names in by_key.items():
+        if key not in npz_keys:
+            print(f"[missing] {key} not found in NPZ")
+            continue
+
+        x = npz_obj[key]
+        c = int(x.shape[0]) if getattr(x, "ndim", 0) == 3 else 0
+        rgb_idx = infer_rgb_idx_from_sensor(sensor_for_key.get(key), c)
+        title = f"{key} <- {', '.join(model_names)}"
+
+        if rgb_idx is None:
+            show_input_chw(x, title=title, p_low=p_low, p_high=p_high)
+        else:
+            show_input_chw(x, title=title, rgb_idx=rgb_idx, p_low=p_low, p_high=p_high)
+
+
+def load_export_npz(npz_path, json_path=None):
+    """Load exported NPZ + sidecar manifest JSON."""
+    npz_path = Path(npz_path)
+    json_path = Path(json_path) if json_path is not None else npz_path.with_suffix(".json")
+
+    if not npz_path.exists():
+        raise FileNotFoundError(f"Missing: {npz_path}")
+    if not json_path.exists():
+        raise FileNotFoundError(f"Missing: {json_path}")
+
+    z = np.load(npz_path)
+    with open(json_path, "r", encoding="utf-8") as f:
+        manifest = json.load(f)
+    return manifest, z
+
+
+def print_export_summary(manifest: dict, npz_obj=None):
+    """Print concise export summary from manifest."""
+    print("=== Manifest summary ===")
+    print("npz_path:", manifest.get("npz_path"))
+    print("backend:", manifest.get("backend"))
+    print("spatial:", manifest.get("spatial"))
+    print("temporal:", manifest.get("temporal"))
+    if npz_obj is not None:
+        print("npz_keys:", getattr(npz_obj, "files", None))
+
+    models = manifest.get("models") or []
+    print("\n=== model -> input key ===")
+    for m in models:
+        model_name = m.get("model")
+        input_meta = m.get("input") or {}
+        print(f"{model_name}: {input_meta.get('npz_key')}")
+
+
+def inspect_export_npz(npz_path, json_path=None, p_low: float = 1, p_high: float = 99):
+    """One-call helper: load export, print summary, visualize exact model inputs."""
+    manifest, z = load_export_npz(npz_path=npz_path, json_path=json_path)
+    print_export_summary(manifest, z)
+    visualize_manifest_inputs(manifest, z, p_low=p_low, p_high=p_high)
+
+    artifacts = manifest.get("artifacts") or {}
+    if artifacts:
+        print("\n=== Artifacts ===")
+        print(json.dumps(artifacts, ensure_ascii=False, indent=2))
+
+    return manifest, z

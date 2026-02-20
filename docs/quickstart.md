@@ -19,6 +19,51 @@ If you are using GEE for the first time, you need to complete the authentication
 earthengine authenticate
 ```
 
+## Run `examples/quickstart.py`
+
+You can run the packaged quickstart script directly:
+
+```bash
+# show CLI options
+python examples/quickstart.py --help
+```
+
+### Local mode (default, precomputed)
+
+Runs `tessera` examples for:
+- single embedding (`pooled` + `grid`)
+- batch embeddings (`get_embeddings_batch`)
+- optional export (`export_batch`)
+
+```bash
+python examples/quickstart.py --mode local
+python examples/quickstart.py --mode local --run-export
+```
+
+### GEE mode (on-the-fly)
+
+Runs `remoteclip_s2rgb` examples for:
+- `inspect_gee_patch`
+- single embedding
+- batch embeddings
+- optional export
+
+```bash
+python examples/quickstart.py --mode gee --device auto
+python examples/quickstart.py --mode gee --run-export --out-dir examples/_outputs/quickstart
+```
+
+### Run all demos
+
+```bash
+python examples/quickstart.py --mode all
+python examples/quickstart.py --mode all --run-export
+```
+
+!!! tip
+    If you see `ModuleNotFoundError: No module named 'rs_embed'`, run from repository root after installation:
+    `pip install -e .`
+
 
 ### 1. Compute a single embedding
 

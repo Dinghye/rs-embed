@@ -1,203 +1,238 @@
-# """Quick smoke test for any registered on-the-fly model.
+from __future__ import annotations
 
-# Pass ``--model`` after registering a new embedder to verify it runs end-to-end
-# without editing this script. Default values mimic the playground notebook
-# demo (temporal range + three sample points for batch mode).
+"""
+rs-embed quickstart script.
 
-# How to run:
+Examples:
+  python examples/quickstart.py --mode local
+  python examples/quickstart.py --mode gee --device auto
+  python examples/quickstart.py --mode all --run-export
+"""
 
-# - Default (matches notebook): quickstart.py → pooled DOFA, 2021-06-01 to 2021-08-31 around (121.5, 31.2) buffer 2048 m.
-# - Different model: quickstart.py --model remoteclip_s2rgb --output grid --grid-scale 20
-# - AnySat: quickstart.py --model anysat --output pooled
-# - DynamicVis: quickstart.py --model dynamicvis --output pooled
-# - Galileo: quickstart.py --model galileo --output pooled
-# - WildSAT: quickstart.py --model wildsat --output pooled
-#   (auto-download enabled by default; optional env: RS_EMBED_WILDSAT_CKPT=/path/to/wildsat_checkpoint.pth)
-# - Batch sample: quickstart.py --batch
-# - Custom points: python examples/quickstart.py --point 120 30 --point 121.6 31.3
-# - BBox: python examples/quickstart.py --bbox 121.45 31.15 121.55 31.25
+import argparse
+from pathlib import Path
+from typing import Iterable
+
+import numpy as np
 
 
-# """
-
-# import argparse
-# from typing import List, Sequence, Tuple
-
-# from rs_embed import (
-#     BBox,
-#     PointBuffer,
-#     TemporalSpec,
-#     OutputSpec,
-#     get_embedding,
-#     get_embeddings_batch,
-# )
+def _as_numpy(x) -> np.ndarray:
+    if hasattr(x, "values"):
+        return np.asarray(x.values)
+    return np.asarray(x)
 
 
-# def _parse_args() -> argparse.Namespace:
-#     parser = argparse.ArgumentParser(description=__doc__)
-#     parser.add_argument(
-#         "-m",
-#         "--model",
-#         default="dofa",
-#         help="Model id registered in rs_embed (e.g., dofa, remoteclip_s2rgb, anysat, dynamicvis, galileo, wildsat)",
-#     )
-#     parser.add_argument(
-#         "--backend",
-#         default="gee",
-#         help="Backend to use; on-the-fly models typically use 'gee'",
-#     )
-#     parser.add_argument(
-#         "--start",
-#         default="2021-06-01",
-#         help="Start date for TemporalSpec.range (YYYY-MM-DD)",
-#     )
-#     parser.add_argument(
-#         "--end",
-#         default="2021-08-31",
-#         help="End date for TemporalSpec.range (YYYY-MM-DD)",
-#     )
-#     parser.add_argument(
-#         "--year",
-#         type=int,
-#         help="Optional single year (overrides start/end) for models that use TemporalSpec.year",
-#     )
-#     parser.add_argument(
-#         "--output",
-#         choices=["pooled", "grid"],
-#         default="pooled",
-#         help="Choose pooled vector or grid tokens",
-#     )
-#     parser.add_argument(
-#         "--pooling",
-#         default="mean",
-#         help="Pooling strategy when output=pooled",
-#     )
-#     parser.add_argument(
-#         "--grid-scale",
-#         type=int,
-#         default=10,
-#         help="Scale (meters) when output=grid",
-#     )
-#     parser.add_argument(
-#         "--lon",
-#         type=float,
-#         default=121.5,
-#         help="Longitude for the single-point example",
-#     )
-#     parser.add_argument(
-#         "--lat",
-#         type=float,
-#         default=31.2,
-#         help="Latitude for the single-point example",
-#     )
-#     parser.add_argument(
-#         "--buffer-m",
-#         type=int,
-#         default=2048,
-#         help="Buffer size in meters around the point",
-#     )
-#     parser.add_argument(
-#         "--bbox",
-#         nargs=4,
-#         type=float,
-#         metavar=("MINLON", "MINLAT", "MAXLON", "MAXLAT"),
-#         help="Optional bbox (uses bbox instead of point buffer)",
-#     )
-#     parser.add_argument(
-#         "--batch",
-#         action="store_true",
-#         help="Also run get_embeddings_batch on a small list of points",
-#     )
-#     parser.add_argument(
-#         "--point",
-#         action="append",
-#         nargs=2,
-#         type=float,
-#         metavar=("LON", "LAT"),
-#         help="Extra lon/lat pairs for batch mode (implies --batch)",
-#     )
-#     parser.add_argument(
-#         "--device",
-#         default="auto",
-#         help="Device selection forwarded to the embedder (auto/cpu/cuda)",
-#     )
-#     return parser.parse_args()
+def _show_embedding(tag: str, emb) -> None:
+    arr = _as_numpy(emb.data)
+    meta = emb.meta or {}
+    print(f"\n[{tag}]")
+    print(f"shape={arr.shape}, dtype={arr.dtype}")
+    print(
+        "meta_preview:",
+        {
+            "model": meta.get("model"),
+            "type": meta.get("type"),
+            "backend": meta.get("backend"),
+            "source": meta.get("source"),
+            "input_time": meta.get("input_time"),
+        },
+    )
 
 
-# def _build_temporal(args: argparse.Namespace) -> TemporalSpec:
-#     if args.year:
-#         return TemporalSpec.year(args.year)
-#     return TemporalSpec.range(args.start, args.end)
+def _show_batch(tag: str, embeddings: Iterable) -> None:
+    embs = list(embeddings)
+    print(f"\n[{tag}] count={len(embs)}")
+    for i, emb in enumerate(embs):
+        arr = _as_numpy(emb.data)
+        print(f"  #{i}: shape={arr.shape}, dtype={arr.dtype}")
 
 
-# def _build_output_spec(args: argparse.Namespace) -> OutputSpec:
-#     if args.output == "grid":
-#         return OutputSpec.grid(scale_m=args.grid_scale)
-#     return OutputSpec.pooled(pooling=args.pooling)
+def run_local_demo(*, run_export: bool, out_dir: Path) -> None:
+    from rs_embed import (
+        PointBuffer,
+        TemporalSpec,
+        OutputSpec,
+        export_batch,
+        get_embedding,
+        get_embeddings_batch,
+    )
+
+    print("\n=== Local quickstart (precomputed: tessera) ===")
+    spatial = PointBuffer(lon=121.5, lat=31.2, buffer_m=1024)
+    temporal = TemporalSpec.year(2024)
+
+    pooled = get_embedding(
+        "tessera",
+        spatial=spatial,
+        temporal=temporal,
+        output=OutputSpec.pooled(pooling="mean"),
+        backend="local",
+    )
+    _show_embedding("single/pooled", pooled)
+
+    grid = get_embedding(
+        "tessera",
+        spatial=spatial,
+        temporal=temporal,
+        output=OutputSpec.grid(scale_m=10),
+        backend="local",
+    )
+    _show_embedding("single/grid", grid)
+
+    spatials = [
+        PointBuffer(lon=121.5, lat=31.2, buffer_m=1024),
+        PointBuffer(lon=120.5, lat=30.2, buffer_m=1024),
+    ]
+    batch = get_embeddings_batch(
+        "tessera",
+        spatials=spatials,
+        temporal=temporal,
+        output=OutputSpec.pooled(pooling="mean"),
+        backend="local",
+    )
+    _show_batch("batch/pooled", batch)
+
+    if run_export:
+        local_out = out_dir / "local_export"
+        local_out.mkdir(parents=True, exist_ok=True)
+        manifests = export_batch(
+            out_dir=str(local_out),
+            names=["p1", "p2"],
+            spatials=spatials,
+            temporal=temporal,
+            models=["tessera"],
+            output=OutputSpec.pooled(),
+            backend="local",
+            save_inputs=False,
+            save_embeddings=True,
+            save_manifest=True,
+            resume=True,
+            show_progress=True,
+        )
+        print(f"\n[export/local] wrote {len(manifests)} items to: {local_out}")
 
 
-# def _default_batch_points(buffer_m: int) -> List[PointBuffer]:
-#     return [
-#         PointBuffer(lon=121.5, lat=31.2, buffer_m=buffer_m),
-#         PointBuffer(lon=121.6, lat=31.3, buffer_m=buffer_m),
-#         PointBuffer(lon=120.0, lat=30.0, buffer_m=buffer_m),
-#     ]
+def run_gee_demo(*, device: str, run_export: bool, out_dir: Path) -> None:
+    from rs_embed import (
+        PointBuffer,
+        SensorSpec,
+        TemporalSpec,
+        OutputSpec,
+        export_batch,
+        get_embedding,
+        get_embeddings_batch,
+        inspect_gee_patch,
+    )
+
+    print("\n=== GEE quickstart (on-the-fly: remoteclip_s2rgb) ===")
+    print("Ensure GEE is authenticated first: earthengine authenticate")
+
+    spatial = PointBuffer(lon=121.5, lat=31.2, buffer_m=512)
+    temporal = TemporalSpec.range("2022-06-01", "2022-09-01")
+    sensor = SensorSpec(
+        collection="COPERNICUS/S2_SR_HARMONIZED",
+        bands=("B4", "B3", "B2"),
+        scale_m=10,
+        cloudy_pct=30,
+        composite="median",
+    )
+
+    check = inspect_gee_patch(
+        spatial=spatial,
+        temporal=temporal,
+        sensor=sensor,
+        name="quickstart_patch",
+        return_array=False,
+    )
+    report = check.get("report") or {}
+    print("\n[inspect_gee_patch]")
+    print(f"ok={check.get('ok')}, shape={report.get('shape')}, dtype={report.get('dtype')}")
+
+    pooled = get_embedding(
+        "remoteclip_s2rgb",
+        spatial=spatial,
+        temporal=temporal,
+        output=OutputSpec.pooled(pooling="mean"),
+        backend="gee",
+        device=device,
+    )
+    _show_embedding("single/pooled", pooled)
+
+    spatials = [
+        PointBuffer(lon=121.5, lat=31.2, buffer_m=512),
+        PointBuffer(lon=120.5, lat=30.2, buffer_m=512),
+    ]
+    batch = get_embeddings_batch(
+        "remoteclip_s2rgb",
+        spatials=spatials,
+        temporal=temporal,
+        output=OutputSpec.pooled(pooling="mean"),
+        backend="gee",
+        device=device,
+    )
+    _show_batch("batch/pooled", batch)
+
+    if run_export:
+        gee_out = out_dir / "gee_export"
+        gee_out.mkdir(parents=True, exist_ok=True)
+        manifests = export_batch(
+            out_dir=str(gee_out),
+            names=["p1", "p2"],
+            spatials=spatials,
+            temporal=temporal,
+            models=["remoteclip_s2rgb"],
+            output=OutputSpec.pooled(),
+            backend="gee",
+            device=device,
+            save_inputs=True,
+            save_embeddings=True,
+            save_manifest=True,
+            chunk_size=8,
+            num_workers=4,
+            resume=True,
+            show_progress=True,
+        )
+        print(f"\n[export/gee] wrote {len(manifests)} items to: {gee_out}")
 
 
-# def _collect_batch_points(args: argparse.Namespace) -> List[PointBuffer]:
-#     if not args.point:
-#         return _default_batch_points(args.buffer_m)
-#     return [PointBuffer(lon=lon, lat=lat, buffer_m=args.buffer_m) for lon, lat in args.point]
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="rs-embed quickstart")
+    parser.add_argument(
+        "--mode",
+        choices=("local", "gee", "all"),
+        default="local",
+        help="Which workflow to run.",
+    )
+    parser.add_argument(
+        "--device",
+        default="auto",
+        help="Model device for on-the-fly models: auto/cpu/cuda.",
+    )
+    parser.add_argument(
+        "--run-export",
+        action="store_true",
+        help="Also run export_batch examples (slower).",
+    )
+    parser.add_argument(
+        "--out-dir",
+        type=Path,
+        default=Path("examples/_outputs/quickstart"),
+        help="Base output directory for export examples.",
+    )
+    return parser.parse_args()
 
 
-# def _run_single(args: argparse.Namespace, output_spec: OutputSpec, temporal: TemporalSpec) -> None:
-#     if args.bbox:
-#         minlon, minlat, maxlon, maxlat = args.bbox
-#         spatial = BBox(minlon=minlon, minlat=minlat, maxlon=maxlon, maxlat=maxlat)
-#     else:
-#         spatial = PointBuffer(lon=args.lon, lat=args.lat, buffer_m=args.buffer_m)
+def main() -> None:
+    args = parse_args()
+    args.out_dir.mkdir(parents=True, exist_ok=True)
 
-#     emb = get_embedding(
-#         args.model,
-#         spatial=spatial,
-#         temporal=temporal,
-#         output=output_spec,
-#         backend=args.backend,
-#         device=args.device,
-#     )
-#     print(f"[single] model={args.model}, output={args.output}, backend={args.backend}, shape={emb.data.shape}")
-#     print("meta:", emb.meta)
+    if args.mode in ("local", "all"):
+        run_local_demo(run_export=args.run_export, out_dir=args.out_dir)
+    if args.mode in ("gee", "all"):
+        run_gee_demo(device=args.device, run_export=args.run_export, out_dir=args.out_dir)
+
+    print("\nQuickstart finished.")
 
 
-# def _run_batch(args: argparse.Namespace, output_spec: OutputSpec, temporal: TemporalSpec) -> None:
-#     points = _collect_batch_points(args)
-#     embeddings = get_embeddings_batch(
-#         args.model,
-#         spatials=points,
-#         temporal=temporal,
-#         output=output_spec,
-#         backend=args.backend,
-#         device=args.device,
-#     )
-#     for i, emb in enumerate(embeddings):
-#         print(f"[batch] idx={i}, shape={emb.data.shape}")
-#     if embeddings:
-#         print("meta (first):", embeddings[0].meta)
-
-
-# def main() -> None:
-#     args = _parse_args()
-#     if args.point:
-#         args.batch = True
-
-#     temporal = _build_temporal(args)
-#     output_spec = _build_output_spec(args)
-
-#     _run_single(args, output_spec, temporal)
-
-#     if args.batch:
-#         _run_batch(args, output_spec, temporal)
-
-
-# if __name__ == "__main__":
-#     main()
+if __name__ == "__main__":
+    main()

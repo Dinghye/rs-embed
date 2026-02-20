@@ -11,6 +11,7 @@ import numpy as np
 from ...core.embedding import Embedding
 from ...core.registry import get_embedder_cls
 from ...core.specs import OutputSpec, SensorSpec, SpatialSpec, TemporalSpec
+from .output_helpers import normalize_embedding_output
 
 _T = TypeVar("_T")
 
@@ -94,7 +95,8 @@ def call_embedder_get_embedding(
     }
     if input_chw is not None and embedder_accepts_input_chw(type(embedder)):
         kwargs["input_chw"] = input_chw
-    return embedder.get_embedding(**kwargs)
+    out = embedder.get_embedding(**kwargs)
+    return normalize_embedding_output(emb=out, output=output)
 
 
 def run_with_retry(

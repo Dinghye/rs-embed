@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from typing import Callable, Dict, List, Optional, Tuple
+import warnings
 
 import numpy as np
 
 from ...core.export_helpers import sensor_cache_key as _sensor_cache_key
 from ...core.specs import SensorSpec
+
+_LEGACY_RESOLVE_BANDS_WARNED = False
 
 
 def sensor_fetch_group_key(sensor: SensorSpec) -> Tuple[str, int, int, float, str]:
@@ -31,7 +34,7 @@ def build_prefetch_plan(
     models: List[str],
     resolved_sensor: Dict[str, Optional[SensorSpec]],
     model_type: Dict[str, str],
-    resolve_bands_fn: Optional[Callable[[str, Tuple[str, ...]], Tuple[str, ...]]] = None,
+    resolve_bands_fn: Optional[Callable[..., Tuple[str, ...]]] = None,
 ) -> Tuple[
     Dict[str, SensorSpec],  # sensor_by_key
     Dict[str, SensorSpec],  # fetch_sensor_by_key
@@ -52,11 +55,29 @@ def build_prefetch_plan(
     groups: Dict[Tuple[str, int, int, float, str], List[Tuple[str, SensorSpec, Tuple[str, ...]]]] = {}
     for skey, sspec in sensor_by_key.items():
         gkey = sensor_fetch_group_key(sspec)
-        rbands = (
-            resolve_bands_fn(str(sspec.collection), tuple(sspec.bands))
-            if resolve_bands_fn is not None
-            else tuple(str(b) for b in sspec.bands)
-        )
+        if resolve_bands_fn is None:
+            rbands = tuple(str(b) for b in sspec.bands)
+        else:
+            # Prefer keyword-style call to match ProviderBase.normalize_bands(*, collection, bands).
+            # Fall back to positional call for backward-compatible test stubs/lambdas.
+            try:
+                rbands = resolve_bands_fn(
+                    collection=str(sspec.collection),
+                    bands=tuple(sspec.bands),
+                )
+            except TypeError:
+                global _LEGACY_RESOLVE_BANDS_WARNED
+                if not _LEGACY_RESOLVE_BANDS_WARNED:
+                    warnings.warn(
+                        "Legacy compatibility path used for `resolve_bands_fn`: "
+                        "called with positional args `(collection, bands)`. "
+                        "Please update to keyword-style signature "
+                        "`resolve_bands_fn(*, collection, bands)`.",
+                        category=UserWarning,
+                        stacklevel=2,
+                    )
+                    _LEGACY_RESOLVE_BANDS_WARNED = True
+                rbands = resolve_bands_fn(str(sspec.collection), tuple(sspec.bands))
         groups.setdefault(gkey, []).append((skey, sspec, rbands))
 
     fetch_sensor_by_key: Dict[str, SensorSpec] = {}
