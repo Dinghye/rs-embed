@@ -16,12 +16,14 @@ from ..core.embedding import Embedding
 from ..core.errors import ModelError
 from ..core.registry import register
 from ..core.specs import OutputSpec, SensorSpec, SpatialSpec, TemporalSpec
+from ..core.temporal_utils import temporal_frame_midpoints
 from ..providers import ProviderBase
 from ._vit_mae_utils import ensure_torch
 from .base import EmbedderBase
 from .runtime_utils import (
     call_provider_getter as _call_provider_getter,
-    fetch_collection_patch_chw as _fetch_collection_patch_chw,
+    coerce_input_to_tchw as _coerce_input_to_tchw,
+    fetch_s2_multiframe_raw_tchw as _fetch_s2_multiframe_raw_tchw,
     get_cached_provider,
     is_provider_backend,
     load_cached_with_device as _load_cached_with_device,
@@ -32,22 +34,22 @@ from .meta_utils import build_meta, temporal_midpoint_str, temporal_to_range
 
 _S2_10_BANDS = ["B2", "B3", "B4", "B5", "B6", "B7", "B8", "B8A", "B11", "B12"]
 
-
-
-def _resize_chw(x_chw: np.ndarray, *, out_hw: int) -> np.ndarray:
+def _resize_tchw(x_tchw: np.ndarray, *, out_hw: int) -> np.ndarray:
     ensure_torch()
     import torch
     import torch.nn.functional as F
 
-    if x_chw.ndim != 3:
-        raise ModelError(f"Expected CHW array, got {x_chw.shape}")
-    x = torch.from_numpy(x_chw.astype(np.float32, copy=False)).unsqueeze(0)
+    if x_tchw.ndim != 4:
+        raise ModelError(f"Expected [T,C,H,W], got {x_tchw.shape}")
+    x = torch.from_numpy(x_tchw.astype(np.float32, copy=False))
     y = F.interpolate(x, size=(int(out_hw), int(out_hw)), mode="bilinear", align_corners=False)
-    return y[0].detach().cpu().numpy().astype(np.float32)
+    return y.detach().cpu().numpy().astype(np.float32)
 
 
-def _normalize_s2(raw_chw: np.ndarray, *, mode: str) -> np.ndarray:
-    x = np.asarray(raw_chw, dtype=np.float32)
+def _normalize_s2(raw: np.ndarray, *, mode: str) -> np.ndarray:
+    x = np.asarray(raw, dtype=np.float32)
+    if x.ndim not in {3, 4}:
+        raise ModelError(f"Galileo normalization expects CHW or TCHW, got {x.shape}")
     x = np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
     x = np.clip(x, 0.0, 10000.0)
 
@@ -56,8 +58,12 @@ def _normalize_s2(raw_chw: np.ndarray, *, mode: str) -> np.ndarray:
         x = x / 10000.0
     elif m in {"per_tile_minmax", "minmax", "tile_minmax"}:
         x = x / 10000.0
-        lo = np.min(x, axis=(1, 2), keepdims=True)
-        hi = np.max(x, axis=(1, 2), keepdims=True)
+        if x.ndim == 3:
+            lo = np.min(x, axis=(1, 2), keepdims=True)
+            hi = np.max(x, axis=(1, 2), keepdims=True)
+        else:
+            lo = np.min(x, axis=(2, 3), keepdims=True)
+            hi = np.max(x, axis=(2, 3), keepdims=True)
         den = np.maximum(hi - lo, 1e-6)
         x = (x - lo) / den
     elif m in {"none", "raw"}:
@@ -70,22 +76,24 @@ def _normalize_s2(raw_chw: np.ndarray, *, mode: str) -> np.ndarray:
     return np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
 
 
-def _fetch_s2_10_raw_chw(
+def _fetch_s2_10_raw_tchw(
     provider: ProviderBase,
     spatial: SpatialSpec,
     temporal: TemporalSpec,
     *,
+    n_frames: int = 8,
     scale_m: int = 10,
     cloudy_pct: int = 30,
     composite: str = "median",
     fill_value: float = 0.0,
 ) -> np.ndarray:
-    raw = _fetch_collection_patch_chw(
+    raw = _fetch_s2_multiframe_raw_tchw(
         provider,
         spatial=spatial,
         temporal=temporal,
-        collection="COPERNICUS/S2_SR_HARMONIZED",
         bands=tuple(_S2_10_BANDS),
+        n_frames=int(n_frames),
+        collection="COPERNICUS/S2_SR_HARMONIZED",
         scale_m=scale_m,
         cloudy_pct=cloudy_pct,
         composite=composite,
@@ -172,12 +180,16 @@ def _load_galileo_single_file_module(repo_root: str):
     return mod
 
 
-def _midpoint_month_or_default(temporal: TemporalSpec, default_month: int = 6) -> int:
-    mid = temporal_midpoint_str(temporal)
-    if mid is None:
-        return int(default_month)
-    d = date.fromisoformat(mid)
+def _month_from_iso(iso_date: str) -> int:
+    d = date.fromisoformat(str(iso_date))
     return max(1, min(12, int(d.month)))
+
+
+def _frame_month_sequence(temporal: TemporalSpec, *, n_frames: int) -> np.ndarray:
+    mids = temporal_frame_midpoints(temporal, max(1, int(n_frames)))
+    if not mids:
+        return np.full((max(1, int(n_frames)),), 6, dtype=np.int64)
+    return np.array([_month_from_iso(v) for v in mids], dtype=np.int64)
 
 
 @lru_cache(maxsize=6)
@@ -274,11 +286,11 @@ def _load_galileo(
 
 
 def _prepare_galileo_encoder_inputs(
-    raw_chw: np.ndarray,
+    raw_tchw: np.ndarray,
     *,
     image_size: int,
     patch_size: int,
-    month: int,
+    months_seq: np.ndarray,
     norm_mode: str,
     include_ndvi: bool,
     mod: Any,
@@ -287,8 +299,8 @@ def _prepare_galileo_encoder_inputs(
     ensure_torch()
     import torch
 
-    if raw_chw.ndim != 3 or int(raw_chw.shape[0]) != 10:
-        raise ModelError(f"Galileo expects CHW with C=10 S2 bands, got {getattr(raw_chw, 'shape', None)}")
+    if raw_tchw.ndim != 4 or int(raw_tchw.shape[1]) != 10:
+        raise ModelError(f"Galileo expects TCHW with C=10 S2 bands, got {getattr(raw_tchw, 'shape', None)}")
     if image_size <= 0:
         raise ModelError(f"image_size must be > 0, got {image_size}")
     if patch_size <= 0:
@@ -298,13 +310,14 @@ def _prepare_galileo_encoder_inputs(
             f"Galileo requires image_size divisible by patch_size, got image_size={image_size}, patch_size={patch_size}"
         )
 
-    x = raw_chw.astype(np.float32, copy=False)
-    if x.shape[-2] != image_size or x.shape[-1] != image_size:
-        x = _resize_chw(x, out_hw=image_size)
-    x = _normalize_s2(x, mode=norm_mode)  # [10,H,W]
+    x_tchw = raw_tchw.astype(np.float32, copy=False)
+    if x_tchw.shape[-2] != image_size or x_tchw.shape[-1] != image_size:
+        x_tchw = _resize_tchw(x_tchw, out_hw=image_size)
+    x_tchw = _normalize_s2(x_tchw, mode=norm_mode)  # [T,10,H,W]
 
-    # [H,W,T=1,10]
-    s2_hwtd = x.transpose(1, 2, 0)[:, :, None, :]
+    # [H,W,T,10]
+    s2_hwtd = np.transpose(x_tchw, (2, 3, 0, 1)).astype(np.float32)
+    t = int(s2_hwtd.shape[2])
 
     # create Galileo space_time tensor [B,H,W,T,len(SPACE_TIME_BANDS)]
     space_time_bands = list(getattr(mod, "SPACE_TIME_BANDS"))
@@ -312,7 +325,6 @@ def _prepare_galileo_encoder_inputs(
     s_t_groups = list(getattr(mod, "SPACE_TIME_BANDS_GROUPS_IDX").keys())
 
     h, w = int(s2_hwtd.shape[0]), int(s2_hwtd.shape[1])
-    t = 1
     s_t_x = np.zeros((1, h, w, t, len(space_time_bands)), dtype=np.float32)
 
     s2_map = [space_time_bands.index(b) for b in s2_bands]
@@ -358,8 +370,15 @@ def _prepare_galileo_encoder_inputs(
     t_m = np.ones((1, t, t_group_len), dtype=np.float32)
     st_m = np.ones((1, st_group_len), dtype=np.float32)
 
-    month_i = max(1, min(12, int(month)))
-    months = np.array([[month_i]], dtype=np.int64)
+    months_arr = np.asarray(months_seq, dtype=np.int64).reshape(-1)
+    if months_arr.size == 0:
+        months_arr = np.full((t,), 6, dtype=np.int64)
+    if months_arr.size < t:
+        months_arr = np.concatenate([months_arr, np.full((t - months_arr.size,), int(months_arr[-1]), dtype=np.int64)], axis=0)
+    elif months_arr.size > t:
+        months_arr = months_arr[:t]
+    months_arr = np.clip(months_arr, 1, 12).astype(np.int64)
+    months = months_arr[None, :]
 
     data = {
         "s_t_x": torch.from_numpy(s_t_x).to(device),
@@ -375,7 +394,9 @@ def _prepare_galileo_encoder_inputs(
     meta = {
         "image_size": int(image_size),
         "patch_size": int(patch_size),
-        "month": int(month_i),
+        "n_frames": int(t),
+        "months": tuple(int(v) for v in months_arr.tolist()),
+        "month": int(months_arr[len(months_arr) // 2]),
         "normalization": str(norm_mode),
         "include_ndvi": bool(include_ndvi),
         "s2_group_indices": tuple(int(i) for i in s2_group_indices),
@@ -454,6 +475,7 @@ class GalileoEmbedder(EmbedderBase):
     DEFAULT_MODEL_SIZE = "nano"
     DEFAULT_PATCH = 8
     DEFAULT_IMAGE_SIZE = 64
+    DEFAULT_FRAMES = 8
     DEFAULT_FETCH_WORKERS = 8
 
     def __init__(self) -> None:
@@ -473,6 +495,7 @@ class GalileoEmbedder(EmbedderBase):
                 "model_size": self.DEFAULT_MODEL_SIZE,
                 "patch_size": self.DEFAULT_PATCH,
                 "image_size": self.DEFAULT_IMAGE_SIZE,
+                "n_frames": self.DEFAULT_FRAMES,
                 "scale_m": 10,
                 "cloudy_pct": 30,
                 "composite": "median",
@@ -480,6 +503,7 @@ class GalileoEmbedder(EmbedderBase):
             },
             "notes": [
                 "Loads Galileo Encoder from official single_file_galileo.py and model folder.",
+                "Builds T-frame S2 series by splitting TemporalSpec.range into equal sub-windows.",
                 "Uses Sentinel-2 10 bands; pooled output averages visible Galileo tokens.",
             ],
         }
@@ -540,6 +564,7 @@ class GalileoEmbedder(EmbedderBase):
 
         image_size = int(os.environ.get("RS_EMBED_GALILEO_IMG", str(self.DEFAULT_IMAGE_SIZE)))
         patch_size = int(os.environ.get("RS_EMBED_GALILEO_PATCH", str(self.DEFAULT_PATCH)))
+        n_frames = max(1, int(os.environ.get("RS_EMBED_GALILEO_FRAMES", str(self.DEFAULT_FRAMES))))
         norm_mode = os.environ.get("RS_EMBED_GALILEO_NORM", "unit_scale").strip()
         add_layernorm = os.environ.get("RS_EMBED_GALILEO_ADD_LN", "1").strip() not in {
             "0",
@@ -551,25 +576,33 @@ class GalileoEmbedder(EmbedderBase):
             "false",
             "False",
         }
-
-        month = int(os.environ.get("RS_EMBED_GALILEO_MONTH", str(_midpoint_month_or_default(t, default_month=6))))
+        month_override = os.environ.get("RS_EMBED_GALILEO_MONTH")
 
         if input_chw is None:
             provider = _call_provider_getter(self._get_provider, backend)
-            raw = _fetch_s2_10_raw_chw(
+            raw_tchw = _fetch_s2_10_raw_tchw(
                 provider,
                 spatial,
                 t,
+                n_frames=n_frames,
                 scale_m=int(ss.scale_m),
                 cloudy_pct=int(ss.cloudy_pct),
                 composite=str(ss.composite),
                 fill_value=float(ss.fill_value),
             )
         else:
-            raw = np.asarray(input_chw, dtype=np.float32)
-            if raw.ndim != 3 or int(raw.shape[0]) != 10:
-                raise ModelError(f"input_chw must be CHW with 10 bands for galileo, got {raw.shape}")
-            raw = np.clip(np.nan_to_num(raw, nan=0.0, posinf=0.0, neginf=0.0), 0.0, 10000.0).astype(np.float32)
+            raw_tchw = _coerce_input_to_tchw(
+                input_chw,
+                expected_channels=10,
+                n_frames=n_frames,
+                model_name="galileo",
+            )
+
+        if month_override is not None:
+            month_value = max(1, min(12, int(month_override)))
+            months_seq = np.full((int(raw_tchw.shape[0]),), month_value, dtype=np.int64)
+        else:
+            months_seq = _frame_month_sequence(t, n_frames=int(raw_tchw.shape[0]))
 
         encoder, lmeta, mod, dev = _load_galileo(
             model_size=model_size,
@@ -582,10 +615,10 @@ class GalileoEmbedder(EmbedderBase):
         )
 
         inputs, pmeta = _prepare_galileo_encoder_inputs(
-            raw,
+            raw_tchw,
             image_size=image_size,
             patch_size=patch_size,
-            month=month,
+            months_seq=months_seq,
             norm_mode=norm_mode,
             include_ndvi=include_ndvi,
             mod=mod,
@@ -621,7 +654,7 @@ class GalileoEmbedder(EmbedderBase):
                 "start": t.start,
                 "end": t.end,
                 "patch_size": int(patch_size),
-                "month": int(month),
+                "n_frames": int(raw_tchw.shape[0]),
                 "normalization": str(norm_mode),
                 "include_ndvi": bool(include_ndvi),
                 "device": dev,
@@ -683,15 +716,17 @@ class GalileoEmbedder(EmbedderBase):
         t = temporal_to_range(temporal)
         ss = sensor or self._default_sensor()
         provider = _call_provider_getter(self._get_provider, backend)
+        n_frames = max(1, int(os.environ.get("RS_EMBED_GALILEO_FRAMES", str(self.DEFAULT_FRAMES))))
 
         n = len(spatials)
         prefetched_raw: List[Optional[np.ndarray]] = [None] * n
 
         def _fetch_one(i: int, sp: SpatialSpec) -> Tuple[int, np.ndarray]:
-            raw = _fetch_s2_10_raw_chw(
+            raw = _fetch_s2_10_raw_tchw(
                 provider,
                 sp,
                 t,
+                n_frames=n_frames,
                 scale_m=int(ss.scale_m),
                 cloudy_pct=int(ss.cloudy_pct),
                 composite=str(ss.composite),

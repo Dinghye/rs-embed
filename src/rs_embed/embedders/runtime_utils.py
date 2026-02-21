@@ -310,6 +310,48 @@ def fetch_s2_multiframe_raw_tchw(
     return np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
 
 
+def coerce_input_to_tchw(
+    input_chw: np.ndarray,
+    *,
+    expected_channels: int,
+    n_frames: int,
+    model_name: str,
+) -> np.ndarray:
+    """Normalize user-provided CHW/TCHW into clipped float32 [T,C,H,W]."""
+    raw = np.asarray(input_chw, dtype=np.float32)
+    t = max(1, int(n_frames))
+
+    if raw.ndim == 3:
+        if int(raw.shape[0]) != int(expected_channels):
+            raise ModelError(
+                f"input_chw must be CHW with C={int(expected_channels)} for {model_name}, "
+                f"got {tuple(int(v) for v in raw.shape)}"
+            )
+        raw_tchw = np.repeat(raw[None, ...], repeats=t, axis=0).astype(np.float32)
+    elif raw.ndim == 4:
+        if int(raw.shape[1]) != int(expected_channels):
+            raise ModelError(
+                f"input_chw must be TCHW with C={int(expected_channels)} for {model_name}, "
+                f"got {tuple(int(v) for v in raw.shape)}"
+            )
+        raw_tchw = raw.astype(np.float32, copy=False)
+        if raw_tchw.shape[0] < t:
+            raw_tchw = np.concatenate(
+                [raw_tchw] + [raw_tchw[-1:]] * (t - raw_tchw.shape[0]),
+                axis=0,
+            )
+        elif raw_tchw.shape[0] > t:
+            raw_tchw = raw_tchw[:t]
+    else:
+        raise ModelError(
+            f"input_chw must be CHW (C,H,W) or TCHW (T,C,H,W) for {model_name}, "
+            f"got {tuple(int(v) for v in raw.shape)}"
+        )
+
+    raw_tchw = np.nan_to_num(raw_tchw, nan=0.0, posinf=0.0, neginf=0.0)
+    return np.clip(raw_tchw, 0.0, 10000.0).astype(np.float32)
+
+
 def call_provider_getter(
     getter: Callable[..., ProviderBase],
     backend: str,

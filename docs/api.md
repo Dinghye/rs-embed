@@ -121,9 +121,8 @@ OutputSpec.grid(scale_m=10)         # shape: (D, H, W), normalized to north-up w
 OutputSpec.grid(scale_m=10, grid_orientation="native")  # keep model/provider native orientation
 ```
 
-#### Output Semantics
 
-##### `OutputSpec.pooled()`: ROI-level Vector Embedding
+#### `OutputSpec.pooled()`: ROI-level Vector Embedding
 
 **Semantic meaning**
 
@@ -170,7 +169,7 @@ Why prefer `pooled` for benchmarks:
 - Less sensitive to spatial/token layout differences
 - Easiest output to compare across models
 
-##### `OutputSpec.grid()`: ROI-level Spatial Embedding Field
+#### `OutputSpec.grid()`: ROI-level Spatial Embedding Field
 
 **Semantic meaning**
 

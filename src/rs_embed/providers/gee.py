@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
 from typing import Any, Optional, Sequence, Tuple
 
 import numpy as np
 from pyproj import Transformer
 
-from ..core.errors import ProviderError
+from ..core.errors import ProviderError, SpecError
 from ..core.specs import BBox, PointBuffer, SensorSpec, SpatialSpec, TemporalSpec
+from ..core.temporal_utils import split_date_range as _split_date_range_core
 from .base import ProviderBase
 
 
@@ -88,28 +88,10 @@ def _resolve_band_aliases(collection: str, bands: Tuple[str, ...]) -> Tuple[str,
 
 
 def _split_date_range(start: str, end: str, n_parts: int) -> Tuple[Tuple[str, str], ...]:
-    s = date.fromisoformat(str(start))
-    e = date.fromisoformat(str(end))
-    if e <= s:
-        raise ProviderError(f"Invalid date range: start={start}, end={end}")
-
-    total_days = max(1, (e - s).days)
-    n = max(1, int(n_parts))
-    bounds = [s + timedelta(days=(total_days * i) // n) for i in range(n + 1)]
-    bounds[-1] = e
-
-    out = []
-    for i in range(n):
-        a = bounds[i]
-        b = bounds[i + 1]
-        if b <= a:
-            b = min(e, a + timedelta(days=1))
-        if b <= a:
-            continue
-        out.append((a.isoformat(), b.isoformat()))
-    if not out:
-        out.append((str(start), str(end)))
-    return tuple(out)
+    try:
+        return _split_date_range_core(start, end, n_parts)
+    except SpecError as e:
+        raise ProviderError(str(e)) from e
 
 
 def _sample_image_bands_raw_chw(

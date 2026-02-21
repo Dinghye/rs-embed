@@ -16,11 +16,13 @@ from ..core.embedding import Embedding
 from ..core.errors import ModelError
 from ..core.registry import register
 from ..core.specs import OutputSpec, SensorSpec, SpatialSpec, TemporalSpec
+from ..core.temporal_utils import temporal_frame_midpoints
 from ..providers import ProviderBase
 from .base import EmbedderBase
 from .runtime_utils import (
     call_provider_getter as _call_provider_getter,
-    fetch_collection_patch_chw as _fetch_collection_patch_chw,
+    coerce_input_to_tchw as _coerce_input_to_tchw,
+    fetch_s2_multiframe_raw_tchw as _fetch_s2_multiframe_raw_tchw,
     get_cached_provider,
     is_provider_backend,
     load_cached_with_device as _load_cached_with_device,
@@ -66,32 +68,38 @@ def _normalize_series(x_tchw: np.ndarray, *, mode: str) -> np.ndarray:
     )
 
 
-def _midpoint_doy0(temporal: TemporalSpec) -> int:
-    mid = temporal_midpoint_str(temporal)
-    if mid is None:
-        return 182
-    d = date.fromisoformat(mid)
+def _doy0_from_iso(iso_date: str) -> int:
+    d = date.fromisoformat(str(iso_date))
     # AnySat docs: 01/01 -> 0 ; 31/12 -> 364
     doy0 = int(d.timetuple().tm_yday) - 1
     return max(0, min(364, doy0))
 
 
-def _fetch_s2_10_raw_chw(
+def _frame_doy0_sequence(temporal: TemporalSpec, *, n_frames: int) -> np.ndarray:
+    mids = temporal_frame_midpoints(temporal, max(1, int(n_frames)))
+    if not mids:
+        return np.full((max(1, int(n_frames)),), 182, dtype=np.int64)
+    return np.array([_doy0_from_iso(v) for v in mids], dtype=np.int64)
+
+
+def _fetch_s2_10_raw_tchw(
     provider: ProviderBase,
     spatial: SpatialSpec,
     temporal: TemporalSpec,
     *,
+    n_frames: int = 8,
     scale_m: int = 10,
     cloudy_pct: int = 30,
     composite: str = "median",
     fill_value: float = 0.0,
 ) -> np.ndarray:
-    raw = _fetch_collection_patch_chw(
+    raw = _fetch_s2_multiframe_raw_tchw(
         provider,
         spatial=spatial,
         temporal=temporal,
-        collection="COPERNICUS/S2_SR_HARMONIZED",
         bands=tuple(_S2_10_BANDS),
+        n_frames=int(n_frames),
+        collection="COPERNICUS/S2_SR_HARMONIZED",
         scale_m=scale_m,
         cloudy_pct=cloudy_pct,
         composite=composite,
@@ -283,33 +291,33 @@ def _load_anysat(
 
 
 def _prepare_anysat_s2_input(
-    raw: np.ndarray,
+    raw_tchw: np.ndarray,
     *,
     image_size: int,
-    doy0: int,
+    doy0_values: np.ndarray,
     norm_mode: str,
     device: str,
 ) -> Dict[str, Any]:
     ensure_torch()
     import torch
 
-    if raw.ndim == 3:
-        if int(raw.shape[0]) != 10:
-            raise ModelError(f"AnySat s2 expects C=10 bands, got shape={raw.shape}")
-        x_tchw = raw[None, ...].astype(np.float32)
-    elif raw.ndim == 4:
-        if int(raw.shape[1]) != 10:
-            raise ModelError(f"AnySat s2 expects [T,10,H,W], got shape={raw.shape}")
-        x_tchw = raw.astype(np.float32)
-    else:
-        raise ModelError(f"AnySat input expects CHW or TCHW, got shape={raw.shape}")
+    if raw_tchw.ndim != 4 or int(raw_tchw.shape[1]) != 10:
+        raise ModelError(f"AnySat s2 expects [T,10,H,W], got shape={raw_tchw.shape}")
+    x_tchw = raw_tchw.astype(np.float32, copy=False)
 
     if image_size > 0 and (x_tchw.shape[-1] != image_size or x_tchw.shape[-2] != image_size):
         x_tchw = _resize_tchw(x_tchw, out_hw=image_size)
 
     x_tchw = _normalize_series(x_tchw, mode=norm_mode)
     t = int(x_tchw.shape[0])
-    dates = np.full((1, t), int(doy0), dtype=np.int64)
+    doy = np.asarray(doy0_values, dtype=np.int64).reshape(-1)
+    if doy.size == 0:
+        doy = np.full((t,), 182, dtype=np.int64)
+    if doy.size < t:
+        doy = np.concatenate([doy, np.full((t - doy.size,), int(doy[-1]), dtype=np.int64)], axis=0)
+    elif doy.size > t:
+        doy = doy[:t]
+    dates = doy[None, :]
 
     return {
         "s2": torch.from_numpy(x_tchw[None, ...]).to(device),  # [1,T,10,H,W]
@@ -351,6 +359,7 @@ def _anysat_patch_features(
 @register("anysat")
 class AnySatEmbedder(EmbedderBase):
     DEFAULT_FETCH_WORKERS = 8
+    DEFAULT_FRAMES = 8
 
     def describe(self) -> Dict[str, Any]:
         return {
@@ -363,13 +372,15 @@ class AnySatEmbedder(EmbedderBase):
                 "model_size": "base",
                 "patch_size_m": 10,
                 "image_size": 24,
+                "n_frames": self.DEFAULT_FRAMES,
                 "scale_m": 10,
                 "cloudy_pct": 30,
                 "composite": "median",
                 "normalization": "per_tile_zscore",
             },
             "notes": [
-                "AnySat expects S2 time-series + day-of-year dates; this integration uses a single S2 composite step.",
+                "AnySat expects S2 time-series + day-of-year dates.",
+                "This adapter builds T frames by splitting TemporalSpec.range into equal sub-windows.",
                 "grid output maps AnySat output='patch' to [D,H,W].",
             ],
         }
@@ -416,7 +427,7 @@ class AnySatEmbedder(EmbedderBase):
 
         ss = sensor or self._default_sensor()
         t = temporal_to_range(temporal)
-        doy0 = _midpoint_doy0(t)
+        n_frames = max(1, int(os.environ.get("RS_EMBED_ANYSAT_FRAMES", str(self.DEFAULT_FRAMES))))
 
         model_size = os.environ.get("RS_EMBED_ANYSAT_MODEL_SIZE", "base").strip().lower()
         flash_attn = os.environ.get("RS_EMBED_ANYSAT_FLASH_ATTN", "0").strip() in {"1", "true", "True"}
@@ -433,26 +444,25 @@ class AnySatEmbedder(EmbedderBase):
 
         if input_chw is None:
             provider = _call_provider_getter(self._get_provider, backend)
-            raw = _fetch_s2_10_raw_chw(
+            raw_tchw = _fetch_s2_10_raw_tchw(
                 provider,
                 spatial,
                 t,
+                n_frames=n_frames,
                 scale_m=int(ss.scale_m),
                 cloudy_pct=int(ss.cloudy_pct),
                 composite=str(ss.composite),
                 fill_value=float(ss.fill_value),
             )
         else:
-            raw = np.asarray(input_chw, dtype=np.float32)
-            if raw.ndim == 3:
-                if int(raw.shape[0]) != 10:
-                    raise ModelError(f"input_chw must have 10 bands for AnySat s2, got {raw.shape}")
-            elif raw.ndim == 4:
-                if int(raw.shape[1]) != 10:
-                    raise ModelError(f"input_chw must have shape [T,10,H,W] for AnySat s2, got {raw.shape}")
-            else:
-                raise ModelError(f"input_chw must be CHW or TCHW for AnySat, got {raw.shape}")
-            raw = np.clip(np.nan_to_num(raw, nan=0.0, posinf=0.0, neginf=0.0), 0.0, 10000.0).astype(np.float32)
+            raw_tchw = _coerce_input_to_tchw(
+                input_chw,
+                expected_channels=10,
+                n_frames=n_frames,
+                model_name="anysat",
+            )
+
+        doy0_values = _frame_doy0_sequence(t, n_frames=int(raw_tchw.shape[0]))
 
         model, lmeta, dev = _load_anysat(
             model_size=model_size,
@@ -467,9 +477,9 @@ class AnySatEmbedder(EmbedderBase):
         )
 
         s2_input = _prepare_anysat_s2_input(
-            raw,
+            raw_tchw,
             image_size=image_size,
-            doy0=doy0,
+            doy0_values=doy0_values,
             norm_mode=norm_mode,
             device=dev,
         )
@@ -501,7 +511,8 @@ class AnySatEmbedder(EmbedderBase):
                 "normalization": norm_mode,
                 "start": t.start,
                 "end": t.end,
-                "doy0": int(doy0),
+                "n_frames": int(raw_tchw.shape[0]),
+                "doy0_values": tuple(int(v) for v in doy0_values.tolist()),
                 "device": dev,
                 **lmeta,
                 **fmeta,
@@ -557,15 +568,17 @@ class AnySatEmbedder(EmbedderBase):
         t = temporal_to_range(temporal)
         ss = sensor or self._default_sensor()
         provider = _call_provider_getter(self._get_provider, backend)
+        n_frames = max(1, int(os.environ.get("RS_EMBED_ANYSAT_FRAMES", str(self.DEFAULT_FRAMES))))
 
         n = len(spatials)
         prefetched_raw: List[Optional[np.ndarray]] = [None] * n
 
         def _fetch_one(i: int, sp: SpatialSpec) -> Tuple[int, np.ndarray]:
-            raw = _fetch_s2_10_raw_chw(
+            raw = _fetch_s2_10_raw_tchw(
                 provider,
                 sp,
                 t,
+                n_frames=n_frames,
                 scale_m=int(ss.scale_m),
                 cloudy_pct=int(ss.cloudy_pct),
                 composite=str(ss.composite),

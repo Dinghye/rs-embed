@@ -294,18 +294,19 @@ def test_anysat_batch_prefetch_passes_raw_input(monkeypatch):
 
     emb = AnySatEmbedder()
     monkeypatch.setenv("RS_EMBED_ANYSAT_FETCH_WORKERS", "1")
+    monkeypatch.setenv("RS_EMBED_ANYSAT_FRAMES", "3")
     monkeypatch.setattr(emb, "_get_provider", lambda: object())
     monkeypatch.setattr(
         anysat,
-        "_fetch_s2_10_raw_chw",
-        lambda provider, spatial, temporal, **kw: np.full((10, 8, 8), 4321.0, dtype=np.float32),
+        "_fetch_s2_10_raw_tchw",
+        lambda provider, spatial, temporal, **kw: np.full((3, 10, 8, 8), 4321.0, dtype=np.float32),
     )
 
     seen = []
 
     def _fake_get_embedding(**kw):
         arr = kw["input_chw"]
-        seen.append((arr.shape[0], float(arr.max())))
+        seen.append((arr.shape[0], arr.shape[1], float(arr.max())))
         return Embedding(data=np.array([kw["spatial"].lon], dtype=np.float32), meta={})
 
     monkeypatch.setattr(emb, "get_embedding", _fake_get_embedding)
@@ -318,8 +319,9 @@ def test_anysat_batch_prefetch_passes_raw_input(monkeypatch):
     )
 
     assert len(out) == 2
-    assert seen[0][0] == 10
-    assert seen[0][1] >= 4321.0
+    assert seen[0][0] == 3
+    assert seen[0][1] == 10
+    assert seen[0][2] >= 4321.0
 
 
 def test_agrifm_batch_prefetch_passes_raw_input(monkeypatch):
@@ -395,18 +397,19 @@ def test_galileo_batch_prefetch_passes_raw_input(monkeypatch):
 
     emb = GalileoEmbedder()
     monkeypatch.setenv("RS_EMBED_GALILEO_FETCH_WORKERS", "1")
+    monkeypatch.setenv("RS_EMBED_GALILEO_FRAMES", "5")
     monkeypatch.setattr(emb, "_get_provider", lambda: object())
     monkeypatch.setattr(
         gal,
-        "_fetch_s2_10_raw_chw",
-        lambda provider, spatial, temporal, **kw: np.full((10, 8, 8), 2222.0, dtype=np.float32),
+        "_fetch_s2_10_raw_tchw",
+        lambda provider, spatial, temporal, **kw: np.full((5, 10, 8, 8), 2222.0, dtype=np.float32),
     )
 
     seen = []
 
     def _fake_get_embedding(**kw):
         arr = kw["input_chw"]
-        seen.append((arr.shape[0], float(arr.max())))
+        seen.append((arr.shape[0], arr.shape[1], float(arr.max())))
         return Embedding(data=np.array([kw["spatial"].lon], dtype=np.float32), meta={})
 
     monkeypatch.setattr(emb, "get_embedding", _fake_get_embedding)
@@ -419,8 +422,9 @@ def test_galileo_batch_prefetch_passes_raw_input(monkeypatch):
     )
 
     assert len(out) == 2
-    assert seen[0][0] == 10
-    assert seen[0][1] >= 2222.0
+    assert seen[0][0] == 5
+    assert seen[0][1] == 10
+    assert seen[0][2] >= 2222.0
 
 
 def test_satvision_toa_batch_prefetch_passes_raw_input(monkeypatch):
