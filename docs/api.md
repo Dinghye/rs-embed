@@ -121,6 +121,92 @@ OutputSpec.grid(scale_m=10)         # shape: (D, H, W), normalized to north-up w
 OutputSpec.grid(scale_m=10, grid_orientation="native")  # keep model/provider native orientation
 ```
 
+#### Output Semantics
+
+##### `OutputSpec.pooled()`: ROI-level Vector Embedding
+
+**Semantic meaning**
+
+`pooled` represents one whole ROI (Region of Interest) using a single vector `(D,)`.
+
+Best suited for:
+
+- Classification / regression
+- Retrieval / similarity search
+- Clustering
+- Cross-model comparison (recommended)
+
+Unified output format:
+
+```python
+Embedding.data.shape == (D,)
+```
+
+How it is produced:
+
+ViT / MAE-style models (e.g., RemoteCLIP / Prithvi / SatMAE / ScaleMAE):
+
+- Native output is patch tokens `(N, D)` (with optional CLS token)
+- Remove CLS token if present, then pool tokens across the token axis (`mean` by default, optional `max`)
+
+Mean-pooling formula:
+
+$$
+v_d = \frac{1}{N'} \sum_{i=1}^{N'} t_{i,d}
+$$
+
+Precomputed embeddings (e.g., Tessera / GSE / Copernicus):
+
+- Native output is an embedding grid `(D, H, W)`
+- Pool over spatial dimensions `(H, W)`
+
+$$
+v_d = \frac{1}{HW} \sum_{y,x} g_{d,y,x}
+$$
+
+Why prefer `pooled` for benchmarks:
+
+- Model-agnostic and stable
+- Less sensitive to spatial/token layout differences
+- Easiest output to compare across models
+
+##### `OutputSpec.grid()`: ROI-level Spatial Embedding Field
+
+**Semantic meaning**
+
+`grid` returns a spatial embedding field `(D, H, W)`, where each spatial location maps to a vector.
+
+Best suited for:
+
+- Spatial visualization (PCA / norm / similarity maps)
+- Pixel-wise / patch-wise tasks
+- Intra-ROI structure analysis
+
+Unified output format:
+
+```python
+Embedding.data.shape == (D, H, W)
+```
+
+Notes:
+
+- `data` can be returned as `xarray.DataArray` with metadata in `meta`/`attrs`
+- For precomputed geospatial products, metadata may include CRS/crop context
+- For ViT token grids, this is usually patch-grid metadata (not georeferenced pixel coordinates)
+
+How it is produced:
+
+ViT / MAE-style models:
+
+- Native output: tokens `(N, D)`
+- Remove CLS token if present, reshape remaining tokens:
+- `(N', D) -> (H, W, D) -> (D, H, W)`
+- `(H, W)` comes from patch layout (for example, `8x8`, `14x14`)
+
+Precomputed embeddings:
+
+- Native output is already `(D, H, W)`
+
 ---
 
 ### Embedding

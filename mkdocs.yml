@@ -28,7 +28,6 @@ nav:
   - Home: index.md
   - Quick Start: quickstart.md
   - Supported Models: models.md
-  - Output Semantics: output-semantics.md
   - API: api.md
   - Extending: extending.md
   - Limitations: limitations.md
