@@ -4,7 +4,6 @@
 **A single line of code to get embeddings from Any Remote Sensing Foundation Model(RSFM) for Any location and Any time**
 
 
-<!-- Badges: replace YOUR_USER/YOUR_REPO + workflow file name -->
 [![Docs](https://img.shields.io/badge/docs-online-brightgreen)](https://dinghye.github.io/rs-embed/)
 ![Visitors](https://visitor-badge.laobi.icu/badge?page_id=Dinghye.rs-embed)
 ![License](https://img.shields.io/github/license/Dinghye/rs-embed)

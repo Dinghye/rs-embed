@@ -23,23 +23,14 @@ This page summarizes user-facing limitations in the current implementation.
 - For ViT-like models, `OutputSpec.grid()` is often a token/patch grid `(D, H, W)`.
 - Treat it as model-internal spatial structure, not as guaranteed geo-aligned pixel coordinates.
 
-### 5) Export format support
 
-- `export_batch(format=...)` currently supports only `npz`.
-
-### 6) Optional dependency surface is large
+### 5) Optional dependency surface is large
 
 - Different models/providers require extra packages (`earthengine-api`, `torch`, `rshf`, `torchgeo`, etc.).
 - Missing optional dependencies will fail at runtime for the corresponding model path.
 
-### 7) Known edge case: tessera tile boundary mosaic
+### 6) Known edge case: tessera tile boundary mosaic
 
 - Near some UTM-zone boundaries, fetched tiles may have different CRS/resolution and strict mosaic can fail.
 - If this occurs, try shifting ROI slightly or using a smaller ROI/window.
 
-## Practical Workarounds
-
-- Use `TemporalSpec.range("YYYY-MM-DD", "YYYY-MM-DD+1")` when you want a near single-day query.
-- Prefer `OutputSpec.pooled()` for cross-model comparisons.
-- Use `inspect_gee_patch(...)` before large exports to catch invalid inputs early.
-- For robust long exports, use `resume=True` and tune `chunk_size` / `num_workers`.

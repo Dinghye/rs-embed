@@ -253,11 +253,14 @@ def _install_agrifm_lightweight_shims() -> None:
                 raise TypeError(f"Unsupported cfg['type']={type(typ)}")
             return cls(**c)
 
-    def _new_module(name: str) -> types.ModuleType:
+    def _new_module(name: str, *, is_package: bool = False) -> types.ModuleType:
         mod = types.ModuleType(name)
         # Some dependency loaders call importlib.util.find_spec("mmengine").
         # A module in sys.modules with __spec__=None can trigger ValueError.
-        mod.__spec__ = importlib.util.spec_from_loader(name, loader=None)
+        mod.__spec__ = importlib.util.spec_from_loader(name, loader=None, is_package=is_package)
+        if is_package:
+            # Mark as package so dotted imports like mmseg.models.decode_heads work.
+            mod.__path__ = []  # type: ignore[attr-defined]
         return mod
 
     if "mmseg.models.builder" not in sys.modules:
@@ -265,15 +268,20 @@ def _install_agrifm_lightweight_shims() -> None:
         mod_builder = _new_module("mmseg.models.builder")
         mod_builder.BACKBONES = reg_backbones
 
-        mod_models = _new_module("mmseg.models")
+        mod_models = _new_module("mmseg.models", is_package=True)
         mod_models.builder = mod_builder
 
-        mod_mmseg = _new_module("mmseg")
+        # terratorch tries to import this optional module when mmseg is present.
+        mod_decode_heads = _new_module("mmseg.models.decode_heads")
+        mod_models.decode_heads = mod_decode_heads
+
+        mod_mmseg = _new_module("mmseg", is_package=True)
         mod_mmseg.models = mod_models
 
         sys.modules["mmseg"] = mod_mmseg
         sys.modules["mmseg.models"] = mod_models
         sys.modules["mmseg.models.builder"] = mod_builder
+        sys.modules["mmseg.models.decode_heads"] = mod_decode_heads
     else:
         reg_backbones = getattr(sys.modules["mmseg.models.builder"], "BACKBONES")
 
@@ -284,7 +292,7 @@ def _install_agrifm_lightweight_shims() -> None:
         mod_registry.MODELS = reg_models
         mod_registry.TRANSFORMS = reg_transforms
 
-        mod_registry_pkg = _new_module("mmseg.registry")
+        mod_registry_pkg = _new_module("mmseg.registry", is_package=True)
         mod_registry_pkg.registry = mod_registry
         mod_registry_pkg.MODELS = reg_models
         mod_registry_pkg.TRANSFORMS = reg_transforms

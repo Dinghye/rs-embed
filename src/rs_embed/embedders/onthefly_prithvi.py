@@ -167,8 +167,19 @@ def _load_prithvi_cached(
 
     try:
         from terratorch.registry import BACKBONE_REGISTRY
+    except ModuleNotFoundError as e:
+        if str(getattr(e, "name", "")).split(".")[0] == "terratorch":
+            raise ModelError("Prithvi requires terratorch. Install: pip install terratorch") from e
+        raise ModelError(
+            "Failed to import terratorch registry while loading Prithvi. "
+            f"Missing dependency: {getattr(e, 'name', None) or e}. "
+            "Check optional mmseg/mmengine deps or process-level shim/module conflicts."
+        ) from e
     except Exception as e:
-        raise ModelError("Prithvi requires terratorch. Install: pip install terratorch") from e
+        raise ModelError(
+            "Failed to import terratorch registry while loading Prithvi: "
+            f"{type(e).__name__}: {e}"
+        ) from e
 
     try:
         m = BACKBONE_REGISTRY.build(

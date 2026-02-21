@@ -6,12 +6,16 @@
 
 ## Motivation
 
+![rs-embed background](assets/background.png)
+
+
 The remote sensing community has seen an explosion of foundation models in recent years.
 Yet, using them in practice remains surprisingly painful:
 * Inconsistent model interfaces (imagery vs. tile embeddings)
 * Ambiguous input semantics (patch / tile / grid / pooled)
 * Large differences in temporal, spectral, and spatial requirements
 * No easy way to fairly compare multiple models in a single experiment
+
 
 RS-Embed aims to fix this.
 
@@ -23,11 +27,3 @@ RS-Embed aims to fix this.
 - **Unified interface** for diverse embedding models (on-the-fly models and precomputed products).
 - **Spatial + temporal specs** to describe what you want, not how to fetch it.
 - **Batch export as a first-class workflow** via `export_batch`.
-
-
-
-## Where to go next
-- 🚀 Start here: Quick Start
-- 📦 Browse models: Supported Models
-- 🧠 Understand outputs: Output Semantics
-- 🧩 Code examples: API

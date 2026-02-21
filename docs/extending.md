@@ -316,18 +316,8 @@ pytest -q
 
 Update docs in one of these places:
 
-- `docs/api.md` (add model name and usage)
-- `docs/extending.md` (this page)
-- `examples/playground.ipynb` (add a short cell demonstrating the new model)
+- `docs/models.md` (add model name and usage)
 
-If you use MkDocs, add to `mkdocs.yml`:
-
-```yaml
-nav:
-  - Home: index.md
-  - API: api.md
-  - Extending: extending.md
-```
 
 ---
 
