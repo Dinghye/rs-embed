@@ -1,8 +1,10 @@
 # src/rs_embed/embedders/onthefly_remoteclip.py
 from __future__ import annotations
 
+import logging
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -149,6 +151,37 @@ def _assert_weights_loaded(model) -> Dict[str, float]:
     return {"param_mean": mean, "param_std": std, "param_absmax": mx}
 
 
+@contextmanager
+def _suppress_rshf_pretrained_init_warning():
+    """
+    Suppress a known misleading rshf/open_clip warning emitted during model construction:
+      "No pretrained weights loaded ... Model initialized randomly."
+    We verify actual loaded weights immediately after construction.
+    """
+    root_logger = logging.getLogger()
+    suppressed: Dict[str, Any] = {"count": 0, "messages": []}
+
+    class _KnownWarningFilter(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            msg = record.getMessage()
+            is_target = (
+                "No pretrained weights loaded for model" in msg
+                and "Model initialized randomly" in msg
+            )
+            if is_target:
+                suppressed["count"] += 1
+                suppressed["messages"].append(msg)
+                return False
+            return True
+
+    filt = _KnownWarningFilter()
+    root_logger.addFilter(filt)
+    try:
+        yield suppressed
+    finally:
+        root_logger.removeFilter(filt)
+
+
 def _load_rshf_remoteclip(
     ckpt: str,
     *,
@@ -169,7 +202,8 @@ def _load_rshf_remoteclip(
         cache_dir=cache_dir,
     )
 
-    model = RemoteCLIP.from_pretrained(local_dir if os.path.exists(local_dir) else ckpt)
+    with _suppress_rshf_pretrained_init_warning() as suppressed_warning:
+        model = RemoteCLIP.from_pretrained(local_dir if os.path.exists(local_dir) else ckpt)
     stats = _assert_weights_loaded(model)
 
     meta = {
@@ -178,6 +212,7 @@ def _load_rshf_remoteclip(
         "weight_file": weight_file,
         "weight_file_size": os.path.getsize(weight_file) if (weight_file and os.path.exists(weight_file)) else None,
         "weights_verified": True,
+        "init_warning_suppressed_count": int(suppressed_warning.get("count", 0)),
         **stats,
     }
     return model, meta
