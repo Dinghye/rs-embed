@@ -247,6 +247,130 @@ def test_export_batch_combined_npz_dedup(tmp_path, monkeypatch):
     assert fetch_calls["n"] == len(spatials)
 
 
+def test_export_batch_combined_prefetch_checkpoint_handles_variable_input_shapes(tmp_path, monkeypatch):
+    class DummyVarShape:
+        def describe(self):
+            return {
+                "type": "onthefly",
+                "inputs": {"collection": "C", "bands": ["B1", "B2", "B3"]},
+                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+            }
+
+        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+            assert input_chw is not None
+            return Embedding(data=np.array([float(input_chw.shape[1])], dtype=np.float32), meta={})
+
+    registry.register("dummy_var_shape")(DummyVarShape)
+
+    import rs_embed.api as api
+
+    class DummyProvider:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def ensure_ready(self):
+            return None
+
+    def fake_fetch(provider, *, spatial, temporal, sensor):
+        side = 2 if float(spatial.lon) < 0.5 else 3
+        return np.zeros((3, side, side), dtype=np.float32)
+
+    monkeypatch.setattr(api, "GEEProvider", DummyProvider)
+    monkeypatch.setattr(api, "_fetch_gee_patch_raw", fake_fetch)
+    monkeypatch.setattr(api, "_inspect_input_raw", lambda x_chw, *, sensor, name: {"ok": True})
+    api._get_embedder_bundle_cached.cache_clear()
+
+    spatials = [PointBuffer(lon=0.0, lat=0.0, buffer_m=10), PointBuffer(lon=1.0, lat=1.0, buffer_m=10)]
+    out_path = tmp_path / "combined_var_shape.npz"
+    manifest = api.export_batch(
+        spatials=spatials,
+        temporal=TemporalSpec.range("2020-01-01", "2020-02-01"),
+        models=["dummy_var_shape"],
+        out_path=str(out_path),
+        backend="gee",
+        device="cpu",
+        output=OutputSpec.pooled(),
+        save_inputs=True,
+        save_embeddings=True,
+        show_progress=False,
+    )
+
+    assert out_path.exists()
+    assert isinstance(manifest, dict)
+    assert manifest.get("status") == "ok"
+
+
+def test_export_batch_combined_falls_back_to_single_when_batch_api_fails(tmp_path, monkeypatch):
+    class DummyBatchFail:
+        single_calls = 0
+        batch_calls = 0
+
+        def describe(self):
+            return {
+                "type": "onthefly",
+                "inputs": {"collection": "C", "bands": ["B1", "B2", "B3"]},
+                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+            }
+
+        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+            DummyBatchFail.single_calls += 1
+            assert input_chw is not None
+            return Embedding(data=np.array([float(spatial.lon)], dtype=np.float32), meta={})
+
+        def get_embeddings_batch_from_inputs(
+            self,
+            *,
+            spatials,
+            input_chws,
+            temporal=None,
+            sensor=None,
+            output=OutputSpec.pooled(),
+            backend="auto",
+            device="auto",
+        ):
+            DummyBatchFail.batch_calls += 1
+            raise ValueError("synthetic batch failure")
+
+    registry.register("dummy_batch_fail")(DummyBatchFail)
+
+    import rs_embed.api as api
+
+    class DummyProvider:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def ensure_ready(self):
+            return None
+
+    def fake_fetch(provider, *, spatial, temporal, sensor):
+        return np.zeros((3, 2, 2), dtype=np.float32)
+
+    monkeypatch.setattr(api, "GEEProvider", DummyProvider)
+    monkeypatch.setattr(api, "_fetch_gee_patch_raw", fake_fetch)
+    monkeypatch.setattr(api, "_inspect_input_raw", lambda x_chw, *, sensor, name: {"ok": True})
+    api._get_embedder_bundle_cached.cache_clear()
+
+    out_path = tmp_path / "combined_batch_fallback.npz"
+    manifest = api.export_batch(
+        spatials=[PointBuffer(lon=0.0, lat=0.0, buffer_m=10), PointBuffer(lon=1.0, lat=1.0, buffer_m=10)],
+        temporal=TemporalSpec.range("2020-01-01", "2020-02-01"),
+        models=["dummy_batch_fail"],
+        out_path=str(out_path),
+        backend="gee",
+        device="cpu",
+        output=OutputSpec.pooled(),
+        save_inputs=True,
+        save_embeddings=True,
+        show_progress=False,
+    )
+
+    assert out_path.exists()
+    assert isinstance(manifest, dict)
+    assert manifest.get("status") == "ok"
+    assert DummyBatchFail.batch_calls >= 1
+    assert DummyBatchFail.single_calls == 2
+
+
 def test_export_batch_combined_prefetch_reuses_superset_and_slices_subset(tmp_path, monkeypatch):
     class DummyRGB:
         seen = []

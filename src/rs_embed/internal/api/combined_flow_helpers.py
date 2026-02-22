@@ -354,8 +354,9 @@ def run_pending_models(
                                 if i not in batch_set:
                                     _mark_infer_done(i)
                     except Exception:
-                        if not continue_on_error:
-                            raise
+                        # Fall back to per-item inference when batched path fails.
+                        # This keeps combined export robust to model-specific batch quirks.
+                        batch_succeeded = False
 
                 if (not batch_attempted) and can_batch:
                     batch_attempted = True
@@ -392,8 +393,8 @@ def run_pending_models(
                                 _mark_infer_done(i)
                         batch_succeeded = True
                     except Exception:
-                        if not continue_on_error:
-                            raise
+                        # Fall back to per-item inference when batched path fails.
+                        batch_succeeded = False
 
                 if not batch_succeeded:
                     for i in range(n):

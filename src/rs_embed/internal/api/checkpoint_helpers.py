@@ -55,22 +55,31 @@ def store_prefetch_checkpoint_arrays(
         if not hit_items:
             continue
         entry: Dict[str, Any] = {"sensor": _jsonable(sensor_by_key[skey])}
-        if len(hit_items) == n_items:
-            key = f"{_CHECKPOINT_PREFETCH_BCHW_PREFIX}{skey}"
-            arr = np.stack([np.asarray(x, dtype=np.float32) for _, x in hit_items], axis=0)
-            arrays[key] = arr
-            entry["npz_key"] = key
-            entry["shape"] = list(arr.shape)
-        else:
+
+        def _store_per_item(items: List[Tuple[int, np.ndarray]]) -> None:
             keys: List[str] = []
             indices: List[int] = []
-            for i, x in hit_items:
+            for i, x in items:
                 key = f"{_CHECKPOINT_PREFETCH_CHW_PREFIX}{skey}__{i:05d}"
                 arrays[key] = np.asarray(x, dtype=np.float32)
                 keys.append(key)
                 indices.append(int(i))
             entry["npz_keys"] = keys
             entry["indices"] = indices
+
+        if len(hit_items) == n_items:
+            key = f"{_CHECKPOINT_PREFETCH_BCHW_PREFIX}{skey}"
+            try:
+                arr = np.stack([np.asarray(x, dtype=np.float32) for _, x in hit_items], axis=0)
+                arrays[key] = arr
+                entry["npz_key"] = key
+                entry["shape"] = list(arr.shape)
+            except Exception:
+                # Some providers can return variable H/W across points.
+                # Keep checkpointing by storing per-item CHW arrays instead.
+                _store_per_item(hit_items)
+        else:
+            _store_per_item(hit_items)
         prefetch_meta[skey] = entry
     manifest["prefetch"] = prefetch_meta
 
