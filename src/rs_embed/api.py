@@ -760,173 +760,200 @@ def _export_batch_per_item(
             )
 
         csize = max(1, int(chunk_size))
-        for chunk_start in range(0, len(pending_idxs), csize):
-            idxs = pending_idxs[chunk_start: chunk_start + csize]
 
-            # (i, sensor_cache_key) -> input_chw
+        def _prefetch_chunk_inputs(
+            idxs: List[int],
+        ) -> Tuple[
+            Dict[Tuple[int, str], np.ndarray],
+            Dict[Tuple[int, str], Dict[str, Any]],
+            Dict[Tuple[int, str], str],
+        ]:
             inputs_cache: Dict[Tuple[int, str], np.ndarray] = {}
             input_reports: Dict[Tuple[int, str], Dict[str, Any]] = {}
             prefetch_errors: Dict[Tuple[int, str], str] = {}
 
-            if need_prefetch and provider is not None:
-                tasks = [
-                    (i, fetch_key, fetch_sensor)
-                    for i in idxs
-                    for fetch_key, fetch_sensor in fetch_sensor_by_key.items()
-                ]
+            if (not idxs) or (not need_prefetch) or provider is None:
+                return inputs_cache, input_reports, prefetch_errors
 
-                if tasks:
-                    from concurrent.futures import ThreadPoolExecutor, as_completed
+            tasks = [
+                (i, fetch_key, fetch_sensor)
+                for i in idxs
+                for fetch_key, fetch_sensor in fetch_sensor_by_key.items()
+            ]
+            if not tasks:
+                return inputs_cache, input_reports, prefetch_errors
 
-                    def _fetch_one(ii: int, sk: str, ss: SensorSpec):
-                        assert provider is not None
-                        x = _run_with_retry(
-                            lambda: _fetch_gee_patch_raw(provider, spatial=spatials[ii], temporal=temporal, sensor=ss),
-                            retries=max_retries,
-                            backoff_s=retry_backoff_s,
-                        )
-                        return ii, sk, x
+            from concurrent.futures import ThreadPoolExecutor, as_completed
 
-                    mw = max(1, int(num_workers))
-                    with ThreadPoolExecutor(max_workers=mw) as ex:
-                        fut_map = {ex.submit(_fetch_one, ii, sk, ss): (ii, sk) for (ii, sk, ss) in tasks}
-                        for fut in as_completed(fut_map):
-                            ii, sk = fut_map[fut]
-                            try:
-                                ii, sk, x = fut.result()
-                            except Exception as e:
-                                if not continue_on_error:
-                                    raise
-                                err_s = repr(e)
-                                for member_skey in fetch_members.get(sk, []):
-                                    prefetch_errors[(ii, member_skey)] = err_s
-                                continue
-                            for member_skey in fetch_members.get(sk, []):
-                                member_idx = sensor_to_fetch[member_skey][1]
-                                x_member = _normalize_input_chw(
-                                    _select_prefetched_channels(x, member_idx),
-                                    expected_channels=len(member_idx),
-                                    name=f"gee_input_{member_skey}",
-                                )
-                                if fail_on_bad_input:
-                                    sspec_member = sensor_by_key[member_skey]
-                                    rep = _inspect_input_raw(x_member, sensor=sspec_member, name=f"gee_input_{member_skey}")
-                                    if not bool(rep.get("ok", True)):
-                                        issues = (rep.get("report", {}) or {}).get("issues", [])
-                                        mlist = sorted(set(sensor_models.get(member_skey, [])))
-                                        err = RuntimeError(
-                                            f"Input inspection failed for index={ii}, sensor={member_skey}, models={mlist}: {issues}"
-                                        )
-                                        if not continue_on_error:
-                                            raise err
-                                        prefetch_errors[(ii, member_skey)] = repr(err)
-                                        continue
-                                    input_reports[(ii, member_skey)] = rep
-                                inputs_cache[(ii, member_skey)] = x_member
-
-            chunk_embed_results: Dict[Tuple[int, str], Dict[str, Any]] = {}
-            use_chunk_batch_infer = bool(
-                save_embeddings and _should_prefer_batch_inference(device=device)
-            )
-            if use_chunk_batch_infer:
-                chunk_embed_results = _infer_chunk_embeddings_for_per_item(
-                    idxs=idxs,
-                    spatials=spatials,
-                    temporal=temporal,
-                    models=models,
-                    backend_n=backend_n,
-                    device=device,
-                    output=output,
-                    resolved_sensor=resolved_sensor,
-                    model_type=model_type,
-                    provider_enabled=provider_enabled,
-                    inputs_cache=inputs_cache,
-                    prefetch_errors=prefetch_errors,
-                    continue_on_error=continue_on_error,
-                    max_retries=max_retries,
-                    retry_backoff_s=retry_backoff_s,
-                    infer_batch_size=infer_batch_size,
-                    model_progress_cb=_on_model_done,
+            def _fetch_one(ii: int, sk: str, ss: SensorSpec):
+                assert provider is not None
+                x = _run_with_retry(
+                    lambda: _fetch_gee_patch_raw(provider, spatial=spatials[ii], temporal=temporal, sensor=ss),
+                    retries=max_retries,
+                    backoff_s=retry_backoff_s,
                 )
+                return ii, sk, x
 
-            # export each point in chunk
-            writer_async = bool(async_write)
-            writer_mw = max(1, int(writer_workers))
-            write_futs = []
-            writer_ex = None
-            if writer_async:
+            mw = max(1, int(num_workers))
+            with ThreadPoolExecutor(max_workers=mw) as ex:
+                fut_map = {ex.submit(_fetch_one, ii, sk, ss): (ii, sk) for (ii, sk, ss) in tasks}
+                for fut in as_completed(fut_map):
+                    ii, sk = fut_map[fut]
+                    try:
+                        ii, sk, x = fut.result()
+                    except Exception as e:
+                        if not continue_on_error:
+                            raise
+                        err_s = repr(e)
+                        for member_skey in fetch_members.get(sk, []):
+                            prefetch_errors[(ii, member_skey)] = err_s
+                        continue
+                    for member_skey in fetch_members.get(sk, []):
+                        member_idx = sensor_to_fetch[member_skey][1]
+                        x_member = _normalize_input_chw(
+                            _select_prefetched_channels(x, member_idx),
+                            expected_channels=len(member_idx),
+                            name=f"gee_input_{member_skey}",
+                        )
+                        if fail_on_bad_input:
+                            sspec_member = sensor_by_key[member_skey]
+                            rep = _inspect_input_raw(x_member, sensor=sspec_member, name=f"gee_input_{member_skey}")
+                            if not bool(rep.get("ok", True)):
+                                issues = (rep.get("report", {}) or {}).get("issues", [])
+                                mlist = sorted(set(sensor_models.get(member_skey, [])))
+                                err = RuntimeError(
+                                    f"Input inspection failed for index={ii}, sensor={member_skey}, models={mlist}: {issues}"
+                                )
+                                if not continue_on_error:
+                                    raise err
+                                prefetch_errors[(ii, member_skey)] = repr(err)
+                                continue
+                            input_reports[(ii, member_skey)] = rep
+                        inputs_cache[(ii, member_skey)] = x_member
+
+            return inputs_cache, input_reports, prefetch_errors
+
+        chunk_groups = [
+            pending_idxs[chunk_start: chunk_start + csize]
+            for chunk_start in range(0, len(pending_idxs), csize)
+        ]
+        prefetch_pipeline_ex = None
+        prefetched_chunk_fut = None
+        try:
+            if need_prefetch and provider is not None and chunk_groups:
                 from concurrent.futures import ThreadPoolExecutor
-                writer_ex = ThreadPoolExecutor(max_workers=writer_mw)
-            for i in idxs:
-                out_file = os.path.join(out_dir, f"{names[i]}{ext}")
-                try:
-                    arrays, manifest = _build_one_point_payload(
-                        point_index=i,
-                        spatial=spatials[i],
+
+                # A one-slot pipeline overlaps prefetch(chunk k+1) with infer/write(chunk k)
+                # while keeping memory bounded to roughly two chunks of cached inputs.
+                prefetch_pipeline_ex = ThreadPoolExecutor(max_workers=1)
+                prefetched_chunk_fut = prefetch_pipeline_ex.submit(_prefetch_chunk_inputs, chunk_groups[0])
+
+            for chunk_idx, idxs in enumerate(chunk_groups):
+                if prefetched_chunk_fut is not None:
+                    inputs_cache, input_reports, prefetch_errors = prefetched_chunk_fut.result()
+                else:
+                    inputs_cache, input_reports, prefetch_errors = _prefetch_chunk_inputs(idxs)
+                prefetched_chunk_fut = None
+
+                if (
+                    prefetch_pipeline_ex is not None
+                    and (chunk_idx + 1) < len(chunk_groups)
+                ):
+                    prefetched_chunk_fut = prefetch_pipeline_ex.submit(
+                        _prefetch_chunk_inputs, chunk_groups[chunk_idx + 1]
+                    )
+
+                chunk_embed_results: Dict[Tuple[int, str], Dict[str, Any]] = {}
+                use_chunk_batch_infer = bool(
+                    save_embeddings and _should_prefer_batch_inference(device=device)
+                )
+                if use_chunk_batch_infer:
+                    chunk_embed_results = _infer_chunk_embeddings_for_per_item(
+                        idxs=idxs,
+                        spatials=spatials,
                         temporal=temporal,
                         models=models,
-                        backend=backend_n,
+                        backend_n=backend_n,
                         device=device,
                         output=output,
                         resolved_sensor=resolved_sensor,
                         model_type=model_type,
+                        provider_enabled=provider_enabled,
                         inputs_cache=inputs_cache,
-                        input_reports=input_reports,
                         prefetch_errors=prefetch_errors,
-                        pass_input_into_embedder=pass_input_into_embedder,
-                        save_inputs=save_inputs,
-                        save_embeddings=(False if use_chunk_batch_infer else save_embeddings),
-                        fail_on_bad_input=fail_on_bad_input,
                         continue_on_error=continue_on_error,
                         max_retries=max_retries,
                         retry_backoff_s=retry_backoff_s,
-                        model_progress_cb=(
-                            None if use_chunk_batch_infer else (_on_model_done if save_embeddings else None)
-                        ),
+                        infer_batch_size=infer_batch_size,
+                        model_progress_cb=_on_model_done,
                     )
-                    if use_chunk_batch_infer:
-                        _inject_precomputed_embeddings_into_point_payload(
-                            point_index=i,
-                            models=models,
-                            arrays=arrays,
-                            manifest=manifest,
-                            embed_results=chunk_embed_results,
-                        )
-                except Exception as e:
-                    if not continue_on_error:
-                        if writer_ex is not None:
-                            writer_ex.shutdown(wait=False)
-                        raise
-                    manifests.append(
-                        _point_failure_manifest(
+
+                # export each point in chunk
+                writer_async = bool(async_write)
+                writer_mw = max(1, int(writer_workers))
+                write_futs = []
+                writer_ex = None
+                if writer_async:
+                    from concurrent.futures import ThreadPoolExecutor
+                    writer_ex = ThreadPoolExecutor(max_workers=writer_mw)
+                for i in idxs:
+                    out_file = os.path.join(out_dir, f"{names[i]}{ext}")
+                    try:
+                        arrays, manifest = _build_one_point_payload(
                             point_index=i,
                             spatial=spatials[i],
                             temporal=temporal,
-                            output=output,
+                            models=models,
                             backend=backend_n,
                             device=device,
-                            stage="build",
-                            error=e,
+                            output=output,
+                            resolved_sensor=resolved_sensor,
+                            model_type=model_type,
+                            inputs_cache=inputs_cache,
+                            input_reports=input_reports,
+                            prefetch_errors=prefetch_errors,
+                            pass_input_into_embedder=pass_input_into_embedder,
+                            save_inputs=save_inputs,
+                            save_embeddings=(False if use_chunk_batch_infer else save_embeddings),
+                            fail_on_bad_input=fail_on_bad_input,
+                            continue_on_error=continue_on_error,
+                            max_retries=max_retries,
+                            retry_backoff_s=retry_backoff_s,
+                            model_progress_cb=(
+                                None if use_chunk_batch_infer else (_on_model_done if save_embeddings else None)
+                            ),
                         )
-                    )
-                    progress.update(1)
-                    continue
+                        if use_chunk_batch_infer:
+                            _inject_precomputed_embeddings_into_point_payload(
+                                point_index=i,
+                                models=models,
+                                arrays=arrays,
+                                manifest=manifest,
+                                embed_results=chunk_embed_results,
+                            )
+                    except Exception as e:
+                        if not continue_on_error:
+                            if writer_ex is not None:
+                                writer_ex.shutdown(wait=False)
+                            raise
+                        manifests.append(
+                            _point_failure_manifest(
+                                point_index=i,
+                                spatial=spatials[i],
+                                temporal=temporal,
+                                output=output,
+                                backend=backend_n,
+                                device=device,
+                                stage="build",
+                                error=e,
+                            )
+                        )
+                        progress.update(1)
+                        continue
 
-                if writer_ex is not None:
-                    fut = writer_ex.submit(
-                        _write_one_payload,
-                        out_path=out_file,
-                        arrays=arrays,
-                        manifest=manifest,
-                        save_manifest=save_manifest,
-                        fmt=fmt,
-                        max_retries=max_retries,
-                        retry_backoff_s=retry_backoff_s,
-                    )
-                    write_futs.append((i, fut))
-                else:
-                    try:
-                        mani = _write_one_payload(
+                    if writer_ex is not None:
+                        fut = writer_ex.submit(
+                            _write_one_payload,
                             out_path=out_file,
                             arrays=arrays,
                             manifest=manifest,
@@ -935,49 +962,64 @@ def _export_batch_per_item(
                             max_retries=max_retries,
                             retry_backoff_s=retry_backoff_s,
                         )
-                    except Exception as e:
-                        if not continue_on_error:
-                            raise
-                        mani = _point_failure_manifest(
-                            point_index=i,
-                            spatial=spatials[i],
-                            temporal=temporal,
-                            output=output,
-                            backend=backend_n,
-                            device=device,
-                            stage="write",
-                            error=e,
-                        )
-                    manifests.append(mani)
-                    progress.update(1)
-
-            if writer_ex is not None:
-                from concurrent.futures import as_completed
-                try:
-                    fut_map = {fut: i for (i, fut) in write_futs}
-                    for fut in as_completed(fut_map):
-                        i = fut_map[fut]
+                        write_futs.append((i, fut))
+                    else:
                         try:
-                            manifests.append(fut.result())
+                            mani = _write_one_payload(
+                                out_path=out_file,
+                                arrays=arrays,
+                                manifest=manifest,
+                                save_manifest=save_manifest,
+                                fmt=fmt,
+                                max_retries=max_retries,
+                                retry_backoff_s=retry_backoff_s,
+                            )
                         except Exception as e:
                             if not continue_on_error:
                                 raise
-                            manifests.append(
-                                _point_failure_manifest(
-                                    point_index=i,
-                                    spatial=spatials[i],
-                                    temporal=temporal,
-                                    output=output,
-                                    backend=backend_n,
-                                    device=device,
-                                    stage="write",
-                                    error=e,
-                                )
+                            mani = _point_failure_manifest(
+                                point_index=i,
+                                spatial=spatials[i],
+                                temporal=temporal,
+                                output=output,
+                                backend=backend_n,
+                                device=device,
+                                stage="write",
+                                error=e,
                             )
-                        finally:
-                            progress.update(1)
-                finally:
-                    writer_ex.shutdown(wait=True)
+                        manifests.append(mani)
+                        progress.update(1)
+
+                if writer_ex is not None:
+                    from concurrent.futures import as_completed
+                    try:
+                        fut_map = {fut: i for (i, fut) in write_futs}
+                        for fut in as_completed(fut_map):
+                            i = fut_map[fut]
+                            try:
+                                manifests.append(fut.result())
+                            except Exception as e:
+                                if not continue_on_error:
+                                    raise
+                                manifests.append(
+                                    _point_failure_manifest(
+                                        point_index=i,
+                                        spatial=spatials[i],
+                                        temporal=temporal,
+                                        output=output,
+                                        backend=backend_n,
+                                        device=device,
+                                        stage="write",
+                                        error=e,
+                                    )
+                                )
+                            finally:
+                                progress.update(1)
+                    finally:
+                        writer_ex.shutdown(wait=True)
+        finally:
+            if prefetch_pipeline_ex is not None:
+                prefetch_pipeline_ex.shutdown(wait=True)
 
         manifests.sort(key=lambda x: int(x.get("point_index", -1)))
         return manifests

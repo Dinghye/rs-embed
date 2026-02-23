@@ -384,6 +384,7 @@ export_batch(
 - `fail_on_bad_input`: whether to raise immediately if input checks fail
 - `chunk_size`: process points in chunks (controls memory/throughput)
   - also used as the default inference batch size when batched inference is enabled
+  - in `per_item` mode with GEE prefetch enabled, rs-embed uses a one-slot prefetch pipeline (double buffering), so input-cache peak memory can be roughly up to 2 chunks (to overlap `prefetch(chunk k+1)` with `infer/write(chunk k)`)
 - `num_workers`: concurrency for GEE patch prefetching (ThreadPool)
 - `continue_on_error`: keep exporting remaining points/models even if one item fails
 - `max_retries`: retry count for provider fetch/write operations
@@ -462,6 +463,9 @@ export_batch(
 !!! warning "About parallelism"
     `export_batch` currently has two levels of execution behavior:
     - **IO level**: GEE prefetching is parallelized (ThreadPool, controlled by `num_workers`).
+      - In **per-item mode**, rs-embed uses a **one-slot double buffer**: while chunk `k` is running inference / writing outputs, chunk `k+1` can be prefetched in the background (after the first chunk).
+      - This improves throughput when fetch and inference times are comparable, at the cost of a higher input-cache peak (roughly up to 2 chunks).
+      - In **combined mode**, prefetch still runs as a distinct stage before model execution (to keep checkpoint/resume semantics simpler and memory behavior predictable).
     - **Inference level**:
       - **model level**: models are executed serially (one model at a time), to keep runtime/GPU behavior stable.
       - **batch level**: for a single model, rs-embed can run batched inference when the embedder implements batch APIs (for example `get_embeddings_batch` / `get_embeddings_batch_from_inputs`). This is used in combined mode and, on GPU/accelerators, also in per-item mode.
