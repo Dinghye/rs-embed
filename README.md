@@ -73,11 +73,11 @@ This is a convenience index with basic model info only (for quick scanning / lin
 
 ### Precomputed Embeddings
 
-| Model | ID | Type | Resolution | Time Coverage | 
-|---|---|---|---|---|
-| Tessera | `tessera` | Precomputed | 0.1° | 2017-2025 |
-| Google Satellite Embedding (Alpha Earth) | `gse_annual` | Precomputed | 10 m | 2017-2024 |
-| Copernicus Embed | `copernicus_embed` | Precomputed | 0.25° | 2021 |
+| Model ID | Type | Resolution | Time Coverage | 
+|---|---|---|---|
+|`tessera` | Precomputed | 0.1° | 2017-2025 |
+|`gse_annual` (Alpha Earth) | Precomputed | 10 m | 2017-2024 |
+| `copernicus_embed` | Precomputed | 0.25° | 2021 |
 
 ### On-the-fly Foundation Models
 
