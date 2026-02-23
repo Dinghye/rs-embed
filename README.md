@@ -65,12 +65,11 @@ plot_embedding_pseudocolor(
 ```
 
 
-<img src="./docs/assets/vis.png" width=600 /> 
+<img src="./docs/assets/vis.png" width=500 /> 
 
 ## Supported Models (Quick Reference)
 
-This is a convenience index with basic model info only (for quick scanning / future links).
-For detailed I/O behavior and preprocessing notes, see `docs/models.md`.
+This is a convenience index with basic model info only (for quick scanning / links). For detailed I/O behavior and preprocessing notes, see [Supported Models](https://dinghye.github.io/rs-embed/models/).
 
 ### Precomputed Embeddings
 
@@ -99,7 +98,7 @@ For detailed I/O behavior and preprocessing notes, see `docs/models.md`.
 | `agrifm` | S2 time series (10-band) | RSE 2026 | [link](https://github.com/flyakon/AgriFM) |
 | `satvision_toa` |  TOA 14-channel | Arvix 2024 | [link](https://github.com/nasa-nccs-hpda/pytorch-caney)|
 
-See [Supported Models](https://dinghye.github.io/rs-embed/models/) for exact behavior.
+
 
 ## Learn More
 📚 [Full documentation](https://dinghye.github.io/rs-embed/)
