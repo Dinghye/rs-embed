@@ -267,6 +267,80 @@ def show_input_chw(x_chw: np.ndarray, title: str, rgb_idx=(0, 1, 2), p_low=1, p_
     plt.show()
 
 
+def show_s1_vvvh_chw(
+    x_chw: np.ndarray,
+    *,
+    band_names=("VV", "VH"),
+    title_prefix="S1",
+    p_low=2.0,
+    p_high=98.0,
+    figsize=(10, 4),
+    cmap="gray",
+    flipud: bool = True,
+):
+    """Visualize a Sentinel-1 VV/VH CHW patch as two stretched grayscale panels."""
+    x = np.asarray(x_chw)
+    if x.ndim != 3:
+        raise ValueError(f"Expected CHW array, got shape={getattr(x, 'shape', None)}")
+    if int(x.shape[0]) < 2:
+        raise ValueError(f"Expected at least 2 channels for VV/VH, got C={int(x.shape[0])}")
+
+    fig, axes = plt.subplots(1, 2, figsize=figsize)
+    for ax, band_img, band_name in zip(axes, x[:2], tuple(band_names)[:2]):
+        band_img = np.asarray(band_img, dtype=np.float32)
+        band_img = np.nan_to_num(band_img, nan=0.0, posinf=0.0, neginf=0.0)
+        lo, hi = np.percentile(band_img, [p_low, p_high])
+        img = np.clip((band_img - lo) / max(hi - lo, 1e-6), 0.0, 1.0)
+        if bool(flipud):
+            img = np.flipud(img)
+        ax.imshow(img, cmap=cmap)
+        ax.set_title(f"{title_prefix} {band_name}")
+        ax.axis("off")
+    plt.tight_layout()
+    plt.show()
+
+
+def show_s1_vvvh_from_inspect(
+    inspect_out: dict,
+    *,
+    title_prefix="S1",
+    p_low=2.0,
+    p_high=98.0,
+    figsize=(10, 4),
+    print_stats=True,
+    flipud: bool = True,
+):
+    """Visualize Sentinel-1 VV/VH from inspect_gee_patch(..., return_array=True) output."""
+    x_s1 = (inspect_out or {}).get("array_chw")
+    if x_s1 is None:
+        print("array_chw not found. Call inspect_gee_patch(..., return_array=True).")
+        return
+
+    if print_stats:
+        sensor_meta = (inspect_out or {}).get("sensor") or {}
+        print("ok:", (inspect_out or {}).get("ok"))
+        print("bands:", sensor_meta.get("bands"))
+        x = np.asarray(x_s1)
+        print(
+            "S1 CHW:",
+            x.shape,
+            x.dtype,
+            "min=",
+            float(np.nanmin(x)),
+            "max=",
+            float(np.nanmax(x)),
+        )
+
+    show_s1_vvvh_chw(
+        x_s1,
+        title_prefix=title_prefix,
+        p_low=p_low,
+        p_high=p_high,
+        figsize=figsize,
+        flipud=flipud,
+    )
+
+
 def print_band_quantiles_preview(report: dict, n_preview: int = 3):
     """Print a compact preview for report['band_quantiles']."""
     band_q = (report or {}).get("band_quantiles")

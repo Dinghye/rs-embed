@@ -73,29 +73,29 @@ This is a convenience index with basic model info only (for quick scanning / lin
 
 ### Precomputed Embeddings
 
-| Model ID | Type | Resolution | Time Coverage | 
-|---|---|---|---|
-|`tessera` | Precomputed | 0.1° | 2017-2025 |
-|`gse_annual` (Alpha Earth) | Precomputed | 10 m | 2017-2024 |
-| `copernicus_embed` | Precomputed | 0.25° | 2021 |
+| Model ID | Type | Resolution | Time Coverage | Publication |
+|---|---|---|---|---|
+|`tessera` | Precomputed | 0.1° | 2017-2025 |[CVPR 2026](https://arxiv.org/abs/2506.20380v4)|
+|`gse_annual` (Alpha Earth) | Precomputed | 10 m | 2017-2024 |[Arxiv 2025](https://arxiv.org/abs/2507.22291)|
+| `copernicus_embed` | Precomputed | 0.25° | 2021 |[ICCV 2025](https://arxiv.org/abs/2503.11849)|
 
 ### On-the-fly Foundation Models
 
 | Model ID |  Primary Input  | Publication | Link |
 |---|---|---|---|
 | `satmae_rgb` |  S2 RGB | [NeurIPS 2022](https://arxiv.org/abs/2207.08051) |[link](https://github.com/sustainlab-group/SatMAE)|
-| `prithvi_eo_v2_s2_6b` | S2 6-band | [Arvix 2023](https://arxiv.org/abs/2310.18660) | [link](https://huggingface.co/ibm-nasa-geospatial) |
+| `prithvi_eo_v2_s2_6b` | S2 6-band | [Arxiv 2023](https://arxiv.org/abs/2310.18660) | [link](https://huggingface.co/ibm-nasa-geospatial) |
 | `scalemae_rgb` | S2 RGB (+ scale) | [ICCV 2023](https://arxiv.org/abs/2212.14532) | [link](https://github.com/bair-climate-initiative/scale-mae) |
 | `remoteclip_s2rgb` |  S2 RGB | [TGRS 2024](https://arxiv.org/abs/2306.11029) |[link](https://github.com/ChenDelong1999/RemoteCLIP) |
-| `dofa` |  Multi-band + wavelengths | [Arvix 2024](https://arxiv.org/abs/2403.15356) | [link](https://github.com/zhu-xlab/DOFA) |
-| `satvision_toa` |  TOA 14-channel | [Arvix 2024](https://arxiv.org/abs/2411.17000) | [link](https://github.com/nasa-nccs-hpda/pytorch-caney)|
+| `dofa` |  Multi-band + wavelengths | [Arxiv 2024](https://arxiv.org/abs/2403.15356) | [link](https://github.com/zhu-xlab/DOFA) |
+| `satvision_toa` |  TOA 14-channel | [Arxiv 2024](https://arxiv.org/abs/2411.17000) | [link](https://github.com/nasa-nccs-hpda/pytorch-caney)|
 | `anysat` |  S2 time series (10-band) | [CVPR 2025](https://arxiv.org/abs/2412.14123) | [link](https://github.com/gastruc/AnySat) |
 | `galileo` | S2 time series (10-band) | [ICML 2025](https://arxiv.org/abs/2502.09356) | [link](https://github.com/nasaharvest/galileo) |
 | `wildsat` | S2 RGB | [ICCV 2025](https://arxiv.org/abs/2412.14428) | [link](https://github.com/mdchuc/HRSFM) |
 | `fomo` | S2 12-band | [AAAI 2025](https://arxiv.org/abs/2312.10114) |[link](https://github.com/RolnickLab/FoMo-Bench)|
 | `terramind` | S2 12-band | [ICCV 2025](https://arxiv.org/abs/2504.11171) | [link](https://github.com/IBM/terramind) |
 | `terrafm_b` | S2 12-band / S1 VV-VH | [ICLR 2026](https://arxiv.org/abs/2506.06281) | [link](https://github.com/mbzuai-oryx/TerraFM) |
-| `thor_1_0_base` | S2 10-band | [Arvix 2026](https://arxiv.org/abs/2601.16011) | [link](https://github.com/FM4CS/THOR) |
+| `thor_1_0_base` | S2 10-band | [Arxiv 2026](https://arxiv.org/abs/2601.16011) | [link](https://github.com/FM4CS/THOR) |
 | `agrifm` | S2 time series (10-band) | [RSE 2026](https://www.sciencedirect.com/science/article/pii/S0034425726000040) | [link](https://github.com/flyakon/AgriFM) |
 
 
@@ -107,7 +107,7 @@ This is a convenience index with basic model info only (for quick scanning / lin
 
 🪄 [Get Start: Try `rs-embed` Now](/examples/playground.ipynb)
 
-🪀 [Use case: Maize yield forecast Illinois](./examples/demo.ipynb)
+🪀 [Use case: Maize yield mapping Illinois](./examples/demo.ipynb)
 
 
 
