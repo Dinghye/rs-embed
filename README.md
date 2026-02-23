@@ -9,7 +9,7 @@
 ![License](https://img.shields.io/github/license/Dinghye/rs-embed)
 ![Last Commit](https://img.shields.io/github/last-commit/Dinghye/rs-embed)
 
-[Docs](https://dinghye.github.io/rs-embed/) · [Examples](./examples) · [Playground](./examples/playground.ipynb)
+[Docs](https://dinghye.github.io/rs-embed/) · [Playground](./examples/playground.ipynb)  · [Demo](./examples/demo.ipynb)
 
 </div>
 
@@ -102,7 +102,12 @@ This is a convenience index with basic model info only (for quick scanning / lin
 
 
 ## Learn More
+
 📚 [Full documentation](https://dinghye.github.io/rs-embed/)
+
+🪄 [Get Start: Try `rs-embed` Now](/examples/playground.ipynb)
+
+🪀 [Use case: Maize yield forecast Illinois](./examples/demo.ipynb)
 
 
 
