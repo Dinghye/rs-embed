@@ -83,20 +83,21 @@ This is a convenience index with basic model info only (for quick scanning / lin
 
 | Model ID |  Primary Input  | Publication | Link |
 |---|---|---|---|
-| `remoteclip_s2rgb` |  S2 RGB | IEEE TGRS2024 |[link](https://github.com/ChenDelong1999/RemoteCLIP) |
-| `satmae_rgb` |  S2 RGB | NeurIPS 2022 |[link](https://github.com/sustainlab-group/SatMAE)|
-| `scalemae_rgb` | S2 RGB (+ scale) | ICCV 2023 | [link](https://github.com/bair-climate-initiative/scale-mae) |
-| `anysat` |  S2 time series (10-band) | CVPR 2025 | [link](https://github.com/gastruc/AnySat) |
-| `galileo` | S2 time series (10-band) | ICML 2025 | [link](https://github.com/nasaharvest/galileo) |
-| `wildsat` | S2 RGB | ICCV 2025 | [link](https://github.com/mdchuc/HRSFM) |
-| `prithvi_eo_v2_s2_6b` | S2 6-band | Arvix 2023 | [link](https://huggingface.co/ibm-nasa-geospatial) |
-| `terrafm_b` | S2 12-band / S1 VV-VH | ICLR 2026 | [link](https://github.com/mbzuai-oryx/TerraFM) |
-| `terramind` | S2 12-band | ICCV 2025 | [link](https://github.com/IBM/terramind) |
-| `dofa` |  Multi-band + wavelengths | Arvix 2024 | [link](https://github.com/zhu-xlab/DOFA) |
-| `fomo` | S2 12-band | AAAI 2025 |[link](https://github.com/RolnickLab/FoMo-Bench)|
-| `thor_1_0_base` | S2 10-band | Arvix 2026 | [link](https://github.com/FM4CS/THOR) |
-| `agrifm` | S2 time series (10-band) | RSE 2026 | [link](https://github.com/flyakon/AgriFM) |
-| `satvision_toa` |  TOA 14-channel | Arvix 2024 | [link](https://github.com/nasa-nccs-hpda/pytorch-caney)|
+| `satmae_rgb` |  S2 RGB | [NeurIPS 2022](https://arxiv.org/abs/2207.08051) |[link](https://github.com/sustainlab-group/SatMAE)|
+| `prithvi_eo_v2_s2_6b` | S2 6-band | [Arvix 2023](https://arxiv.org/abs/2310.18660) | [link](https://huggingface.co/ibm-nasa-geospatial) |
+| `scalemae_rgb` | S2 RGB (+ scale) | [ICCV 2023](https://arxiv.org/abs/2212.14532) | [link](https://github.com/bair-climate-initiative/scale-mae) |
+| `remoteclip_s2rgb` |  S2 RGB | [TGRS 2024](https://arxiv.org/abs/2306.11029) |[link](https://github.com/ChenDelong1999/RemoteCLIP) |
+| `dofa` |  Multi-band + wavelengths | [Arvix 2024](https://arxiv.org/abs/2403.15356) | [link](https://github.com/zhu-xlab/DOFA) |
+| `satvision_toa` |  TOA 14-channel | [Arvix 2024](https://arxiv.org/abs/2411.17000) | [link](https://github.com/nasa-nccs-hpda/pytorch-caney)|
+| `anysat` |  S2 time series (10-band) | [CVPR 2025](https://arxiv.org/abs/2412.14123) | [link](https://github.com/gastruc/AnySat) |
+| `galileo` | S2 time series (10-band) | [ICML 2025](https://arxiv.org/abs/2502.09356) | [link](https://github.com/nasaharvest/galileo) |
+| `wildsat` | S2 RGB | [ICCV 2025](https://arxiv.org/abs/2412.14428) | [link](https://github.com/mdchuc/HRSFM) |
+| `fomo` | S2 12-band | [AAAI 2025](https://arxiv.org/abs/2312.10114) |[link](https://github.com/RolnickLab/FoMo-Bench)|
+| `terramind` | S2 12-band | [ICCV 2025](https://arxiv.org/abs/2504.11171) | [link](https://github.com/IBM/terramind) |
+| `terrafm_b` | S2 12-band / S1 VV-VH | [ICLR 2026](https://arxiv.org/abs/2506.06281) | [link](https://github.com/mbzuai-oryx/TerraFM) |
+| `thor_1_0_base` | S2 10-band | [Arvix 2026](https://arxiv.org/abs/2601.16011) | [link](https://github.com/FM4CS/THOR) |
+| `agrifm` | S2 time series (10-band) | [RSE 2026](https://www.sciencedirect.com/science/article/pii/S0034425726000040) | [link](https://github.com/flyakon/AgriFM) |
+
 
 
 
