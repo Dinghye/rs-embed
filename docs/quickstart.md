@@ -187,5 +187,10 @@ When you use:
 - computing embeddings (via `input_chw`)
 
 ### 3. IO parallelism vs inference safety
-By default, rs-embed parallelizes **remote IO** (fetching patches), and keeps inference safe and stable.  
-For further speedups, you can implement true batched inference per model (override `get_embeddings_batch` for torch models).
+`export_batch` currently uses two-level scheduling:
+- **IO level**: remote patch prefetch is parallelized (`num_workers`).
+- **Inference level**:
+  - model-to-model execution is serial (stability-first default),
+  - but each model can use batched inference over many points when batch APIs are available (such as `get_embeddings_batch` / `get_embeddings_batch_from_inputs`, mainly in `out_path` combined mode).
+
+So rs-embed supports batch-level inference acceleration, while model-level scheduling remains serial by design.

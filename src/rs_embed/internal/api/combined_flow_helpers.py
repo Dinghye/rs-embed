@@ -165,6 +165,8 @@ def run_pending_models(
     save_embeddings: bool,
     continue_on_error: bool,
     chunk_size: int,
+    inference_strategy: str,
+    infer_batch_size: int,
     max_retries: int,
     retry_backoff_s: float,
     show_progress: bool,
@@ -254,10 +256,15 @@ def run_pending_models(
 
             if save_embeddings:
                 n = len(spatials)
-                infer_chunk = max(1, int(chunk_size))
+                infer_chunk = max(1, int(infer_batch_size))
                 embs_by_idx: List[Optional[np.ndarray]] = [None] * n
                 metas_by_idx: List[Optional[Dict[str, Any]]] = [None] * n
                 errors_by_idx: Dict[int, str] = {}
+                strategy = str(inference_strategy).strip().lower()
+                # Keep historical combined-export behavior: auto still attempts batched paths.
+                # Per-item layout now uses a stricter GPU-only auto preference in api.py.
+                prefer_batch = (strategy == "batch") or (strategy == "auto")
+                allow_batch = strategy != "single"
 
                 def _mark_infer_done(i: int) -> None:
                     nonlocal infer_progress_done
@@ -284,12 +291,14 @@ def run_pending_models(
                         )
 
                 can_batch_prefetched = (
-                    deps.supports_prefetched_batch_api(embedder)
+                    allow_batch
+                    and prefer_batch
+                    and deps.supports_prefetched_batch_api(embedder)
                     and needs_provider_input
                     and skey is not None
                     and sspec is not None
                 )
-                can_batch = deps.supports_batch_api(embedder) and not needs_provider_input
+                can_batch = allow_batch and prefer_batch and deps.supports_batch_api(embedder) and not needs_provider_input
                 batch_attempted = False
                 batch_succeeded = False
 

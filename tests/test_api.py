@@ -295,6 +295,27 @@ def test_export_batch_both_output_args():
         )
 
 
+def test_export_batch_decoupled_output_api_requires_out_and_layout():
+    from rs_embed.api import export_batch
+
+    with pytest.raises(ModelError, match="both out and layout"):
+        export_batch(spatials=[_SPATIAL], temporal=_TEMPORAL, models=["mock_model"], out="/tmp/x")
+
+
+def test_export_batch_decoupled_output_api_disallows_mixing_with_legacy_args():
+    from rs_embed.api import export_batch
+
+    with pytest.raises(ModelError, match="either out\\+layout or out_dir/out_path"):
+        export_batch(
+            spatials=[_SPATIAL],
+            temporal=_TEMPORAL,
+            models=["mock_model"],
+            out="/tmp/x",
+            layout="combined",
+            out_path="/tmp/y.npz",
+        )
+
+
 def test_export_batch_unsupported_format():
     from rs_embed.api import export_batch
 
@@ -329,3 +350,37 @@ def test_export_batch_names_length_mismatch(tmp_path):
             spatials=[_SPATIAL, _SPATIAL], temporal=_TEMPORAL, models=["mock_model"],
             out_dir=str(tmp_path), names=["only_one"],
         )
+
+
+def test_export_batch_decoupled_layout_per_item(tmp_path):
+    from rs_embed.api import export_batch
+
+    export_batch(
+        spatials=[_SPATIAL],
+        temporal=_TEMPORAL,
+        models=["mock_model"],
+        out=str(tmp_path / "dir_out"),
+        layout="per_item",
+        save_inputs=False,
+        save_embeddings=True,
+        save_manifest=False,
+        show_progress=False,
+    )
+    assert (tmp_path / "dir_out" / "p00000.npz").exists()
+
+
+def test_export_batch_decoupled_layout_combined(tmp_path):
+    from rs_embed.api import export_batch
+
+    export_batch(
+        spatials=[_SPATIAL],
+        temporal=_TEMPORAL,
+        models=["mock_model"],
+        out=str(tmp_path / "combined_out"),
+        layout="combined",
+        save_inputs=False,
+        save_embeddings=True,
+        save_manifest=False,
+        show_progress=False,
+    )
+    assert (tmp_path / "combined_out.npz").exists()

@@ -450,6 +450,104 @@ def test_export_batch_combined_prefetch_reuses_superset_and_slices_subset(tmp_pa
     assert DummyS2Superset.seen == [(2.0, 3.0, 4.0, 8.0), (2.0, 3.0, 4.0, 8.0)]
 
 
+def test_export_batch_per_item_prefers_batch_inference_on_gpu(tmp_path):
+    class DummyBatchGPU:
+        single_calls = 0
+        batch_calls = 0
+
+        def describe(self):
+            return {"type": "mock", "dim": 1}
+
+        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+            DummyBatchGPU.single_calls += 1
+            return Embedding(data=np.array([float(spatial.lon)], dtype=np.float32), meta={})
+
+        def get_embeddings_batch(
+            self,
+            *,
+            spatials,
+            temporal=None,
+            sensor=None,
+            output=OutputSpec.pooled(),
+            backend="auto",
+            device="auto",
+        ):
+            DummyBatchGPU.batch_calls += 1
+            return [Embedding(data=np.array([float(s.lon)], dtype=np.float32), meta={}) for s in spatials]
+
+    registry.register("dummy_batch_gpu_dir")(DummyBatchGPU)
+
+    import rs_embed.api as api
+    api._get_embedder_bundle_cached.cache_clear()
+
+    out_dir = tmp_path / "gpu_dir_batch"
+    api.export_batch(
+        spatials=[PointBuffer(lon=0.0, lat=0.0, buffer_m=10), PointBuffer(lon=1.0, lat=1.0, buffer_m=10)],
+        temporal=TemporalSpec.year(2022),
+        models=["dummy_batch_gpu_dir"],
+        out_dir=str(out_dir),
+        backend="gee",
+        device="cuda",
+        output=OutputSpec.pooled(),
+        save_inputs=False,
+        save_embeddings=True,
+        show_progress=False,
+    )
+
+    assert (out_dir / "p00000.npz").exists()
+    assert (out_dir / "p00001.npz").exists()
+    assert DummyBatchGPU.batch_calls >= 1
+    assert DummyBatchGPU.single_calls == 0
+
+
+def test_export_batch_per_item_cpu_defaults_to_single_inference(tmp_path):
+    class DummyBatchGPUOff:
+        single_calls = 0
+        batch_calls = 0
+
+        def describe(self):
+            return {"type": "mock", "dim": 1}
+
+        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+            DummyBatchGPUOff.single_calls += 1
+            return Embedding(data=np.array([1.0], dtype=np.float32), meta={})
+
+        def get_embeddings_batch(
+            self,
+            *,
+            spatials,
+            temporal=None,
+            sensor=None,
+            output=OutputSpec.pooled(),
+            backend="auto",
+            device="auto",
+        ):
+            DummyBatchGPUOff.batch_calls += 1
+            return [Embedding(data=np.array([1.0], dtype=np.float32), meta={}) for _ in spatials]
+
+    registry.register("dummy_batch_gpu_dir_single")(DummyBatchGPUOff)
+
+    import rs_embed.api as api
+    api._get_embedder_bundle_cached.cache_clear()
+
+    out_dir = tmp_path / "gpu_dir_single"
+    api.export_batch(
+        spatials=[PointBuffer(lon=0.0, lat=0.0, buffer_m=10), PointBuffer(lon=1.0, lat=1.0, buffer_m=10)],
+        temporal=TemporalSpec.year(2022),
+        models=["dummy_batch_gpu_dir_single"],
+        out_dir=str(out_dir),
+        backend="gee",
+        device="cpu",
+        output=OutputSpec.pooled(),
+        save_inputs=False,
+        save_embeddings=True,
+        show_progress=False,
+    )
+
+    assert DummyBatchGPUOff.batch_calls == 0
+    assert DummyBatchGPUOff.single_calls == 2
+
+
 def test_export_batch_netcdf_per_item(tmp_path, monkeypatch):
     """export_batch with format='netcdf' writes .nc files with correct variables."""
     class DummyNC:

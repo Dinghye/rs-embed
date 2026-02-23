@@ -332,6 +332,8 @@ export_batch(
     spatials: List[SpatialSpec],
     temporal: Optional[TemporalSpec],
     models: List[str],
+    out: Optional[str] = None,
+    layout: Optional[str] = None,
     out_dir: Optional[str] = None,
     out_path: Optional[str] = None,
     names: Optional[List[str]] = None,
@@ -361,22 +363,27 @@ export_batch(
 
 - `out_dir` mode: one file per point (recommended for massive numbers of points)
 - `out_path` mode: merge into a single output file (good for fewer points and portability)
+- Decoupled output target API: `out + layout` (maps to the same two modes)
 
 **Parameters**
 
 - `spatials`: non-empty list
 - `temporal`: can be `None` (some models don’t require time)
 - `models`: non-empty list of model IDs
-- `out_dir` / `out_path`: choose one
+- Output target:
+  - legacy API: choose one of `out_dir` / `out_path`
+  - decoupled API: provide both `out` and `layout` (`"per_item"` or `"combined"`)
+  - do not mix `out+layout` with `out_dir/out_path`
 - `names`: used only in `out_dir` mode, for output filenames (length must equal `spatials`)
 - `sensor`: a shared `SensorSpec` for all models (if models are on-the-fly)
 - `per_model_sensors`: override `SensorSpec` per model; keys are model strings
-- `format`: currently only `"npz"` (may be extended in the future)
+- `format`: `"npz"` or `"netcdf"`
 - `save_inputs`: whether to save model input patches (CHW numpy)
 - `save_embeddings`: whether to save embedding arrays
 - `save_manifest`: whether to save JSON manifests (each export artifact will have an accompanying `.json`)
 - `fail_on_bad_input`: whether to raise immediately if input checks fail
 - `chunk_size`: process points in chunks (controls memory/throughput)
+  - also used as the default inference batch size when batched inference is enabled
 - `num_workers`: concurrency for GEE patch prefetching (ThreadPool)
 - `continue_on_error`: keep exporting remaining points/models even if one item fails
 - `max_retries`: retry count for provider fetch/write operations
@@ -385,6 +392,14 @@ export_batch(
 - `writer_workers`: writer thread count when `async_write=True`
 - `resume`: skip already-exported outputs and continue from remaining items
 - `show_progress`: show progress during batch export (overall progress + per-model inference progress)
+
+**Automatic inference behavior**
+
+- In **per-item output mode** (`out_dir` / `layout="per_item"`):
+  - `device="cpu"` (or auto-resolved CPU): defaults to per-item inference
+  - `device="cuda"` / `mps` / other accelerators (or auto-resolved GPU): prefers batched inference when the embedder implements batch APIs
+- In **combined output mode** (`out_path` / `layout="combined"`), rs-embed keeps the historical behavior of attempting batched model APIs (with fallback to single-item inference if batched execution fails)
+- Model-level scheduling remains serial (one model at a time)
 
 **Returns**
 
@@ -426,13 +441,31 @@ export_batch(
 )
 ```
 
+**Example: decoupled output target (`out + layout`)**
+
+```python
+from rs_embed import export_batch, PointBuffer, TemporalSpec
+
+export_batch(
+    spatials=[PointBuffer(121.5, 31.2, 2048)],
+    temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
+    models=["remoteclip_s2rgb"],
+    out="exports/combined_run",
+    layout="combined",  # writes exports/combined_run.npz
+)
+```
+
 !!! tip "Key performance feature: avoid duplicate downloads"
     When `backend="gee"` and `save_inputs=True` and `save_embeddings=True`, `export_batch` **prefetches the raw patch once**,
     and passes that same patch into the embedder via `input_chw` to compute embeddings—avoiding the pattern of “download once to save inputs + download again for embeddings”.
 
 !!! warning "About parallelism"
-    By default, only **GEE prefetching** is parallelized (network-IO friendly). Inference is run serially by default to avoid GPU/model thread-safety issues (but model instances are reused and not repeatedly loaded).
-    If you need faster inference later, you can implement true batched forward for specific torch models (override `get_embeddings_batch`).
+    `export_batch` currently has two levels of execution behavior:
+    - **IO level**: GEE prefetching is parallelized (ThreadPool, controlled by `num_workers`).
+    - **Inference level**:
+      - **model level**: models are executed serially (one model at a time), to keep runtime/GPU behavior stable.
+      - **batch level**: for a single model, rs-embed can run batched inference when the embedder implements batch APIs (for example `get_embeddings_batch` / `get_embeddings_batch_from_inputs`). This is used in combined mode and, on GPU/accelerators, also in per-item mode.
+    In short: rs-embed supports batch-level inference acceleration, while keeping model-level scheduling serial by design.
 
 ---
 
@@ -525,4 +558,4 @@ The current version is still early stage (`0.1.x`):
 
 - `BBox/PointBuffer` currently require `crs="EPSG:4326"`
 - Precomputed models mainly use `backend="local"`; on-the-fly models mainly use provider backends (typically `"gee"`)
-- `export_batch(format=...)` currently implements only `"npz"`; it may be extended to parquet/zarr/hdf5, etc.
+- `export_batch(format=...)` currently supports `"npz"` and `"netcdf"`; it may be extended to parquet/zarr/hdf5, etc.
