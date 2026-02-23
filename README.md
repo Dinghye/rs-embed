@@ -45,11 +45,11 @@ spatial = PointBuffer(lon=121.5, lat=31.2, buffer_m=2048)
 temporal = TemporalSpec.year(2024)
 
 emb = get_embedding(
-    "tessera",
+    "gse_annual",       # alpha earth
     spatial=spatial,
     temporal=temporal,
     output=OutputSpec.grid(),
-    backend="local",
+    backend="gee",
 )
 
 ```
@@ -65,7 +65,7 @@ plot_embedding_pseudocolor(
 ```
 
 
-<img src="./docs/assets/vis.png" width=500 /> 
+<img src="./docs/assets/vis.png" width=650 /> 
 
 ## Supported Models (Quick Reference)
 
