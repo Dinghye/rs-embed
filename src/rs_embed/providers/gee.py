@@ -61,6 +61,8 @@ _ALIAS_LS457_SR = {
     "SWIR2": "SR_B7",
 }
 
+_NO_IMAGES_FOUND_MSG = "No images found for the selected region/time window."
+
 
 def _resolve_band_aliases(collection: str, bands: Tuple[str, ...]) -> Tuple[str, ...]:
     """Resolve semantic band aliases to real band names based on collection id."""
@@ -94,6 +96,25 @@ def _split_date_range(start: str, end: str, n_parts: int) -> Tuple[Tuple[str, st
         raise ProviderError(str(e)) from e
 
 
+def _no_images_found_message(*, collection: Optional[str] = None) -> str:
+    if collection:
+        return f"{_NO_IMAGES_FOUND_MSG} collection={collection!r}"
+    return _NO_IMAGES_FOUND_MSG
+
+
+def _collection_size_or_none(col: Any) -> Optional[int]:
+    try:
+        return int(col.size().getInfo())
+    except Exception:
+        return None
+
+
+def _raise_if_empty_collection(col: Any, *, collection: Optional[str] = None) -> None:
+    n = _collection_size_or_none(col)
+    if n == 0:
+        raise ProviderError(_no_images_found_message(collection=collection))
+
+
 def _sample_image_bands_raw_chw(
     img: Any,
     *,
@@ -105,6 +126,8 @@ def _sample_image_bands_raw_chw(
     img = img.select(list(bands)).reproject(crs="EPSG:3857", scale=int(scale_m))
     rect = img.sampleRectangle(region=region, defaultValue=float(fill_value)).getInfo()
     props = rect.get("properties", {}) if isinstance(rect, dict) else {}
+    if not props:
+        raise ProviderError(_NO_IMAGES_FOUND_MSG)
     arrs = [np.array(props.get(str(b), []), dtype=np.float32) for b in bands]
     try:
         raw = np.stack(arrs, axis=0).astype(np.float32)
@@ -200,6 +223,7 @@ class GEEProvider(ProviderBase):
                     ic = ic.filter(ee.Filter.lte("CLOUDY_PIXEL_PERCENTAGE", int(sensor.cloudy_pct)))
                 except Exception:
                     pass
+            _raise_if_empty_collection(ic, collection=str(sensor.collection))
 
             if sensor.composite == "median":
                 img = ic.median()
@@ -207,6 +231,8 @@ class GEEProvider(ProviderBase):
                 img = ic.mosaic()
             else:
                 img = ic.median()
+        except ProviderError:
+            raise
         except Exception:
             img = ee.Image(sensor.collection)
 
@@ -246,6 +272,8 @@ class GEEProvider(ProviderBase):
         # 4) Sample and build CHW
         rect = img.sampleRectangle(region=region, defaultValue=fill_value).getInfo()
         props = rect.get("properties", {})
+        if not props:
+            raise ProviderError(_no_images_found_message(collection=collection))
 
         arrs = []
         missing = []
@@ -298,6 +326,7 @@ class GEEProvider(ProviderBase):
         )
         if orbit:
             col = col.filter(ee.Filter.eq("orbitProperties_pass", orbit))
+        _raise_if_empty_collection(col, collection=collection_id)
 
         comp = str(composite).lower().strip()
         if comp == "median":
@@ -310,6 +339,8 @@ class GEEProvider(ProviderBase):
         img = img.select(["VV", "VH"]).reproject(crs="EPSG:3857", scale=int(scale_m))
         rect = img.sampleRectangle(region=region, defaultValue=float(fill_value)).getInfo()
         props = rect.get("properties", {}) if isinstance(rect, dict) else {}
+        if not props:
+            raise ProviderError(_no_images_found_message(collection=collection_id))
         vv = np.array(props.get("VV", []), dtype=np.float32)
         vh = np.array(props.get("VH", []), dtype=np.float32)
         try:
@@ -348,6 +379,7 @@ class GEEProvider(ProviderBase):
                 col_all = col_all.filter(ee.Filter.lt("CLOUDY_PIXEL_PERCENTAGE", int(cloudy_pct)))
             except Exception:
                 pass
+        _raise_if_empty_collection(col_all, collection=str(collection))
 
         comp = str(composite).lower().strip()
         if comp not in {"median", "mosaic"}:
@@ -395,7 +427,7 @@ class GEEProvider(ProviderBase):
             if fallback_frame is not None:
                 frames = [fallback_frame.copy() for _ in range(max(1, int(n_frames)))]
             else:
-                raise ProviderError("No valid observations found for the requested ROI/time window.")
+                raise ProviderError(_no_images_found_message(collection=str(collection)))
 
         t = max(1, int(n_frames))
         if len(frames) < t:
@@ -441,6 +473,7 @@ class GEEProvider(ProviderBase):
         col = col.filterBounds(region)
         if temporal_range is not None:
             col = col.filterDate(temporal_range[0], temporal_range[1])
+        _raise_if_empty_collection(col, collection=str(collection))
 
         comp = str(composite).lower().strip()
         if comp == "median":
@@ -458,6 +491,8 @@ class GEEProvider(ProviderBase):
 
         rect = img.sampleRectangle(region=region, defaultValue=float(fill_value)).getInfo()
         props = rect.get("properties", {}) if isinstance(rect, dict) else {}
+        if not props:
+            raise ProviderError(_no_images_found_message(collection=str(collection)))
         arrs = [np.array(props.get(b, []), dtype=np.float32) for b in band_names]
         try:
             arr = np.stack(arrs, axis=0).astype(np.float32)

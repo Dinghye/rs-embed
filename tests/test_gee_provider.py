@@ -2,9 +2,14 @@
 
 Band alias resolution is pure logic — no network calls needed.
 """
+import sys
+import types
+
 import pytest
 
-from rs_embed.providers.gee import _resolve_band_aliases
+from rs_embed.core.errors import ProviderError
+from rs_embed.core.specs import SensorSpec, TemporalSpec
+from rs_embed.providers.gee import GEEProvider, _resolve_band_aliases
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -122,3 +127,69 @@ def test_mixed_alias_and_real():
         "COPERNICUS/S2_SR_HARMONIZED", ("RED", "B3", "BLUE")
     )
     assert result == ("B4", "B3", "B2")
+
+
+def test_build_image_empty_collection_raises_clear_error(monkeypatch):
+    class _FakeSize:
+        def getInfo(self):
+            return 0
+
+    class _FakeCollection:
+        def filterBounds(self, _region):
+            return self
+
+        def filterDate(self, _start, _end):
+            return self
+
+        def size(self):
+            return _FakeSize()
+
+    fake_ee = types.SimpleNamespace(
+        ImageCollection=lambda _collection: _FakeCollection(),
+        Image=lambda _collection: (_ for _ in ()).throw(AssertionError("fallback should not be used")),
+    )
+    monkeypatch.setitem(sys.modules, "ee", fake_ee)
+
+    provider = GEEProvider(auto_auth=False)
+    sensor = SensorSpec(collection="COPERNICUS/S2_SR_HARMONIZED", bands=("B4",), cloudy_pct=None)
+    temporal = TemporalSpec.range("2024-01-01", "2024-02-01")
+
+    with pytest.raises(ProviderError, match="No images found"):
+        provider.build_image(sensor=sensor, temporal=temporal, region=object())
+
+
+def test_fetch_array_chw_empty_sample_props_raises_clear_error(monkeypatch):
+    class _FakeProjection:
+        def atScale(self, _scale):
+            return self
+
+    class _FakeRect:
+        def getInfo(self):
+            return {"properties": {}}
+
+    class _FakeImage:
+        def select(self, _bands):
+            return self
+
+        def reproject(self, _proj):
+            return self
+
+        def clip(self, _region):
+            return self
+
+        def sampleRectangle(self, *, region, defaultValue):  # noqa: ARG002
+            return _FakeRect()
+
+    fake_ee = types.SimpleNamespace(Projection=lambda *_args, **_kwargs: _FakeProjection())
+    monkeypatch.setitem(sys.modules, "ee", fake_ee)
+
+    provider = GEEProvider(auto_auth=False)
+    with pytest.raises(ProviderError, match="No images found"):
+        provider.fetch_array_chw(
+            image=_FakeImage(),
+            bands=("RED",),
+            region=object(),
+            scale_m=10,
+            fill_value=0.0,
+            collection="COPERNICUS/S2_SR_HARMONIZED",
+        )
