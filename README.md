@@ -75,7 +75,7 @@ This is a convenience index with basic model info only (for quick scanning / lin
 
 | Model ID | Type | Resolution | Time Coverage | Publication |
 |---|---|---|---|---|
-|`tessera` | Precomputed | 0.1° | 2017-2025 |[CVPR 2026](https://arxiv.org/abs/2506.20380v4)|
+|`tessera` | Precomputed | 10m | 2017-2025 |[CVPR 2026](https://arxiv.org/abs/2506.20380v4)|
 |`gse_annual` (Alpha Earth) | Precomputed | 10 m | 2017-2024 |[arXiv 2025](https://arxiv.org/abs/2507.22291)|
 | `copernicus_embed` | Precomputed | 0.25° | 2021 |[ICCV 2025](https://arxiv.org/abs/2503.11849)|
 
@@ -109,7 +109,13 @@ This is a convenience index with basic model info only (for quick scanning / lin
 
 🪀 [Use case: Maize yield mapping Illinois](./examples/demo.ipynb)
 
+## Extending
+
+We welcome requests for new model integrations and extensions. If you have your own work, or a model/paper you care about and think is meaningful to include, please open an [Issue](https://github.com/Dinghye/rs-embed/issues) and share it. We will prioritize helping extend `rs-embed` for those requests.
+
+If you want to implement the extension yourself, you can also follow the guide in [`extending`](https://dinghye.github.io/rs-embed/extending/).
+
 
 
 ## License
-Apache-2.0
+This project is released under the [Apache-2.0](LICENSE)

@@ -6,7 +6,7 @@ This page lists supported model backends and their I/O characteristics.
 
 | **Model** | **ID** | **Output** | **Resolution** | **Dim** | **Time Coverage** | **Notes** |
 |---|---|---|---|---|---|---|
-| **Tessera** | `tessera` | pooled / grid | 0.1° | 128 | 2017–2025 | GeoTessera global tile embeddings |
+| **Tessera** | `tessera` | pooled / grid | 10m | 128 | 2017–2025 | GeoTessera global tile embeddings |
 | **Google Satellite Embedding (Alpha Earth)** | `gse_annual` | pooled / grid | 10 m | 64 | 2017–2024 | Annual embeddings via GEE |
 | **Copernicus Embed** | `copernicus_embed` | pooled / grid | 0.25° | 768 | 2021 | Official Copernicus embeddings |
 
