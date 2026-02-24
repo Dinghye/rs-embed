@@ -20,7 +20,7 @@ Examples notebook: examples/playground.ipynb
 
 ## Authenticate Google Earth Engine
 
-If you are using GEE for the first time, you need to complete the authentication process by using the following command.
+If you are using GEE for the first time, complete the authentication process with the following command.
 
 ```bash
 earthengine authenticate
