@@ -20,7 +20,7 @@
 ## TL;DR
 
 ```python
-emb = get_embedding("tessera", spatial=..., temporal=..., output=...)
+emb = get_embedding("tessera", spatial=..., temporal=..., output=..., backend="local")
 ```
 
 
@@ -56,11 +56,11 @@ emb = get_embedding(
 You can also visualize the embedding by :
 
 ```python
-from rs_embed plot_embedding_pseudocolor
+from examples.plot_utils import plot_embedding_pseudocolor
 
 plot_embedding_pseudocolor(
-    emb_tessera_grid,
-    title="Tessera grid PCA pseudocolor",
+    emb,
+    title="gse_annual grid PCA pseudocolor",
 )
 ```
 

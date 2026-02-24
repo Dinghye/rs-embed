@@ -1,7 +1,7 @@
 
 ## Overview
 
-To add a new model, you typically do four things:
+To add a new model, you typically do five things:
 
 1. **Create an embedder class** in `src/rs_embed/embedders/`
 2. Decorate it with **`@register("your_model_name")`**
@@ -10,7 +10,8 @@ To add a new model, you typically do four things:
    - `describe()`
    - `get_embedding(...)`
 5. (Optional, recommended) Override:
-   - `get_embeddings_batch(...)` for true batched inference
+   - `get_embeddings_batch(...)` for true batched inference (no prefetched inputs)
+   - `get_embeddings_batch_from_inputs(...)` for true batched inference with prefetched `input_chw`
 
 ---
 
@@ -50,10 +51,12 @@ class EmbedderBase:
         temporal,
         sensor,
         output,
-        backend="gee",
+        backend,
         device="auto",
         input_chw=None,
     ): ...
+    def get_embeddings_batch(...): ...
+    def get_embeddings_batch_from_inputs(...): ...
 ```
 
 ### `describe()`
@@ -63,18 +66,21 @@ class EmbedderBase:
 ```python
 {
   "type": "on_the_fly" | "precomputed",
-  "backend": ["provider" | "gee" | "local" | "auto", ...],
+  "backend": ["provider" | "gee" | "local" | "auto" | "tensor", ...],
   "inputs": {
     "sensor_required": true/false,
     "default_sensor": {...} | null,
     "notes": "..."
   },
+  "temporal": {"mode": "year" | "range"} | null,
   "output": ["pooled", "grid"]
 }
 ```
 
 !!! note
     `describe()` should be **fast** and should not trigger heavy downloads or model loading.
+    In current rs-embed, `describe()["backend"]`, `describe()["output"]`, and `describe()["temporal"]`
+    may be used for runtime validation and capability checks.
 
 ---
 
@@ -87,6 +93,7 @@ Create `src/rs_embed/embedders/toy_model.py`:
 ```python
 from __future__ import annotations
 
+import hashlib
 from dataclasses import asdict
 from typing import Any, Dict, Optional
 import numpy as np
@@ -114,12 +121,16 @@ class ToyModelV1(EmbedderBase):
         temporal: Optional[TemporalSpec],
         sensor: Optional[SensorSpec],
         output: OutputSpec,
-        backend: str = "gee",
+        backend: str = "local",
         device: str = "auto",
         input_chw: Optional[np.ndarray] = None,
     ) -> Embedding:
-        # Use stable seed so results are reproducible per spatial/temporal.
-        seed = hash((repr(spatial), repr(temporal), self.model_name)) & 0xFFFFFFFF
+        # Use a stable hash so results are reproducible across processes.
+        seed_bytes = hashlib.blake2s(
+            f"{spatial!r}|{temporal!r}|{self.model_name}".encode("utf-8"),
+            digest_size=4,
+        ).digest()
+        seed = int.from_bytes(seed_bytes, "little")
         rng = np.random.default_rng(seed)
 
         if output.mode != "pooled":
@@ -196,10 +207,13 @@ if input_chw is None:
 
 ---
 
-## True Batch Inference (`get_embeddings_batch`)
+## True Batch Inference (`get_embeddings_batch` / `get_embeddings_batch_from_inputs`)
 
 `EmbedderBase.get_embeddings_batch` defaults to a Python loop calling `get_embedding`.  
-If your model supports vectorized/batched inference (common for torch models), override it:
+`EmbedderBase.get_embeddings_batch_from_inputs` defaults to a Python loop calling
+`get_embedding(..., input_chw=...)`.
+
+If your model supports vectorized/batched inference (common for torch models), override one or both:
 
 ```python
 def get_embeddings_batch(
@@ -217,6 +231,29 @@ def get_embeddings_batch(
     # 3) run a single forward pass
     # 4) split outputs back into Embedding objects
 ```
+
+If your model supports `input_chw` reuse (recommended for on-the-fly models), also consider:
+
+```python
+def get_embeddings_batch_from_inputs(
+    self,
+    *,
+    spatials,
+    input_chws,
+    temporal=None,
+    sensor=None,
+    output=OutputSpec.pooled(),
+    backend="auto",
+    device="auto",
+):
+    # 1) preprocess/stack prefetched CHW inputs
+    # 2) run a single batched forward pass
+    # 3) split outputs back into Embedding objects
+```
+
+`export_batch(...)` prefers `get_embeddings_batch_from_inputs(...)` when it has prefetched
+provider inputs available, so overriding this method usually gives the biggest speedup for
+on-the-fly models.
 
 Best practice:
 - Batch **inference** (GPU-friendly).
@@ -292,7 +329,7 @@ def test_toy_model_get_embedding():
         spatial=PointBuffer(0, 0, 1000),
         temporal=TemporalSpec.year(2022),
         output=OutputSpec.pooled(),
-        backend="gee",
+        backend="local",
     )
     assert emb.data.shape == (512,)
 ```
@@ -328,6 +365,7 @@ Before opening a PR / shipping the model:
 - [ ] `@register("...")` added and entry added in `src/rs_embed/embedders/catalog.py`
 - [ ] `describe()` is fast and accurate
 - [ ] `get_embedding()` supports `input_chw` reuse (if on-the-fly)
+- [ ] override `get_embeddings_batch_from_inputs()` if your model can batch prefetched inputs
 - [ ] clear errors for missing optional dependencies
 - [ ] unit tests added (`pytest -q` passes)
 - [ ] minimal usage example in docs or notebook

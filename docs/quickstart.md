@@ -164,7 +164,7 @@ rs-embed supports pluggable backends. In most setups:
 
 `export_batch(format=...)` is designed to be extensible.
 
-- Current format: `npz`
+- Current formats: `npz`, `netcdf`
 - Planned: parquet / zarr / hdf5 (depending on your roadmap)
 
 `export_npz(...)` is provided as a convenience wrapper for single-ROI exports and shares the same performance optimizations.
@@ -191,6 +191,6 @@ When you use:
 - **IO level**: remote patch prefetch is parallelized (`num_workers`).
 - **Inference level**:
   - model-to-model execution is serial (stability-first default),
-  - but each model can use batched inference over many points when batch APIs are available (such as `get_embeddings_batch` / `get_embeddings_batch_from_inputs`, mainly in `out_path` combined mode).
+  - but each model can use batched inference over many points when batch APIs are available (such as `get_embeddings_batch` / `get_embeddings_batch_from_inputs`): in combined mode by default, and in per-item mode when running on GPU/accelerators.
 
 So rs-embed supports batch-level inference acceleration, while model-level scheduling remains serial by design.
