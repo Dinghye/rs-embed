@@ -20,8 +20,10 @@
 ## TL;DR
 
 ```python
-emb = get_embedding("tessera", spatial=..., temporal=..., output=..., backend="local")
+emb = get_embedding("tessera", spatial=..., temporal=..., output=...)
 ```
+
+`tessera` / `copernicus` / `gse` are precomputed products with fixed data sources; `rs-embed` now auto-selects a compatible access backend for them.
 
 
 ## Install (temporary)

@@ -57,7 +57,7 @@ Computes the embedding for a single ROI.
 - `temporal`: `TemporalSpec` or `None`
 - `sensor`: input descriptor for on-the-fly models; for most precomputed models this can be `None`
 - `output`: `OutputSpec.pooled()` or `OutputSpec.grid(...)`
-- `backend`: currently mainly `"gee"` (Google Earth Engine)
+- `backend`: access backend (mainly for on-the-fly models, typically `"gee"`). For precomputed models, the data `source` is fixed by the model and a compatible backend is auto-resolved when possible (for example `tessera` -> local access).
 - `device`: `"auto" / "cpu" / "cuda"` (if the model depends on torch)
 - `input_prep`: `"resize"` (default), `"tile"`, `"auto"`, or `InputPrepSpec(...)`
 

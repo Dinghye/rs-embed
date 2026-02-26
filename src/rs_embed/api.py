@@ -61,7 +61,7 @@ from .core.embedding import Embedding
 from .core.errors import ModelError
 from .core.registry import get_embedder_cls
 from .core.specs import InputPrepSpec, OutputSpec, SensorSpec, SpatialSpec, TemporalSpec, BBox
-from .providers import ProviderBase, get_provider, has_provider
+from .providers import ProviderBase, get_provider, has_provider, list_providers
 
 # Backward-compatibility hook: tests/downstream may monkeypatch api.GEEProvider.
 GEEProvider: Optional[Callable[..., ProviderBase]] = None
@@ -102,6 +102,68 @@ def _provider_factory_for_backend(backend: str) -> Optional[Callable[[], Provide
         # Keep monkeypatch-friendly behavior for existing tests.
         return _create_default_gee_provider
     return lambda: get_provider(b)
+
+
+def _probe_model_describe(model_n: str) -> Dict[str, Any]:
+    """Best-effort model describe() probe used for API-level routing decisions."""
+    try:
+        cls = get_embedder_cls(model_n)
+        emb = cls()
+        desc = emb.describe() or {}
+        return desc if isinstance(desc, dict) else {}
+    except Exception:
+        return {}
+
+
+def _default_provider_backend_for_api() -> str:
+    providers = [str(p).strip().lower() for p in list_providers()]
+    if "gee" in providers:
+        return "gee"
+    if providers:
+        return providers[0]
+    # Keep legacy behavior as a fallback; downstream provider creation will
+    # still raise a clear error if no provider backend is available.
+    return "gee"
+
+
+def _resolve_embedding_api_backend(model_n: str, backend_n: str) -> str:
+    """Normalize backend semantics for precomputed models.
+
+    For precomputed products, the data source is fixed by the model. This helper
+    makes the public API less coupled to provider-vs-local backend details by
+    auto-selecting a compatible access backend when the generic default
+    (historically `gee`) is passed in.
+    """
+    desc = _probe_model_describe(model_n)
+    if str(desc.get("type", "")).strip().lower() != "precomputed":
+        return backend_n
+
+    backends = desc.get("backend")
+    if not isinstance(backends, list):
+        return backend_n
+    allowed = [str(b).strip().lower() for b in backends if str(b).strip()]
+    if not allowed:
+        return backend_n
+
+    provider_allowed = ("provider" in allowed) or ("gee" in allowed)
+    if backend_n in allowed:
+        if backend_n == "auto" and provider_allowed:
+            return _default_provider_backend_for_api()
+        return backend_n
+    if has_provider(backend_n) and provider_allowed:
+        return backend_n
+
+    # Public API default is historically backend="gee". For precomputed models,
+    # treat that as "use the model's fixed source via its supported access path".
+    if backend_n in {"gee", "auto"}:
+        if "local" in allowed:
+            return "local"
+        if provider_allowed:
+            return _default_provider_backend_for_api()
+        if "auto" in allowed:
+            return "auto"
+
+    return backend_n
 
 
 @dataclass(frozen=True)
@@ -1655,8 +1717,8 @@ def get_embedding(
     # Import embedders so registration happens before resolving model IDs
     from . import embedders  # noqa: F401
 
-    backend_n = _normalize_backend_name(backend)
     model_n = _normalize_model_name(model)
+    backend_n = _resolve_embedding_api_backend(model_n, _normalize_backend_name(backend))
     device = _normalize_device_name(device)
 
     _validate_specs(spatial=spatial, temporal=temporal, output=output)
@@ -1762,8 +1824,8 @@ def get_embeddings_batch(
     """Compute embeddings for multiple SpatialSpecs using a shared embedder instance."""
     from . import embedders  # noqa: F401
 
-    backend_n = _normalize_backend_name(backend)
     model_n = _normalize_model_name(model)
+    backend_n = _resolve_embedding_api_backend(model_n, _normalize_backend_name(backend))
     device = _normalize_device_name(device)
 
     if not isinstance(spatials, list) or len(spatials) == 0:

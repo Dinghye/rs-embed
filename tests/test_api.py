@@ -26,6 +26,22 @@ class _MockEmbedder(EmbedderBase):
         return Embedding(data=vec, meta={"model": self.model_name, "output": output.mode})
 
 
+class _MockPrecomputedLocalEmbedder(EmbedderBase):
+    def describe(self):
+        return {
+            "type": "precomputed",
+            "backend": ["local", "auto"],
+            "output": ["pooled"],
+            "source": "mock.fixed.source",
+        }
+
+    def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+        return Embedding(
+            data=np.arange(4, dtype=np.float32),
+            meta={"model": self.model_name, "backend_used": backend, "source": "mock.fixed.source"},
+        )
+
+
 @pytest.fixture(autouse=True)
 def register_mock():
     registry._REGISTRY.clear()
@@ -61,6 +77,16 @@ def test_get_embedding_output_modes():
 
     emb_grid = get_embedding("mock_model", spatial=_SPATIAL, output=OutputSpec.grid())
     assert emb_grid.meta["output"] == "grid"
+
+
+def test_get_embedding_precomputed_default_backend_auto_resolves_to_local():
+    from rs_embed.api import get_embedding
+
+    registry.register("mock_precomputed_local")(_MockPrecomputedLocalEmbedder)
+
+    emb = get_embedding("mock_precomputed_local", spatial=_SPATIAL)
+    assert emb.meta["backend_used"] == "local"
+    assert emb.meta["source"] == "mock.fixed.source"
 
 
 def test_get_embedding_unknown_model():
@@ -105,6 +131,19 @@ def test_get_embeddings_batch_with_sensor():
         "mock_model", spatials=spatials, temporal=_TEMPORAL, sensor=sensor,
     )
     assert len(results) == 1
+
+
+def test_get_embeddings_batch_precomputed_default_backend_auto_resolves_to_local():
+    from rs_embed.api import get_embeddings_batch
+
+    registry.register("mock_precomputed_local")(_MockPrecomputedLocalEmbedder)
+
+    results = get_embeddings_batch(
+        "mock_precomputed_local",
+        spatials=[_SPATIAL, PointBuffer(lon=1.0, lat=0.0, buffer_m=512)],
+    )
+    assert len(results) == 2
+    assert all(emb.meta["backend_used"] == "local" for emb in results)
 
 
 # ══════════════════════════════════════════════════════════════════════

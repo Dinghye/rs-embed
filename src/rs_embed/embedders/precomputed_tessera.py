@@ -204,6 +204,23 @@ def _mosaic_and_crop_strict_roi(
 class TesseraEmbedder(EmbedderBase):
     DEFAULT_BATCH_WORKERS = 4
 
+    def describe(self) -> Dict[str, Any]:
+        return {
+            "type": "precomputed",
+            "backend": ["local", "auto"],
+            "inputs": {"spatial": "BBox or PointBuffer (EPSG:4326)"},
+            "temporal": {"mode": "year_or_range", "default_year": 2021},
+            "output": ["pooled", "grid"],
+            "source": "geotessera.GeoTessera",
+            "defaults": {
+                "cache_dir_env": "RS_EMBED_TESSERA_CACHE",
+            },
+            "notes": [
+                "Precomputed GeoTessera tiles are local-cache backed (no provider backend).",
+                "TemporalSpec.range uses the start year for tile lookup in v0.1.",
+            ],
+        }
+
     def __init__(self) -> None:
         # Cache GeoTessera instances per cache_dir to avoid repeated index scans.
         self._gt_cache: Dict[str, Any] = {}
