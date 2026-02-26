@@ -59,32 +59,6 @@ Compatibility / convenience wrappers (still supported):
 | inspect raw provider patches before inference | [API: Inspect](api_inspect.md) |
 
 ---
-
-## Page Map
-
-### `api_specs.md`
-
-- `BBox`, `PointBuffer`, `TemporalSpec`, `SensorSpec`, `OutputSpec`, `InputPrepSpec`
-- `Embedding` data structure semantics
-
-### `api_embedding.md`
-
-- `get_embedding(...)`
-- `get_embeddings_batch(...)`
-
-### `api_export.md`
-
-- `export_batch(...)` (primary export API)
-- `export_npz(...)` (compatibility / convenience wrapper)
-- export performance behavior and layout options
-
-### `api_inspect.md`
-
-- `inspect_provider_patch(...)`
-- `inspect_gee_patch(...)` (backward-compatible wrapper)
-
----
-
 ## Model Registry (Advanced)
 
 If you need a stable model list in code, use the model catalog:

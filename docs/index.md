@@ -1,4 +1,4 @@
-![rs-embed banner](assets/banner.png)
+<!-- ![rs-embed banner](assets/banner.png) -->
 
 > One line of code to get embeddings from **any Remote Sensing Foundation Model (RSFM)** for **any location** and **any time**
 
