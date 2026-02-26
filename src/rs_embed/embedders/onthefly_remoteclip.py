@@ -470,7 +470,7 @@ def _remoteclip_encode_pooled_batch(
         raise ModelError(f"RemoteCLIP batch mismatch: got B={arr.shape[0]}, expected {len(rgb_u8_batch)}")
     return arr
 
-@register("remoteclip_s2rgb")
+@register("remoteclip")
 class RemoteCLIPS2RGBEmbedder(EmbedderBase):
     """
     ROI -> (provider S2 SR Harmonized RGB composite) -> RemoteCLIP -> pooled or token-grid embedding

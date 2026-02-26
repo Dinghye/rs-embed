@@ -454,7 +454,7 @@ def _thor_forward_single(
     return tokens, grid, meta
 
 
-@register("thor_1_0_base")
+@register("thor")
 class THORBaseEmbedder(EmbedderBase):
     DEFAULT_MODEL_KEY = "thor_v1_base"
     DEFAULT_IMAGE_SIZE = 288

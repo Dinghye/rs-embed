@@ -14,7 +14,7 @@ Use `get_embedding(...)` when you want one ROI embedding now.
 from rs_embed import PointBuffer, TemporalSpec, OutputSpec, get_embedding
 
 emb = get_embedding(
-    "remoteclip_s2rgb",
+    "remoteclip",
     spatial=PointBuffer(lon=121.5, lat=31.2, buffer_m=2048),
     temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
     output=OutputSpec.pooled(),
@@ -44,7 +44,7 @@ spatials = [
 ]
 
 embs = get_embeddings_batch(
-    "remoteclip_s2rgb",
+    "remoteclip",
     spatials=spatials,
     temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
     output=OutputSpec.pooled(),
@@ -76,7 +76,7 @@ export_batch(
     spatials=spatials,
     names=["p1", "p2"],
     temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
-    models=["remoteclip_s2rgb", "prithvi_eo_v2_s2_6b"],
+    models=["remoteclip", "prithvi"],
     out_dir="exports",
     backend="gee",
     save_inputs=True,
@@ -129,7 +129,7 @@ If you request large ROIs for on-the-fly models, try API-side tiling:
 from rs_embed import get_embedding, PointBuffer, TemporalSpec, OutputSpec
 
 emb = get_embedding(
-    "remoteclip_s2rgb",
+    "remoteclip",
     spatial=PointBuffer(121.5, 31.2, 8000),
     temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
     output=OutputSpec.grid(),

@@ -20,7 +20,7 @@ def _parse_bands(s: str) -> Tuple[str, ...]:
 def _parse_models(s: str) -> List[str]:
     parts = [p.strip() for p in s.split(",") if p.strip()]
     if not parts:
-        raise argparse.ArgumentTypeError("--models must be a comma-separated list, e.g. 'remoteclip_s2rgb,prithvi_eo_v2_s2_6b'")
+        raise argparse.ArgumentTypeError("--models must be a comma-separated list, e.g. 'remoteclip,prithvi'")
     return parts
 
 

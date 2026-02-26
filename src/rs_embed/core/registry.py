@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib
 from typing import Dict, Type, Any, Optional
 
+from rs_embed.embedders.catalog import MODEL_SPECS, canonical_model_id
+
 from .errors import ModelError
 
 _REGISTRY: Dict[str, Type[Any]] = {}
@@ -11,8 +13,9 @@ _REGISTRY_IMPORT_ERROR: Optional[BaseException] = None
 def register(name: str):
     """Decorator to register an embedder class by name."""
     def deco(cls: Type[Any]):
-        _REGISTRY[name.lower()] = cls
-        setattr(cls, "model_name", name.lower())
+        model_id = canonical_model_id(name)
+        _REGISTRY[model_id] = cls
+        setattr(cls, "model_name", model_id)
         return cls
     return deco
 
@@ -25,15 +28,10 @@ def _try_lazy_load_model(name: str) -> None:
     """Load only the module that owns `name`, then backfill registration if needed."""
     global _REGISTRY_IMPORT_ERROR
 
-    if name in _REGISTRY:
+    model_id = canonical_model_id(name)
+    if model_id in _REGISTRY:
         return
-    try:
-        from rs_embed.embedders.catalog import MODEL_SPECS
-    except Exception as e:
-        _REGISTRY_IMPORT_ERROR = e
-        return
-
-    spec = MODEL_SPECS.get(name)
+    spec = MODEL_SPECS.get(model_id)
     if spec is None:
         return
     module_name, class_name = spec
@@ -52,13 +50,13 @@ def _try_lazy_load_model(name: str) -> None:
 
     # If decorators did not run in this process state (e.g. registry was cleared),
     # repopulate from the imported module class symbol.
-    _REGISTRY[name] = cls
-    setattr(cls, "model_name", name)
+    _REGISTRY[model_id] = cls
+    setattr(cls, "model_name", model_id)
     _REGISTRY_IMPORT_ERROR = None
 
 def get_embedder_cls(name: str) -> Type[Any]:
     _ensure_registry_loaded()
-    k = name.lower()
+    k = canonical_model_id(name)
     if k not in _REGISTRY:
         _try_lazy_load_model(k)
     if k not in _REGISTRY:

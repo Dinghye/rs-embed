@@ -107,7 +107,7 @@ spatials = [
 export_batch(
     spatials=spatials,
     temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
-    models=["remoteclip_s2rgb", "prithvi_eo_v2_s2_6b"],
+    models=["remoteclip", "prithvi"],
     out_dir="exports",
     names=["p1", "p2"],
     input_prep="tile",  # optional: API-side tiled inference for large ROIs
@@ -126,7 +126,7 @@ from rs_embed import export_batch, PointBuffer, TemporalSpec
 export_batch(
     spatials=[PointBuffer(121.5, 31.2, 2048)],
     temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
-    models=["remoteclip_s2rgb"],
+    models=["remoteclip"],
     out_path="combined.npz",
 )
 ```
@@ -139,7 +139,7 @@ from rs_embed import export_batch, PointBuffer, TemporalSpec
 export_batch(
     spatials=[PointBuffer(121.5, 31.2, 2048)],
     temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
-    models=["remoteclip_s2rgb"],
+    models=["remoteclip"],
     out="exports/combined_run",
     layout="combined",  # writes exports/combined_run.npz
 )

@@ -41,22 +41,22 @@ nav:
     - Supported Models (Advanced Reference): models_reference.md
     - Model Details (Examples):
       - Precomputed:
-        - gse_annual: models/gse_annual.md
-        - copernicus_embed: models/copernicus_embed.md
+        - gse: models/gse_annual.md
+        - copernicus: models/copernicus_embed.md
         - tessera: models/tessera.md
       - On-the-fly:
-        - remoteclip_s2rgb: models/remoteclip_s2rgb.md
-        - satmae_rgb: models/satmae_rgb.md
-        - scalemae_rgb: models/scalemae_rgb.md
+        - remoteclip: models/remoteclip_s2rgb.md
+        - satmae: models/satmae_rgb.md
+        - scalemae: models/scalemae_rgb.md
         - dynamicvis: models/dynamicvis.md
         - wildsat: models/wildsat.md
-        - prithvi_eo_v2_s2_6b: models/prithvi_eo_v2_s2_6b.md
+        - prithvi: models/prithvi_eo_v2_s2_6b.md
         - terramind: models/terramind.md
         - dofa: models/dofa.md
         - fomo: models/fomo.md
-        - thor_1_0_base: models/thor_1_0_base.md
-        - satvision_toa: models/satvision_toa.md
-        - terrafm_b: models/terrafm_b.md
+        - thor: models/thor_1_0_base.md
+        - satvision: models/satvision_toa.md
+        - terrafm: models/terrafm_b.md
         - anysat: models/anysat.md
         - galileo: models/galileo.md
         - agrifm: models/agrifm.md

@@ -7,6 +7,8 @@ This page is for getting a first successful run quickly.
 - Need semantics first (`TemporalSpec`, `OutputSpec`): read [Core Concepts](concepts.md)
 - Need task-oriented patterns after setup: read [Common Workflows](workflows.md)
 
+Canonical model IDs now use short names (for example `remoteclip`, `prithvi`). Legacy IDs such as `remoteclip_s2rgb` still work as aliases.
+
 ---
 
 ## Install (temporary)
@@ -60,7 +62,7 @@ python examples/quickstart.py --mode local --run-export
 
 ### GEE mode (on-the-fly)
 
-Runs `remoteclip_s2rgb` examples for:
+Runs `remoteclip` examples for:
 - `inspect_gee_patch` (backward-compatible wrapper; see also `inspect_provider_patch`)
 - single embedding
 - batch embeddings
@@ -89,7 +91,7 @@ python examples/quickstart.py --mode all --run-export
 from rs_embed import PointBuffer, TemporalSpec, OutputSpec, get_embedding
 
 emb = get_embedding(
-    "remoteclip_s2rgb",
+    "remoteclip",
     spatial=PointBuffer(lon=121.5, lat=31.2, buffer_m=2048),
     temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
     output=OutputSpec.pooled(pooling="mean"),
@@ -116,7 +118,7 @@ spatials = [
 ]
 
 embs = get_embeddings_batch(
-    "remoteclip_s2rgb",
+    "remoteclip",
     spatials=spatials,
     temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
     backend="gee",
@@ -145,7 +147,7 @@ export_batch(
     spatials=spatials,
     names=["p1", "p2"],
     temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
-    models=["remoteclip_s2rgb", "prithvi_eo_v2_s2_6b"],
+    models=["remoteclip", "prithvi"],
     out_dir="exports",
     backend="gee",
     device="auto",

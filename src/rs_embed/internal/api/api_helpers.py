@@ -9,6 +9,7 @@ from ...core.errors import ModelError
 from ...core.export_helpers import jsonable as _jsonable
 from ...core.specs import BBox, SensorSpec, SpatialSpec, TemporalSpec
 from ...providers.base import ProviderBase
+from ...embedders.catalog import canonical_model_id
 
 
 _WEB_MERCATOR_R = 6378137.0
@@ -21,7 +22,7 @@ _GEE_BBOX_STITCH_LEN_TOLERANCE_PX = 4
 
 
 def normalize_model_name(model: str) -> str:
-    return str(model).strip().lower()
+    return canonical_model_id(model)
 
 
 def normalize_backend_name(backend: str) -> str:

@@ -124,7 +124,7 @@ def run_gee_demo(*, device: str, run_export: bool, out_dir: Path) -> None:
         inspect_gee_patch,
     )
 
-    print("\n=== GEE quickstart (on-the-fly: remoteclip_s2rgb) ===")
+    print("\n=== GEE quickstart (on-the-fly: remoteclip) ===")
     print("Ensure GEE is authenticated first: earthengine authenticate")
 
     spatial = PointBuffer(lon=121.5, lat=31.2, buffer_m=512)
@@ -149,7 +149,7 @@ def run_gee_demo(*, device: str, run_export: bool, out_dir: Path) -> None:
     print(f"ok={check.get('ok')}, shape={report.get('shape')}, dtype={report.get('dtype')}")
 
     pooled = get_embedding(
-        "remoteclip_s2rgb",
+        "remoteclip",
         spatial=spatial,
         temporal=temporal,
         output=OutputSpec.pooled(pooling="mean"),
@@ -163,7 +163,7 @@ def run_gee_demo(*, device: str, run_export: bool, out_dir: Path) -> None:
         PointBuffer(lon=120.5, lat=30.2, buffer_m=512),
     ]
     batch = get_embeddings_batch(
-        "remoteclip_s2rgb",
+        "remoteclip",
         spatials=spatials,
         temporal=temporal,
         output=OutputSpec.pooled(pooling="mean"),
@@ -180,7 +180,7 @@ def run_gee_demo(*, device: str, run_export: bool, out_dir: Path) -> None:
             names=["p1", "p2"],
             spatials=spatials,
             temporal=temporal,
-            models=["remoteclip_s2rgb"],
+            models=["remoteclip"],
             output=OutputSpec.pooled(),
             backend="gee",
             device=device,

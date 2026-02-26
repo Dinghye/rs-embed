@@ -679,7 +679,7 @@ def _satvision_forward_batch(
     return arrs, meta
 
 
-@register("satvision_toa")
+@register("satvision")
 class SatVisionTOAEmbedder(EmbedderBase):
     """
     SatVision-TOA on-the-fly embedding from generic provider multi-band TOA inputs.

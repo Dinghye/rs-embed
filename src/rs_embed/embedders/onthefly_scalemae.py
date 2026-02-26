@@ -290,7 +290,7 @@ def _scalemae_forward_tokens_or_vec_batch(
 
         raise ModelError("ScaleMAE: cannot obtain tokens or pooled vector from this model.")
 
-@register("scalemae_rgb")
+@register("scalemae")
 class ScaleMAERGBEmbedder(EmbedderBase):
     """
     ScaleMAE on-the-fly embedding from Sentinel-2 RGB patch (provider backend).

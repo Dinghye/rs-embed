@@ -118,7 +118,7 @@ def _satmae_forward_tokens_batch(
         return [out_np[i] for i in range(out_np.shape[0])]
 
 
-@register("satmae_rgb")
+@register("satmae")
 class SatMAERGBEmbedder(EmbedderBase):
     """
     SatMAE (ViT/MAE) on-the-fly embeddings from Sentinel-2 RGB patch (provider backend).

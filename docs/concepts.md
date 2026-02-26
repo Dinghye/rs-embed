@@ -42,7 +42,7 @@ This is the most important concept for readability and correct usage.
 
 ### `TemporalSpec.year(...)`
 
-Used mainly for annual precomputed products (for example `gse_annual`).
+Used mainly for annual precomputed products (for example `gse`).
 
 ### `TemporalSpec.range(start, end)`
 
@@ -143,8 +143,8 @@ See the tiled behavior details in [API Reference](api.md).
 Examples:
 
 - `tessera`
-- `gse_annual`
-- `copernicus_embed`
+- `gse`
+- `copernicus`
 
 ### On-the-fly
 
@@ -154,8 +154,8 @@ Examples:
 
 Examples:
 
-- `remoteclip_s2rgb`
-- `prithvi_eo_v2_s2_6b`
+- `remoteclip`
+- `prithvi`
 - `anysat`
 - `terramind`
 

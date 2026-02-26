@@ -21,7 +21,7 @@ from .runtime_utils import (
     is_provider_backend,
 )
 
-@register("gse_annual")
+@register("gse")
 class GSEAnnualEmbedder(EmbedderBase):
     """
     Precomputed embeddings on Provider:

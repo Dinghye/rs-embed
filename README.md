@@ -9,7 +9,7 @@
 ![License](https://img.shields.io/github/license/cybergis/rs-embed)
 ![Last Commit](https://img.shields.io/github/last-commit/cybergis/rs-embed)
 
-[Docs](https://cybergis.github.io/rs-embed/) · [Playground](./examples/playground.ipynb)  · [Demo](./examples/demo.ipynb)
+[Docs](https://cybergis.github.io/rs-embed/) · [Learn](https://cybergis.github.io/rs-embed/quickstart/) · [Guide](https://cybergis.github.io/rs-embed/workflows/) · [Playground](./examples/playground.ipynb)  · [Demo](./examples/demo.ipynb)
 
 </div>
 
@@ -45,7 +45,7 @@ spatial = PointBuffer(lon=121.5, lat=31.2, buffer_m=2048)
 temporal = TemporalSpec.year(2024)
 
 emb = get_embedding(
-    "gse_annual",       # alpha earth
+    "gse",       # alpha earth
     spatial=spatial,
     temporal=temporal,
     output=OutputSpec.grid(),
@@ -60,7 +60,7 @@ from examples.plot_utils import plot_embedding_pseudocolor
 
 plot_embedding_pseudocolor(
     emb,
-    title="gse_annual grid PCA pseudocolor",
+    title="gse grid PCA pseudocolor",
 )
 ```
 
@@ -71,32 +71,34 @@ plot_embedding_pseudocolor(
 
 This is a convenience index with basic model info only (for quick scanning / links). For detailed I/O behavior and preprocessing notes, see [Supported Models](https://cybergis.github.io/rs-embed/models/).
 
+Model IDs now use short canonical names (for example `remoteclip`, `prithvi`, `thor`). Legacy IDs such as `remoteclip_s2rgb` and `prithvi_eo_v2_s2_6b` are still accepted as backward-compatible aliases.
+
 ### Precomputed Embeddings
 
 | Model ID | Type | Resolution | Time Coverage | Publication |
 |---|---|---|---|---|
 |`tessera` | Precomputed | 10m | 2017-2025 |[CVPR 2026](https://arxiv.org/abs/2506.20380v4)|
-|`gse_annual` (Alpha Earth) | Precomputed | 10 m | 2017-2024 |[arXiv 2025](https://arxiv.org/abs/2507.22291)|
-| `copernicus_embed` | Precomputed | 0.25° | 2021 |[ICCV 2025](https://arxiv.org/abs/2503.11849)|
+|`gse` (Alpha Earth) | Precomputed | 10 m | 2017-2024 |[arXiv 2025](https://arxiv.org/abs/2507.22291)|
+| `copernicus` | Precomputed | 0.25° | 2021 |[ICCV 2025](https://arxiv.org/abs/2503.11849)|
 
 ### On-the-fly Foundation Models
 
 | Model ID |  Primary Input  | Publication | Link |
 |---|---|---|---|
-| `satmae_rgb` |  S2 RGB | [NeurIPS 2022](https://arxiv.org/abs/2207.08051) |[link](https://github.com/sustainlab-group/SatMAE)|
-| `prithvi_eo_v2_s2_6b` | S2 6-band | [arXiv 2023](https://arxiv.org/abs/2310.18660) | [link](https://huggingface.co/ibm-nasa-geospatial) |
-| `scalemae_rgb` | S2 RGB (+ scale) | [ICCV 2023](https://arxiv.org/abs/2212.14532) | [link](https://github.com/bair-climate-initiative/scale-mae) |
-| `remoteclip_s2rgb` |  S2 RGB | [TGRS 2024](https://arxiv.org/abs/2306.11029) |[link](https://github.com/ChenDelong1999/RemoteCLIP) |
+| `satmae` |  S2 RGB | [NeurIPS 2022](https://arxiv.org/abs/2207.08051) |[link](https://github.com/sustainlab-group/SatMAE)|
+| `prithvi` | S2 6-band | [arXiv 2023](https://arxiv.org/abs/2310.18660) | [link](https://huggingface.co/ibm-nasa-geospatial) |
+| `scalemae` | S2 RGB (+ scale) | [ICCV 2023](https://arxiv.org/abs/2212.14532) | [link](https://github.com/bair-climate-initiative/scale-mae) |
+| `remoteclip` |  S2 RGB | [TGRS 2024](https://arxiv.org/abs/2306.11029) |[link](https://github.com/ChenDelong1999/RemoteCLIP) |
 | `dofa` |  Multi-band + wavelengths | [arXiv 2024](https://arxiv.org/abs/2403.15356) | [link](https://github.com/zhu-xlab/DOFA) |
-| `satvision_toa` |  TOA 14-channel | [arXiv 2024](https://arxiv.org/abs/2411.17000) | [link](https://github.com/nasa-nccs-hpda/pytorch-caney)|
+| `satvision` |  TOA 14-channel | [arXiv 2024](https://arxiv.org/abs/2411.17000) | [link](https://github.com/nasa-nccs-hpda/pytorch-caney)|
 | `anysat` |  S2 time series (10-band) | [CVPR 2025](https://arxiv.org/abs/2412.14123) | [link](https://github.com/gastruc/AnySat) |
 | `galileo` | S2 time series (10-band) | [ICML 2025](https://arxiv.org/abs/2502.09356) | [link](https://github.com/nasaharvest/galileo) |
 | `dynamicvis` | S2 RGB | [arXiv 2025](https://arxiv.org/abs/2503.16426) | [link](https://github.com/KyanChen/DynamicVis) |
 | `wildsat` | S2 RGB | [ICCV 2025](https://arxiv.org/abs/2412.14428) | [link](https://github.com/mdchuc/HRSFM) |
 | `fomo` | S2 12-band | [AAAI 2025](https://arxiv.org/abs/2312.10114) |[link](https://github.com/RolnickLab/FoMo-Bench)|
 | `terramind` | S2 12-band | [ICCV 2025](https://arxiv.org/abs/2504.11171) | [link](https://github.com/IBM/terramind) |
-| `terrafm_b` | S2 12-band / S1 VV-VH | [ICLR 2026](https://arxiv.org/abs/2506.06281) | [link](https://github.com/mbzuai-oryx/TerraFM) |
-| `thor_1_0_base` | S2 10-band | [arXiv 2026](https://arxiv.org/abs/2601.16011) | [link](https://github.com/FM4CS/THOR) |
+| `terrafm` | S2 12-band / S1 VV-VH | [ICLR 2026](https://arxiv.org/abs/2506.06281) | [link](https://github.com/mbzuai-oryx/TerraFM) |
+| `thor` | S2 10-band | [arXiv 2026](https://arxiv.org/abs/2601.16011) | [link](https://github.com/FM4CS/THOR) |
 | `agrifm` | S2 time series (10-band) | [RSE 2026](https://www.sciencedirect.com/science/article/pii/S0034425726000040) | [link](https://github.com/flyakon/AgriFM) |
 
 
@@ -120,9 +122,9 @@ If you want to implement the extension yourself, you can also follow the guide i
 
 
 ## 🎖 Acknowledgements
-We would like to thank the following organizations and projects that make rs-embed possible: Google Earth Engine,TorchGeo, GeoTessera & TerraTorch.
+We would like to thank the following organizations and projects that make rs-embed possible: [Google Earth Engine](https://earthengine.google.com), [TorchGeo](https://github.com/torchgeo/torchgeo), [GeoTessera](https://github.com/ucam-eo/geotessera), [TerraTorch](https://github.com/terrastackai/terratorch), [rshf](https://github.com/mvrl/rshf).
 
-This library also builds upon the incredible work of the Remote Sensing community.(Full list and citations available in our Documentation).
+This library also builds upon the incredible work of the Remote Sensing community!(Full list and citations available in our Documentation)
 
 ## License
 This project is released under the [Apache-2.0](LICENSE)

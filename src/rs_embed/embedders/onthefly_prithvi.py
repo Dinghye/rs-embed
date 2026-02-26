@@ -348,7 +348,7 @@ def _prithvi_forward_tokens_batch(
 # -------------------------
 # Embedder
 # -------------------------
-@register("prithvi_eo_v2_s2_6b")
+@register("prithvi")
 class PrithviEOV2S2_6B_Embedder(EmbedderBase):
     """
     Prithvi-EO v2 (TerraTorch) on-the-fly embeddings from Sentinel-2 6-band patch.

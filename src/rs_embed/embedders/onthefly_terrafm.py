@@ -320,7 +320,7 @@ def _terrafm_pooled_and_grid_batch(
 # -----------------------------
 # Embedder
 # -----------------------------
-@register("terrafm_b")
+@register("terrafm")
 class TerraFMBEmbedder(EmbedderBase):
     """
     ROI -> (provider S2 SR 12-band OR S1 VV/VH) -> TerraFM-B -> pooled or grid embedding

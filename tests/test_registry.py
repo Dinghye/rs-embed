@@ -115,16 +115,23 @@ def test_get_embedder_cls_lazy_imports_builtin_without_bulk_package_import(monke
 
     monkeypatch.setattr(registry.importlib, "import_module", _spy)
 
-    cls = registry.get_embedder_cls("remoteclip_s2rgb")
+    cls = registry.get_embedder_cls("remoteclip")
     assert cls.__name__ == "RemoteCLIPS2RGBEmbedder"
-    assert "remoteclip_s2rgb" in registry.list_models()
+    assert "remoteclip" in registry.list_models()
+    assert "remoteclip_s2rgb" not in registry.list_models()
     assert "rs_embed.embedders" not in calls
     assert "rs_embed.embedders.onthefly_remoteclip" in calls
 
 
+def test_get_embedder_cls_accepts_legacy_alias():
+    cls_new = registry.get_embedder_cls("remoteclip")
+    cls_old = registry.get_embedder_cls("remoteclip_s2rgb")
+    assert cls_old is cls_new
+
+
 def test_get_embedder_cls_can_reregister_when_registry_was_cleared():
-    cls1 = registry.get_embedder_cls("remoteclip_s2rgb")
+    cls1 = registry.get_embedder_cls("remoteclip")
     registry._REGISTRY.clear()
     cls2 = registry.get_embedder_cls("remoteclip_s2rgb")
     assert cls2 is cls1
-    assert registry.get_embedder_cls("remoteclip_s2rgb") is cls1
+    assert registry.get_embedder_cls("remoteclip") is cls1

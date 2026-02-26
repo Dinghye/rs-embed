@@ -2,6 +2,8 @@
 
 This page covers single-ROI and batch embedding APIs.
 
+Model IDs in examples use canonical short names (for example `remoteclip`). Legacy IDs (for example `remoteclip_s2rgb`) remain supported as aliases.
+
 Related pages:
 
 - [API: Specs and Data Structures](api_specs.md)
@@ -71,7 +73,7 @@ Computes the embedding for a single ROI.
 from rs_embed import PointBuffer, TemporalSpec, OutputSpec, get_embedding
 
 emb = get_embedding(
-    "remoteclip_s2rgb",
+    "remoteclip",
     spatial=PointBuffer(lon=121.5, lat=31.2, buffer_m=2048),
     temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
     output=OutputSpec.pooled(pooling="mean"),
@@ -124,7 +126,7 @@ spatials = [
     PointBuffer(120.5, 30.2, 2048),
 ]
 embs = get_embeddings_batch(
-    "remoteclip_s2rgb",
+    "remoteclip",
     spatials=spatials,
     temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
 )

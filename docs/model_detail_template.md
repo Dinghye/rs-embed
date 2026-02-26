@@ -9,7 +9,7 @@ Goal: make every model page answer the same questions quickly, so users can comp
 ## Copy This Template
 
 1. Duplicate this page into a new model doc file
-2. Rename the title to the target model (for example `RemoteCLIP (remoteclip_s2rgb)`)
+2. Rename the title to the target model (for example `RemoteCLIP (remoteclip)`)
 3. Fill every section marked `TODO`
 4. Link the page from [Supported Models (Overview)](models.md)
 5. Add or update any model-specific caveats in [Supported Models (Advanced Reference)](models_reference.md) if needed

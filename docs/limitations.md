@@ -14,8 +14,8 @@ This page summarizes user-facing limitations in the current implementation.
 
 ### 3) Temporal constraints are model-specific
 
-- `gse_annual` currently requires `TemporalSpec.year(...)`.
-- `copernicus_embed` currently supports only year `2021`.
+- `gse` currently requires `TemporalSpec.year(...)`.
+- `copernicus` currently supports only year `2021`.
 - Some precomputed models may ignore finer temporal granularity.
 
 ### 4) Grid output is not always georeferenced raster space

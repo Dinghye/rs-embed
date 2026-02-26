@@ -57,7 +57,7 @@ def _pool_chw(chw: np.ndarray, pooling: str) -> np.ndarray:
     raise ModelError(f"Unknown pooling='{pooling}' (expected 'mean' or 'max').")
 
 
-@register("copernicus_embed")
+@register("copernicus")
 class CopernicusEmbedder(EmbedderBase):
     """
     Precomputed embeddings via TorchGeo CopernicusEmbed dataset.
