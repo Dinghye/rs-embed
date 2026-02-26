@@ -62,10 +62,10 @@ nav:
         - agrifm: models/agrifm.md
   - Reference:
     - API Reference (Overview): api.md
-    - API: Specs & Data Structures: api_specs.md
-    - API: Embedding: api_embedding.md
-    - API: Export: api_export.md
-    - API: Inspect: api_inspect.md
+    - "API: Specs & Data Structures": api_specs.md
+    - "API: Embedding": api_embedding.md
+    - "API: Export": api_export.md
+    - "API: Inspect": api_inspect.md
     - Limitations: limitations.md
   - Development:
     - Extending: extending.md
