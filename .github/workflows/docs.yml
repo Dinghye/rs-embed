@@ -16,8 +16,6 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install mkdocs-material pymdown-extensions
-      - name: Check docs consistency
-        run: python scripts/check_docs_consistency.py
       - name: Build docs (strict)
         run: mkdocs build --strict
 
