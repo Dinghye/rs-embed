@@ -112,3 +112,50 @@ class OutputSpec:
     @staticmethod
     def pooled(pooling: Literal["mean","max"]="mean") -> "OutputSpec":
         return OutputSpec(mode="pooled", scale_m=10, pooling=pooling, grid_orientation="north_up")
+
+
+@dataclass(frozen=True)
+class InputPrepSpec:
+    """Optional API-level input preprocessing policy for large on-the-fly inputs."""
+
+    mode: Literal["auto", "resize", "tile"] = "resize"
+    tile_size: Optional[int] = None
+    tile_stride: Optional[int] = None
+    max_tiles: int = 9
+    pad_edges: bool = True
+
+    @staticmethod
+    def auto(
+        *,
+        tile_size: Optional[int] = None,
+        tile_stride: Optional[int] = None,
+        max_tiles: int = 9,
+        pad_edges: bool = True,
+    ) -> "InputPrepSpec":
+        return InputPrepSpec(
+            mode="auto",
+            tile_size=tile_size,
+            tile_stride=tile_stride,
+            max_tiles=max_tiles,
+            pad_edges=pad_edges,
+        )
+
+    @staticmethod
+    def resize() -> "InputPrepSpec":
+        return InputPrepSpec(mode="resize")
+
+    @staticmethod
+    def tile(
+        *,
+        tile_size: Optional[int] = None,
+        tile_stride: Optional[int] = None,
+        max_tiles: int = 9,
+        pad_edges: bool = True,
+    ) -> "InputPrepSpec":
+        return InputPrepSpec(
+            mode="tile",
+            tile_size=tile_size,
+            tile_stride=tile_stride,
+            max_tiles=max_tiles,
+            pad_edges=pad_edges,
+        )

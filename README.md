@@ -117,5 +117,11 @@ If you want to implement the extension yourself, you can also follow the guide i
 
 
 
+
+## 🎖 Acknowledgements
+We would like to thank the following organizations and projects that make rs-embed possible: Google Earth Engine,TorchGeo, GeoTessera & TerraTorch.
+
+This library also builds upon the incredible work of the Remote Sensing community.(Full list and citations available in our Documentation).
+
 ## License
 This project is released under the [Apache-2.0](LICENSE)

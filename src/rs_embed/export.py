@@ -16,7 +16,7 @@ from .core.export_helpers import (
     sha1 as _sha1,
     utc_ts as _utc_ts,
 )
-from .core.specs import OutputSpec, SensorSpec, SpatialSpec, TemporalSpec
+from .core.specs import InputPrepSpec, OutputSpec, SensorSpec, SpatialSpec, TemporalSpec
 from .internal.api.model_defaults_helpers import (
     default_sensor_for_model as _default_sensor_for_model,
 )
@@ -40,6 +40,7 @@ def export_npz(
     continue_on_error: bool = False,
     max_retries: int = 0,
     retry_backoff_s: float = 0.0,
+    input_prep: Optional[InputPrepSpec | str] = "resize",
 ) -> Dict[str, Any]:
     """Export inputs + embeddings for one spatial query to a single `.npz`."""
     from .api import export_batch
@@ -66,4 +67,5 @@ def export_npz(
         continue_on_error=continue_on_error,
         max_retries=max_retries,
         retry_backoff_s=retry_backoff_s,
+        input_prep=input_prep,
     )

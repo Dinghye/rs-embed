@@ -4,7 +4,7 @@
 ```python
 from rs_embed import (
     # Specs
-    BBox, PointBuffer, TemporalSpec, SensorSpec, OutputSpec,
+    BBox, PointBuffer, TemporalSpec, SensorSpec, OutputSpec, InputPrepSpec,
     # Core APIs
     get_embedding, get_embeddings_batch, export_batch, export_npz,
     # Utilities
@@ -208,6 +208,50 @@ Precomputed embeddings:
 
 ---
 
+### InputPrepSpec (Optional Large-ROI Input Policy)
+
+`InputPrepSpec` controls API-level handling of large on-the-fly inputs before model inference.
+This is mainly useful when you want to choose between the model's normal resize path and API-side tiled inference.
+
+```python
+InputPrepSpec(
+    mode: Literal["resize", "tile", "auto"] = "resize",
+    tile_size: Optional[int] = None,
+    tile_stride: Optional[int] = None,
+    max_tiles: int = 9,
+    pad_edges: bool = True,
+)
+```
+
+Recommended constructors:
+
+```python
+InputPrepSpec.resize()               # default behavior (fastest)
+InputPrepSpec.tile()                 # tile size inferred from model defaults.image_size when available
+InputPrepSpec.auto(max_tiles=4)      # choose tile or resize automatically
+InputPrepSpec.tile(tile_size=224)    # explicit tile size override
+```
+
+You can also pass a string to public APIs as a shorthand:
+
+```python
+input_prep="resize"   # default
+input_prep="tile"
+input_prep="auto"
+```
+
+Current tiled design (API layer):
+
+- Tile size defaults to `embedder.describe()["defaults"]["image_size"]` when available (can be overridden).
+- Boundary tiles use a **cover-shift** layout (for example `300 -> [0,224]` and `[76,300]`) to avoid edge padding when possible.
+- Grid stitching uses **midpoint-cut** ownership in overlap regions (instead of hard overwrite).
+- `tile_stride` currently must equal `tile_size` (explicit overlap/gap configuration is not enabled yet), but boundary shifting can still create overlap on the last tile.
+- `auto` is conservative and currently prefers tiling mainly for `OutputSpec.grid()` when tile count is small enough (`max_tiles`).
+
+<img src="./assets/tiles.png" width="500" alt="icon" />
+
+---
+
 ### Embedding
 
 `get_embedding` / `get_embeddings_batch` return an `Embedding`:
@@ -240,6 +284,7 @@ get_embedding(
     output: OutputSpec = OutputSpec.pooled(),
     backend: str = "gee",
     device: str = "auto",
+    input_prep: InputPrepSpec | str = "resize",
 ) -> Embedding
 ```
 
@@ -254,6 +299,9 @@ Computes the embedding for a single ROI.
 - `output`: `OutputSpec.pooled()` or `OutputSpec.grid(...)`
 - `backend`: currently mainly `"gee"` (Google Earth Engine)
 - `device`: `"auto" / "cpu" / "cuda"` (if the model depends on torch)
+- `input_prep`: `"resize"` (default), `"tile"`, `"auto"`, or `InputPrepSpec(...)`
+
+
 
 **Returns**
 
@@ -271,6 +319,7 @@ emb = get_embedding(
     output=OutputSpec.pooled(pooling="mean"),
     backend="gee",
     device="auto",
+    input_prep="resize",  # default
 )
 vec = emb.data  # (D,)
 ```
@@ -292,6 +341,7 @@ get_embeddings_batch(
     output: OutputSpec = OutputSpec.pooled(),
     backend: str = "gee",
     device: str = "auto",
+    input_prep: InputPrepSpec | str = "resize",
 ) -> List[Embedding]
 ```
 
@@ -356,6 +406,7 @@ export_batch(
     writer_workers: int = 2,
     resume: bool = False,
     show_progress: bool = True,
+    input_prep: InputPrepSpec | str = "resize",
 ) -> Any
 ```
 
@@ -393,6 +444,7 @@ export_batch(
 - `writer_workers`: writer thread count when `async_write=True`
 - `resume`: skip already-exported outputs and continue from remaining items
 - `show_progress`: show progress during batch export (overall progress + per-model inference progress)
+- `input_prep`: large-ROI input policy (`"resize"` default, `"tile"`, `"auto"`, or `InputPrepSpec(...)`)
 
 **Automatic inference behavior**
 
@@ -422,6 +474,7 @@ export_batch(
     models=["remoteclip_s2rgb", "prithvi_eo_v2_s2_6b"],
     out_dir="exports",
     names=["p1", "p2"],
+    input_prep="tile",  # optional: API-side tiled inference for large ROIs
     save_inputs=True,
     save_embeddings=True,
     chunk_size=32,
