@@ -248,7 +248,10 @@ Current tiled design (API layer):
 - `tile_stride` currently must equal `tile_size` (explicit overlap/gap configuration is not enabled yet), but boundary shifting can still create overlap on the last tile.
 - `auto` is conservative and currently prefers tiling mainly for `OutputSpec.grid()` when tile count is small enough (`max_tiles`).
 
-<img src="assets/tiles.png" width="500" alt="icon" />
+![tiles](assets/tiles.png)
+
+<!-- <img src="./docs/assets/tiles.png" width="500" alt="icon" /> -->
+
 
 ---
 
