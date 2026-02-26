@@ -10,6 +10,7 @@ import numpy as np
 from .core.errors import ProviderError
 from .core.input_checks import inspect_chw, checks_save_dir, save_quicklook_rgb
 from .core.specs import SensorSpec, SpatialSpec, TemporalSpec
+from .internal.api.api_helpers import fetch_provider_patch_raw
 from .providers import get_provider
 
 
@@ -40,7 +41,8 @@ def inspect_provider_patch(
     kwargs = {"auto_auth": True} if backend_name == "gee" else {}
     provider = get_provider(backend_name, **kwargs)
     provider.ensure_ready()
-    x_chw = provider.fetch_sensor_patch_chw(
+    x_chw = fetch_provider_patch_raw(
+        provider,
         spatial=spatial,
         temporal=temporal,
         sensor=sensor,

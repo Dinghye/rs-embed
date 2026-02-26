@@ -196,11 +196,17 @@ def fetch_sensor_patch_chw(
     to_float_image: bool = False,
 ) -> np.ndarray:
     """Fetch a CHW patch from a concrete SensorSpec."""
-    x = provider.fetch_sensor_patch_chw(
+    # Reuse the shared API helper so embedder-internal fetches (e.g. WildSAT,
+    # SatVision TOA with to_float_image=True) also benefit from GEE BBox
+    # sampleRectangle fallback splitting.
+    from ..internal.api.api_helpers import fetch_provider_patch_raw
+
+    x = fetch_provider_patch_raw(
+        provider,
         spatial=spatial,
         temporal=temporal,
         sensor=sensor,
-        to_float_image=to_float_image,
+        to_float_image=bool(to_float_image),
     )
     arr = np.asarray(x, dtype=np.float32)
     if arr.ndim != 3:
@@ -211,6 +217,191 @@ def fetch_sensor_patch_chw(
             f"for collection={sensor.collection}"
         )
     return np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+
+
+def _stitch_spatial_last2_arrays(
+    *,
+    a: np.ndarray,
+    b: np.ndarray,
+    parent_spatial: Any,
+    axis: str,
+    scale_m: int,
+    fill_value: float,
+) -> np.ndarray:
+    from ..internal.api import api_helpers as _ah
+
+    arr_a = np.asarray(a, dtype=np.float32)
+    arr_b = np.asarray(b, dtype=np.float32)
+    if arr_a.ndim < 3 or arr_b.ndim < 3:
+        raise ModelError(
+            f"Expected arrays with spatial last2 dims for bbox stitching, got {arr_a.shape} and {arr_b.shape}"
+        )
+    if tuple(arr_a.shape[:-2]) != tuple(arr_b.shape[:-2]):
+        raise ModelError(f"Leading shape mismatch while stitching bbox tiles: {arr_a.shape} vs {arr_b.shape}")
+
+    spatial_bbox = _ah._coerce_bbox_like(parent_spatial)
+    axis = str(axis).lower()
+    split_axis = arr_a.ndim - 1 if axis == "x" else arr_a.ndim - 2
+    nonsplit_axis = arr_a.ndim - 2 if axis == "x" else arr_a.ndim - 1
+
+    if int(arr_a.shape[nonsplit_axis]) != int(arr_b.shape[nonsplit_axis]):
+        raise ModelError(f"Non-split spatial dim mismatch while stitching bbox tiles: {arr_a.shape} vs {arr_b.shape}")
+
+    if axis == "y":
+        # Normalize each child tile before north/south stitching (same rationale as CHW fallback).
+        arr_a = np.flip(arr_a, axis=arr_a.ndim - 2)
+        arr_b = np.flip(arr_b, axis=arr_b.ndim - 2)
+
+    target_h, target_w = _ah._bbox_span_pixels_estimate(spatial_bbox, scale_m=int(scale_m))
+    target_len = int(target_w if axis == "x" else target_h)
+    len_a = int(arr_a.shape[split_axis])
+    len_b = int(arr_b.shape[split_axis])
+    combined_len = int(len_a + len_b)
+    delta = int(combined_len - target_len)
+    tol = int(getattr(_ah, "_GEE_BBOX_STITCH_LEN_TOLERANCE_PX", 4))
+
+    if delta > 0:
+        if delta > tol:
+            raise ModelError(
+                "Excessive overlap while stitching bbox tiles: "
+                f"combined={combined_len}, target~={target_len}, delta={delta}"
+            )
+        trim_a = int(delta // 2)
+        trim_b = int(delta - trim_a)
+        if trim_a > 0:
+            slicer = [slice(None)] * arr_a.ndim
+            slicer[split_axis] = slice(0, max(0, len_a - trim_a))
+            arr_a = arr_a[tuple(slicer)]
+            len_a = int(arr_a.shape[split_axis])
+        if trim_b > 0:
+            slicer = [slice(None)] * arr_b.ndim
+            slicer[split_axis] = slice(min(trim_b, len_b), None)
+            arr_b = arr_b[tuple(slicer)]
+    elif delta < 0:
+        gap = int(-delta)
+        if gap > tol:
+            raise ModelError(
+                "Excessive gap while stitching bbox tiles: "
+                f"combined={combined_len}, target~={target_len}, gap={gap}"
+            )
+        pad_shape = list(arr_a.shape)
+        pad_shape[split_axis] = gap
+        gap_arr = np.full(tuple(pad_shape), float(fill_value), dtype=np.float32)
+        return np.concatenate([arr_a, gap_arr, arr_b], axis=split_axis).astype(np.float32, copy=False)
+
+    return np.concatenate([arr_a, arr_b], axis=split_axis).astype(np.float32, copy=False)
+
+
+def _fetch_spatial_array_with_bbox_fallback(
+    provider: ProviderBase,
+    *,
+    spatial: SpatialSpec,
+    scale_m: int,
+    fill_value: float,
+    fetch_fn: Callable[[SpatialSpec], np.ndarray],
+    split_depth: int = 0,
+) -> np.ndarray:
+    from ..internal.api import api_helpers as _ah
+
+    try:
+        return np.asarray(fetch_fn(spatial), dtype=np.float32)
+    except Exception as e:
+        if not (_ah._looks_like_gee_sample_too_many_pixels(e) and _ah._looks_like_bbox_spatial(spatial)):
+            raise
+        max_depth = int(getattr(_ah, "_MAX_GEE_BBOX_SPLIT_DEPTH", 12))
+        if int(split_depth) >= max_depth:
+            raise ModelError(f"GEE bbox fallback exceeded max recursive splits ({max_depth}).") from e
+
+        spatial_bbox = _ah._coerce_bbox_like(spatial)
+        h_est, w_est = _ah._bbox_span_pixels_estimate(spatial_bbox, scale_m=int(scale_m))
+        prefer_axis = "x" if int(w_est) >= int(h_est) else "y"
+        a_sp, b_sp, axis = _ah._split_bbox_for_recursive_fetch(spatial_bbox, prefer_axis=prefer_axis)
+        arr_a = _fetch_spatial_array_with_bbox_fallback(
+            provider,
+            spatial=a_sp,
+            scale_m=int(scale_m),
+            fill_value=float(fill_value),
+            fetch_fn=fetch_fn,
+            split_depth=int(split_depth) + 1,
+        )
+        arr_b = _fetch_spatial_array_with_bbox_fallback(
+            provider,
+            spatial=b_sp,
+            scale_m=int(scale_m),
+            fill_value=float(fill_value),
+            fetch_fn=fetch_fn,
+            split_depth=int(split_depth) + 1,
+        )
+        return _stitch_spatial_last2_arrays(
+            a=arr_a,
+            b=arr_b,
+            parent_spatial=spatial_bbox,
+            axis=axis,
+            scale_m=int(scale_m),
+            fill_value=float(fill_value),
+        )
+
+
+def fetch_collection_patch_all_bands_chw(
+    provider: ProviderBase,
+    *,
+    spatial: SpatialSpec,
+    temporal: Optional[TemporalSpec],
+    collection: str,
+    scale_m: int = 10,
+    fill_value: float = 0.0,
+    composite: str = "median",
+) -> Tuple[np.ndarray, Tuple[str, ...]]:
+    """Fetch all bands for a collection with BBox fallback stitching for large GEE samples."""
+
+    def _fetch_once(sp: SpatialSpec) -> Tuple[np.ndarray, Tuple[str, ...]]:
+        arr, names = provider.fetch_collection_patch_all_bands_chw(
+            spatial=sp,
+            temporal=temporal,
+            collection=str(collection),
+            scale_m=int(scale_m),
+            fill_value=float(fill_value),
+            composite=str(composite),
+        )
+        return np.asarray(arr, dtype=np.float32), tuple(str(b) for b in names)
+
+    try:
+        arr, names = _fetch_once(spatial)
+        return np.asarray(arr, dtype=np.float32), tuple(names)
+    except Exception as e:
+        from ..internal.api import api_helpers as _ah
+
+        if not (_ah._looks_like_gee_sample_too_many_pixels(e) and _ah._looks_like_bbox_spatial(spatial)):
+            raise
+
+        def _rec(sp: SpatialSpec, depth: int = 0) -> Tuple[np.ndarray, Tuple[str, ...]]:
+            max_depth = int(getattr(_ah, "_MAX_GEE_BBOX_SPLIT_DEPTH", 12))
+            try:
+                return _fetch_once(sp)
+            except Exception as ee:
+                if not (_ah._looks_like_gee_sample_too_many_pixels(ee) and _ah._looks_like_bbox_spatial(sp)):
+                    raise
+                if int(depth) >= max_depth:
+                    raise ModelError(f"GEE bbox fallback exceeded max recursive splits ({max_depth}).") from ee
+                sp_bbox = _ah._coerce_bbox_like(sp)
+                h_est, w_est = _ah._bbox_span_pixels_estimate(sp_bbox, scale_m=int(scale_m))
+                prefer_axis = "x" if int(w_est) >= int(h_est) else "y"
+                a_sp, b_sp, axis = _ah._split_bbox_for_recursive_fetch(sp_bbox, prefer_axis=prefer_axis)
+                arr_a, names_a = _rec(a_sp, depth + 1)
+                arr_b, names_b = _rec(b_sp, depth + 1)
+                if tuple(names_a) != tuple(names_b):
+                    raise ModelError("Band names mismatch while stitching all-band bbox tiles.")
+                stitched = _stitch_spatial_last2_arrays(
+                    a=arr_a,
+                    b=arr_b,
+                    parent_spatial=sp_bbox,
+                    axis=axis,
+                    scale_m=int(scale_m),
+                    fill_value=float(fill_value),
+                )
+                return stitched, tuple(names_a)
+
+        return _rec(spatial, 0)
 
 
 def fetch_s2_rgb_chw(
@@ -249,14 +440,20 @@ def fetch_s1_vvvh_raw_chw(
     fill_value: float = 0.0,
 ) -> np.ndarray:
     """Fetch Sentinel-1 VV/VH as raw float32 CHW."""
-    arr = provider.fetch_s1_vvvh_raw_chw(
+    arr = _fetch_spatial_array_with_bbox_fallback(
+        provider,
         spatial=spatial,
-        temporal=temporal,
         scale_m=int(scale_m),
-        orbit=orbit,
-        use_float_linear=bool(use_float_linear),
-        composite=str(composite),
         fill_value=float(fill_value),
+        fetch_fn=lambda sp: provider.fetch_s1_vvvh_raw_chw(
+            spatial=sp,
+            temporal=temporal,
+            scale_m=int(scale_m),
+            orbit=orbit,
+            use_float_linear=bool(use_float_linear),
+            composite=str(composite),
+            fill_value=float(fill_value),
+        ),
     )
     arr = np.asarray(arr, dtype=np.float32)
     if arr.ndim != 3 or int(arr.shape[0]) != 2:
@@ -289,16 +486,22 @@ def fetch_s2_multiframe_raw_tchw(
     fill_value: float = 0.0,
 ) -> np.ndarray:
     """Fetch an S2 time series as raw float32 [T,C,H,W] in [0,10000]."""
-    arr = provider.fetch_multiframe_collection_raw_tchw(
+    arr = _fetch_spatial_array_with_bbox_fallback(
+        provider,
         spatial=spatial,
-        temporal=temporal,
-        collection=str(collection),
-        bands=tuple(str(b) for b in bands),
-        n_frames=int(n_frames),
         scale_m=int(scale_m),
-        cloudy_pct=(int(cloudy_pct) if cloudy_pct is not None else None),
-        composite=str(composite),
         fill_value=float(fill_value),
+        fetch_fn=lambda sp: provider.fetch_multiframe_collection_raw_tchw(
+            spatial=sp,
+            temporal=temporal,
+            collection=str(collection),
+            bands=tuple(str(b) for b in bands),
+            n_frames=int(n_frames),
+            scale_m=int(scale_m),
+            cloudy_pct=(int(cloudy_pct) if cloudy_pct is not None else None),
+            composite=str(composite),
+            fill_value=float(fill_value),
+        ),
     )
     arr = np.asarray(arr, dtype=np.float32)
     if arr.ndim != 4:
