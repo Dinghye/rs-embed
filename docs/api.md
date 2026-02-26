@@ -1,3 +1,21 @@
+# API Reference
+
+This is the API reference entry page.
+
+`rs-embed` API docs are split by topic for readability:
+
+- [API: Specs and Data Structures](api_specs.md)
+- [API: Embedding](api_embedding.md)
+- [API: Export](api_export.md)
+- [API: Inspect](api_inspect.md)
+
+If you are looking for task-oriented usage first:
+
+- [Quick Start](quickstart.md): fastest first run
+- [Common Workflows](workflows.md): task-first recipes
+- [Core Concepts](concepts.md): semantics for `TemporalSpec`, `OutputSpec`, and backends
+
+---
 
 ## Imports
 
@@ -8,574 +26,46 @@ from rs_embed import (
     # Core APIs
     get_embedding, get_embeddings_batch, export_batch, export_npz,
     # Utilities
+    inspect_provider_patch,
     inspect_gee_patch,
 )
 ```
 
 ---
 
-## Data Structures
+## Choose by Task
 
-### SpatialSpec
-
-`SpatialSpec` describes the spatial region for which you want to extract an embedding.
-
-#### `BBox`
-
-```python
-BBox(minlon: float, minlat: float, maxlon: float, maxlat: float, crs: str = "EPSG:4326")
-```
-
-- An **EPSG:4326** lat/lon bounding box (the current version supports only EPSG:4326).
-- `validate()` checks that bounds are valid.
-
-#### `PointBuffer`
-
-```python
-PointBuffer(lon: float, lat: float, buffer_m: float, crs: str = "EPSG:4326")
-```
-
-- A buffer centered at a point, measured in meters (a square ROI; internally projected into the coordinate system required by the provider).
-- Requires `buffer_m > 0`.
+| I want to... | Read this page |
+|---|---|
+| understand spatial/temporal/output specs | [API: Specs and Data Structures](api_specs.md) |
+| get one embedding or batch embeddings | [API: Embedding](api_embedding.md) |
+| build export pipelines and datasets | [API: Export](api_export.md) |
+| inspect raw provider patches before inference | [API: Inspect](api_inspect.md) |
 
 ---
 
-### TemporalSpec
+## Page Map
 
-`TemporalSpec` describes the time range (by year or by date range).
+### `api_specs.md`
 
-```python
-TemporalSpec(mode: Literal["year", "range"], year: int | None, start: str | None, end: str | None)
-```
+- `BBox`, `PointBuffer`, `TemporalSpec`, `SensorSpec`, `OutputSpec`, `InputPrepSpec`
+- `Embedding` data structure semantics
 
-Recommended constructors:
+### `api_embedding.md`
 
-```python
-TemporalSpec.year(2022)
-TemporalSpec.range("2022-06-01", "2022-09-01")
-```
+- `get_embedding(...)`
+- `get_embeddings_batch(...)`
 
-Temporal semantics in provider/on-the-fly paths:
+### `api_export.md`
 
-- `TemporalSpec.range(start, end)` is interpreted as a half-open window `[start, end)`, where `end` is excluded.
-- In GEE-backed on-the-fly fetch, `range` is used to filter an image collection over the full window, then apply a compositing reducer (default `median`, optional `mosaic`).
-- So the fetched input is usually a composite over the whole time window, not an automatically selected single-day scene.
-- To approximate a single-day query, pass a one-day window such as `TemporalSpec.range("2022-06-01", "2022-06-02")`.
+- `export_batch(...)`
+- `export_npz(...)`
+- export performance behavior and layout options
 
-About `input_time` in metadata:
+### `api_inspect.md`
 
-- Many embedders store `meta["input_time"]` as the midpoint date of the temporal window.
-- This midpoint is metadata (and for some models, an auxiliary time signal), not evidence that imagery was fetched from exactly that single date.
-
----
-
-### SensorSpec
-
-`SensorSpec` is mainly for **on-the-fly** models (fetch a patch from GEE online and feed it into the model). It specifies which collection to pull from, which bands, and what resolution/compositing strategy to use.
-
-```python
-SensorSpec(
-    collection: str,
-    bands: Tuple[str, ...],
-    scale_m: int = 10,
-    cloudy_pct: int = 30,
-    fill_value: float = 0.0,
-    composite: Literal["median", "mosaic"] = "median",
-    check_input: bool = False,
-    check_raise: bool = True,
-    check_save_dir: Optional[str] = None,
-)
-```
-
-- `collection`: GEE collection or image ID
-- `bands`: band names (tuple)
-- `scale_m`: sampling resolution (meters)
-- `cloudy_pct`: cloud filter (best-effort; depends on collection properties)
-- `fill_value`: no-data fill value
-- `composite`: image compositing method over the temporal window (median/mosaic)
-- `check_*`: optional input checks and quicklook saving (see `inspect_gee_patch`)
-
-!!! note
-    For **precomputed** models (e.g., directly reading offline embedding products), `sensor` is usually ignored or set to `None`.
-
----
-
-### OutputSpec
-
-`OutputSpec` controls the embedding output shape: a **pooled vector** or a **dense grid**.
-
-```python
-OutputSpec(
-    mode: Literal["grid", "pooled"],
-    scale_m: int = 10,
-    pooling: Literal["mean", "max"] = "mean",
-    grid_orientation: Literal["north_up", "native"] = "north_up",
-)
-```
-
-Recommended constructors:
-
-```python
-OutputSpec.pooled(pooling="mean")   # shape: (D,)
-OutputSpec.grid(scale_m=10)         # shape: (D, H, W), normalized to north-up when possible
-OutputSpec.grid(scale_m=10, grid_orientation="native")  # keep model/provider native orientation
-```
-
-
-#### `pooled`
-
-> ROI-level Vector Embedding
-
-**Semantic meaning**
-
-`pooled` represents one whole ROI (Region of Interest) using a single vector `(D,)`.
-
-Best suited for:
-
-- Classification / regression
-- Retrieval / similarity search
-- Clustering
-- Cross-model comparison (recommended)
-
-Unified output format:
-
-```python
-Embedding.data.shape == (D,)
-```
-
-How it is produced:
-
-ViT / MAE-style models (e.g., RemoteCLIP / Prithvi / SatMAE / ScaleMAE):
-
-- Native output is patch tokens `(N, D)` (with optional CLS token)
-- Remove CLS token if present, then pool tokens across the token axis (`mean` by default, optional `max`)
-
-Mean-pooling formula:
-
-$$
-v_d = \frac{1}{N'} \sum_{i=1}^{N'} t_{i,d}
-$$
-
-Precomputed embeddings (e.g., Tessera / GSE / Copernicus):
-
-- Native output is an embedding grid `(D, H, W)`
-- Pool over spatial dimensions `(H, W)`
-
-$$
-v_d = \frac{1}{HW} \sum_{y,x} g_{d,y,x}
-$$
-
-Why prefer `pooled` for benchmarks:
-
-- Model-agnostic and stable
-- Less sensitive to spatial/token layout differences
-- Easiest output to compare across models
-
-#### `grid`
-> ROI-level Spatial Embedding Field
-
-**Semantic meaning**
-
-`grid` returns a spatial embedding field `(D, H, W)`, where each spatial location maps to a vector.
-
-Best suited for:
-
-- Spatial visualization (PCA / norm / similarity maps)
-- Pixel-wise / patch-wise tasks
-- Intra-ROI structure analysis
-
-Unified output format:
-
-```python
-Embedding.data.shape == (D, H, W)
-```
-
-Notes:
-
-- `data` can be returned as `xarray.DataArray` with metadata in `meta`/`attrs`
-- For precomputed geospatial products, metadata may include CRS/crop context
-- For ViT token grids, this is usually patch-grid metadata (not georeferenced pixel coordinates)
-
-How it is produced:
-
-ViT / MAE-style models:
-
-- Native output: tokens `(N, D)`
-- Remove CLS token if present, reshape remaining tokens:
-- `(N', D) -> (H, W, D) -> (D, H, W)`
-- `(H, W)` comes from patch layout (for example, `8x8`, `14x14`)
-
-Precomputed embeddings:
-
-- Native output is already `(D, H, W)`
-
----
-
-### InputPrepSpec 
-> Optional Large-ROI Input Policy
-
-`InputPrepSpec` controls API-level handling of large on-the-fly inputs before model inference.
-This is mainly useful when you want to choose between the model's normal resize path and API-side tiled inference.
-
-```python
-InputPrepSpec(
-    mode: Literal["resize", "tile", "auto"] = "resize",
-    tile_size: Optional[int] = None,
-    tile_stride: Optional[int] = None,
-    max_tiles: int = 9,
-    pad_edges: bool = True,
-)
-```
-
-Recommended constructors:
-
-```python
-InputPrepSpec.resize()               # default behavior (fastest)
-InputPrepSpec.tile()                 # tile size inferred from model defaults.image_size when available
-InputPrepSpec.auto(max_tiles=4)      # choose tile or resize automatically
-InputPrepSpec.tile(tile_size=224)    # explicit tile size override
-```
-
-You can also pass a string to public APIs as a shorthand:
-
-```python
-input_prep="resize"   # default
-input_prep="tile"
-input_prep="auto"
-```
-
-Current tiled design (API layer):
-
-- Tile size defaults to `embedder.describe()["defaults"]["image_size"]` when available (can be overridden).
-- Boundary tiles use a **cover-shift** layout (for example `300 -> [0,224]` and `[76,300]`) to avoid edge padding when possible.
-- Grid stitching uses **midpoint-cut** ownership in overlap regions (instead of hard overwrite).
-- `tile_stride` currently must equal `tile_size` (explicit overlap/gap configuration is not enabled yet), but boundary shifting can still create overlap on the last tile.
-- `auto` is conservative and currently prefers tiling mainly for `OutputSpec.grid()` when tile count is small enough (`max_tiles`).
-
-<img src="./docs/assets/tiles.png" width="500" alt="icon" />
-
----
-
-### Embedding
-
-`get_embedding` / `get_embeddings_batch` return an `Embedding`:
-
-```python
-from rs_embed.core.embedding import Embedding
-
-Embedding(
-    data: np.ndarray | xarray.DataArray,
-    meta: Dict[str, Any],
-)
-```
-
-- `data`: the embedding data (float32, vector or grid)
-- `meta`: includes model info, input info (optional), and export/check reports, etc.
-
----
-
-## Core Functions
-
-### get_embedding
-
-```python
-get_embedding(
-    model: str,
-    *,
-    spatial: SpatialSpec,
-    temporal: Optional[TemporalSpec] = None,
-    sensor: Optional[SensorSpec] = None,
-    output: OutputSpec = OutputSpec.pooled(),
-    backend: str = "gee",
-    device: str = "auto",
-    input_prep: InputPrepSpec | str = "resize",
-) -> Embedding
-```
-
-Computes the embedding for a single ROI.
-
-**Parameters**
-
-- `model`: model ID (see the *Supported Models* page, or use `rs_embed.core.registry.list_models()`)
-- `spatial`: `BBox` or `PointBuffer`
-- `temporal`: `TemporalSpec` or `None`
-- `sensor`: input descriptor for on-the-fly models; for most precomputed models this can be `None`
-- `output`: `OutputSpec.pooled()` or `OutputSpec.grid(...)`
-- `backend`: currently mainly `"gee"` (Google Earth Engine)
-- `device`: `"auto" / "cpu" / "cuda"` (if the model depends on torch)
-- `input_prep`: `"resize"` (default), `"tile"`, `"auto"`, or `InputPrepSpec(...)`
-
-
-
-**Returns**
-
-- `Embedding`
-
-**Example**
-
-```python
-from rs_embed import PointBuffer, TemporalSpec, OutputSpec, get_embedding
-
-emb = get_embedding(
-    "remoteclip_s2rgb",
-    spatial=PointBuffer(lon=121.5, lat=31.2, buffer_m=2048),
-    temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
-    output=OutputSpec.pooled(pooling="mean"),
-    backend="gee",
-    device="auto",
-    input_prep="resize",  # default
-)
-vec = emb.data  # (D,)
-```
-
-!!! tip "Performance tip"
-    `get_embedding` tries to reuse a **cached embedder instance** internally to avoid repeatedly initializing the provider / loading model weights (especially for torch models).
-
----
-
-### get_embeddings_batch
-
-```python
-get_embeddings_batch(
-    model: str,
-    *,
-    spatials: List[SpatialSpec],
-    temporal: Optional[TemporalSpec] = None,
-    sensor: Optional[SensorSpec] = None,
-    output: OutputSpec = OutputSpec.pooled(),
-    backend: str = "gee",
-    device: str = "auto",
-    input_prep: InputPrepSpec | str = "resize",
-) -> List[Embedding]
-```
-
-Batch-computes embeddings for multiple ROIs using the same embedder instance (often more efficient than looping over `get_embedding`).
-
-**Parameters**
-
-- `spatials`: a non-empty `List[SpatialSpec]`
-- Others are the same as `get_embedding`
-
-**Returns**
-
-- `List[Embedding]` (same length as `spatials`)
-
-**Example**
-
-```python
-from rs_embed import PointBuffer, TemporalSpec, get_embeddings_batch
-
-spatials = [
-    PointBuffer(121.5, 31.2, 2048),
-    PointBuffer(120.5, 30.2, 2048),
-]
-embs = get_embeddings_batch(
-    "remoteclip_s2rgb",
-    spatials=spatials,
-    temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
-)
-```
-
----
-
-### export_batch (core)
-
-```python
-export_batch(
-    *,
-    spatials: List[SpatialSpec],
-    temporal: Optional[TemporalSpec],
-    models: List[str],
-    out: Optional[str] = None,
-    layout: Optional[str] = None,
-    out_dir: Optional[str] = None,
-    out_path: Optional[str] = None,
-    names: Optional[List[str]] = None,
-    backend: str = "gee",
-    device: str = "auto",
-    output: OutputSpec = OutputSpec.pooled(),
-    sensor: Optional[SensorSpec] = None,
-    per_model_sensors: Optional[Dict[str, SensorSpec]] = None,
-    format: str = "npz",
-    save_inputs: bool = True,
-    save_embeddings: bool = True,
-    save_manifest: bool = True,
-    fail_on_bad_input: bool = False,
-    chunk_size: int = 16,
-    num_workers: int = 8,
-    continue_on_error: bool = False,
-    max_retries: int = 0,
-    retry_backoff_s: float = 0.0,
-    async_write: bool = True,
-    writer_workers: int = 2,
-    resume: bool = False,
-    show_progress: bool = True,
-    input_prep: InputPrepSpec | str = "resize",
-) -> Any
-```
-
-**Recommended batch export entry point**: export `inputs + embeddings + manifest` for **multiple ROIs × multiple models** in one go.
-
-- `out_dir` mode: one file per point (recommended for massive numbers of points)
-- `out_path` mode: merge into a single output file (good for fewer points and portability)
-- Decoupled output target API: `out + layout` (maps to the same two modes)
-
-**Parameters**
-
-- `spatials`: non-empty list
-- `temporal`: can be `None` (some models don’t require time)
-- `models`: non-empty list of model IDs
-- Output target:
-  - legacy API: choose one of `out_dir` / `out_path`
-  - decoupled API: provide both `out` and `layout` (`"per_item"` or `"combined"`)
-  - do not mix `out+layout` with `out_dir/out_path`
-- `names`: used only in `out_dir` mode, for output filenames (length must equal `spatials`)
-- `sensor`: a shared `SensorSpec` for all models (if models are on-the-fly)
-- `per_model_sensors`: override `SensorSpec` per model; keys are model strings
-- `format`: `"npz"` or `"netcdf"`
-- `save_inputs`: whether to save model input patches (CHW numpy)
-- `save_embeddings`: whether to save embedding arrays
-- `save_manifest`: whether to save JSON manifests (each export artifact will have an accompanying `.json`)
-- `fail_on_bad_input`: whether to raise immediately if input checks fail
-- `chunk_size`: process points in chunks (controls memory/throughput)
-  - also used as the default inference batch size when batched inference is enabled
-  - in `per_item` mode with GEE prefetch enabled, rs-embed uses a one-slot prefetch pipeline (double buffering), so input-cache peak memory can be roughly up to 2 chunks (to overlap `prefetch(chunk k+1)` with `infer/write(chunk k)`)
-- `num_workers`: concurrency for GEE patch prefetching (ThreadPool)
-- `continue_on_error`: keep exporting remaining points/models even if one item fails
-- `max_retries`: retry count for provider fetch/write operations
-- `retry_backoff_s`: sleep seconds between retries
-- `async_write`: write output files asynchronously in `out_dir` mode
-- `writer_workers`: writer thread count when `async_write=True`
-- `resume`: skip already-exported outputs and continue from remaining items
-- `show_progress`: show progress during batch export (overall progress + per-model inference progress)
-- `input_prep`: large-ROI input policy (`"resize"` default, `"tile"`, `"auto"`, or `InputPrepSpec(...)`)
-
-**Automatic inference behavior**
-
-- In **per-item output mode** (`out_dir` / `layout="per_item"`):
-  - `device="cpu"` (or auto-resolved CPU): defaults to per-item inference
-  - `device="cuda"` / `mps` / other accelerators (or auto-resolved GPU): prefers batched inference when the embedder implements batch APIs
-- In **combined output mode** (`out_path` / `layout="combined"`), rs-embed keeps the historical behavior of attempting batched model APIs (with fallback to single-item inference if batched execution fails)
-- Model-level scheduling remains serial (one model at a time)
-
-**Returns**
-
-- `out_dir` mode: `List[dict]` (manifest for each point)
-- `out_path` mode: `dict` (combined manifest)
-
-**Example: out_dir (recommended)**
-
-```python
-from rs_embed import export_batch, PointBuffer, TemporalSpec
-
-spatials = [
-    PointBuffer(121.5, 31.2, 2048),
-    PointBuffer(120.5, 30.2, 2048),
-]
-export_batch(
-    spatials=spatials,
-    temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
-    models=["remoteclip_s2rgb", "prithvi_eo_v2_s2_6b"],
-    out_dir="exports",
-    names=["p1", "p2"],
-    input_prep="tile",  # optional: API-side tiled inference for large ROIs
-    save_inputs=True,
-    save_embeddings=True,
-    chunk_size=32,
-    num_workers=8,
-)
-```
-
-**Example: out_path (single merged file)**
-
-```python
-from rs_embed import export_batch, PointBuffer, TemporalSpec
-
-export_batch(
-    spatials=[PointBuffer(121.5, 31.2, 2048)],
-    temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
-    models=["remoteclip_s2rgb"],
-    out_path="combined.npz",
-)
-```
-
-**Example: decoupled output target (`out + layout`)**
-
-```python
-from rs_embed import export_batch, PointBuffer, TemporalSpec
-
-export_batch(
-    spatials=[PointBuffer(121.5, 31.2, 2048)],
-    temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
-    models=["remoteclip_s2rgb"],
-    out="exports/combined_run",
-    layout="combined",  # writes exports/combined_run.npz
-)
-```
-
-!!! tip "Key performance feature: avoid duplicate downloads"
-    When `backend="gee"` and `save_inputs=True` and `save_embeddings=True`, `export_batch` **prefetches the raw patch once**,
-    and passes that same patch into the embedder via `input_chw` to compute embeddings—avoiding the pattern of “download once to save inputs + download again for embeddings”.
-
-!!! warning "About parallelism"
-    `export_batch` currently has two levels of execution behavior:
-    - **IO level**: GEE prefetching is parallelized (ThreadPool, controlled by `num_workers`).
-      - In **per-item mode**, rs-embed uses a **one-slot double buffer**: while chunk `k` is running inference / writing outputs, chunk `k+1` can be prefetched in the background (after the first chunk).
-      - This improves throughput when fetch and inference times are comparable, at the cost of a higher input-cache peak (roughly up to 2 chunks).
-      - In **combined mode**, prefetch still runs as a distinct stage before model execution (to keep checkpoint/resume semantics simpler and memory behavior predictable).
-    - **Inference level**:
-      - **model level**: models are executed serially (one model at a time), to keep runtime/GPU behavior stable.
-      - **batch level**: for a single model, rs-embed can run batched inference when the embedder implements batch APIs (for example `get_embeddings_batch` / `get_embeddings_batch_from_inputs`). This is used in combined mode and, on GPU/accelerators, also in per-item mode.
-    In short: rs-embed supports batch-level inference acceleration, while keeping model-level scheduling serial by design.
-
----
-
-### inspect_gee_patch
-
-```python
-inspect_gee_patch(
-    *,
-    spatial: SpatialSpec,
-    temporal: Optional[TemporalSpec] = None,
-    sensor: SensorSpec,
-    backend: str = "gee",
-    name: str = "gee_patch",
-    value_range: Optional[Tuple[float, float]] = None,
-    return_array: bool = False,
-) -> Dict[str, Any]
-```
-
-Downloads a GEE patch and performs input quality checks (**without running the model**).
-
-**Returns**
-
-- A JSON-serializable dict:
-  - `ok`: bool
-  - `report`: stats/check report
-  - `sensor`, `temporal`, `backend`
-  - `artifacts`: optional quicklook save paths
-  - If `return_array=True`, includes `array_chw` (numpy array, not JSON-serializable)
-
-**Example**
-
-```python
-from rs_embed import inspect_gee_patch, PointBuffer, TemporalSpec, SensorSpec
-
-rep = inspect_gee_patch(
-    spatial=PointBuffer(121.5, 31.2, 2048),
-    temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
-    sensor=SensorSpec(
-        collection="COPERNICUS/S2_SR_HARMONIZED",
-        bands=("B4", "B3", "B2"),
-        scale_m=10,
-        cloudy_pct=30,
-        composite="median",
-        check_input=True,
-        check_save_dir="artifacts",
-    ),
-    return_array=False,
-)
-```
+- `inspect_provider_patch(...)`
+- `inspect_gee_patch(...)` (backward-compatible wrapper)
 
 ---
 

@@ -7,13 +7,19 @@ theme:
   name: material
   features:
     - navigation.tabs
+    - navigation.indexes
     - navigation.sections
+    - navigation.expand
     - navigation.top
     - toc.follow
     - content.code.copy
+    - search.suggest
+    - search.highlight
 
 markdown_extensions:
   - admonition
+  - attr_list
+  - md_in_html
   - pymdownx.details
   - pymdownx.superfences
   - pymdownx.arithmatex:
@@ -26,8 +32,41 @@ extra_javascript:
 
 nav:
   - Home: index.md
-  - Quick Start: quickstart.md
-  - Supported Models: models.md
-  - API: api.md
-  - Extending: extending.md
-  - Limitations: limitations.md
+  - Learn:
+    - Quick Start: quickstart.md
+    - Core Concepts: concepts.md
+  - Guides:
+    - Common Workflows: workflows.md
+    - Supported Models (Overview): models.md
+    - Supported Models (Advanced Reference): models_reference.md
+    - Model Details (Examples):
+      - Precomputed:
+        - `gse_annual`: models/gse_annual.md
+        - `copernicus_embed`: models/copernicus_embed.md
+        - `tessera`: models/tessera.md
+      - On-the-fly:
+        - `remoteclip_s2rgb`: models/remoteclip_s2rgb.md
+        - `satmae_rgb`: models/satmae_rgb.md
+        - `scalemae_rgb`: models/scalemae_rgb.md
+        - `dynamicvis`: models/dynamicvis.md
+        - `wildsat`: models/wildsat.md
+        - `prithvi_eo_v2_s2_6b`: models/prithvi_eo_v2_s2_6b.md
+        - `terramind`: models/terramind.md
+        - `dofa`: models/dofa.md
+        - `fomo`: models/fomo.md
+        - `thor_1_0_base`: models/thor_1_0_base.md
+        - `satvision_toa`: models/satvision_toa.md
+        - `terrafm_b`: models/terrafm_b.md
+        - `anysat`: models/anysat.md
+        - `galileo`: models/galileo.md
+        - `agrifm`: models/agrifm.md
+  - Reference:
+    - API Reference (Overview): api.md
+    - API: Specs & Data Structures: api_specs.md
+    - API: Embedding: api_embedding.md
+    - API: Export: api_export.md
+    - API: Inspect: api_inspect.md
+    - Limitations: limitations.md
+  - Development:
+    - Extending: extending.md
+    - Model Detail Template: model_detail_template.md

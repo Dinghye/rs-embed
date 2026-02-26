@@ -1,3 +1,14 @@
+## Quick Start
+
+This page is for getting a first successful run quickly.
+
+- New to `rs-embed`: follow this page top-to-bottom
+- Already installed: jump to [Run `examples/quickstart.py`](#run-examplesquickstartpy)
+- Need semantics first (`TemporalSpec`, `OutputSpec`): read [Core Concepts](concepts.md)
+- Need task-oriented patterns after setup: read [Common Workflows](workflows.md)
+
+---
+
 ## Install (temporary)
 
 ```bash
@@ -15,7 +26,7 @@ For on-the-fly model demos (GEE + torch wrappers), install optional dependencies
 pip install -e ".[gee,torch,models]"
 ```
 
-Examples notebook: examples/playground.ipynb
+Examples notebook: `examples/playground.ipynb`
 
 
 ## Authenticate Google Earth Engine
@@ -50,7 +61,7 @@ python examples/quickstart.py --mode local --run-export
 ### GEE mode (on-the-fly)
 
 Runs `remoteclip_s2rgb` examples for:
-- `inspect_gee_patch`
+- `inspect_gee_patch` (backward-compatible wrapper; see also `inspect_provider_patch`)
 - single embedding
 - batch embeddings
 - optional export
@@ -153,6 +164,11 @@ rs-embed supports pluggable backends. In most setups:
 
 - `backend="gee"` uses **Google Earth Engine** for patch retrieval and preprocessing (best for on-the-fly models).
 
+If the behavior of a model input looks wrong, inspect the raw patch first:
+
+- [`inspect_provider_patch`](api_inspect.md#inspect_provider_patch-recommended) (recommended, provider-agnostic)
+- [`inspect_gee_patch`](api_inspect.md#inspect_gee_patch) (backward-compatible alias)
+
 !!! tip
     For large exports, tune:
     - `chunk_size`: how many ROIs per chunk (controls memory peak)
@@ -168,6 +184,10 @@ rs-embed supports pluggable backends. In most setups:
 - Planned: parquet / zarr / hdf5 (depending on your roadmap)
 
 `export_npz(...)` is provided as a convenience wrapper for single-ROI exports and shares the same performance optimizations.
+
+!!! tip
+    If you are building a repeatable dataset pipeline (many points and/or many models), prefer `export_batch(...)`.
+    See [Common Workflows](workflows.md) for the task-first export pattern.
 
 
 ## Performance Notes
