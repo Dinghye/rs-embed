@@ -1,4 +1,4 @@
-# API: Specs and Data Structures
+# API Specs & Data Structures
 
 This page documents the core spec/data types used across the public API.
 
@@ -7,6 +7,18 @@ For task-oriented usage, see [Common Workflows](workflows.md). For exact embeddi
 - [API: Embedding](api_embedding.md)
 - [API: Export](api_export.md)
 - [API: Inspect](api_inspect.md)
+
+=== ":material-shape-outline: Spatial"
+
+    Start with `SpatialSpec` (`BBox` or `PointBuffer`) to define the ROI.
+
+=== ":material-calendar-range: Temporal"
+
+    Use `TemporalSpec.year(...)` for precomputed/year-indexed products and `TemporalSpec.range(...)` for provider/on-the-fly fetch windows.
+
+=== ":material-grid: Output"
+
+    Use `OutputSpec.pooled()` first unless you specifically need spatial structure (`grid`).
 
 ---
 
@@ -51,6 +63,9 @@ TemporalSpec.year(2022)
 TemporalSpec.range("2022-06-01", "2022-09-01")
 ```
 
+!!! warning "Temporal range is a window"
+    `TemporalSpec.range(start, end)` is treated as a half-open interval `[start, end)`, so `end` is excluded.
+
 Temporal semantics in provider/on-the-fly paths:
 
 - `TemporalSpec.range(start, end)` is interpreted as a half-open window `[start, end)`, where `end` is excluded.
@@ -62,6 +77,9 @@ About `input_time` in metadata:
 
 - Many embedders store `meta["input_time"]` as the midpoint date of the temporal window.
 - This midpoint is metadata (and for some models, an auxiliary time signal), not evidence that imagery was fetched from exactly that single date.
+
+!!! note "Common gotcha"
+    `input_time` often looks like a single date, but the actual provider fetch may still be a composite over the full temporal window.
 
 ---
 
@@ -111,11 +129,18 @@ OutputSpec(
 
 Recommended constructors:
 
-```python
-OutputSpec.pooled(pooling="mean")   # shape: (D,)
-OutputSpec.grid(scale_m=10)         # shape: (D, H, W), normalized to north-up when possible
-OutputSpec.grid(scale_m=10, grid_orientation="native")  # keep model/provider native orientation
-```
+=== ":material-vector-line: Pooled (default)"
+
+    ```python
+    OutputSpec.pooled(pooling="mean")   # shape: (D,)
+    ```
+
+=== ":material-grid: Grid (spatial)"
+
+    ```python
+    OutputSpec.grid(scale_m=10)         # shape: (D, H, W), normalized to north-up when possible
+    OutputSpec.grid(scale_m=10, grid_orientation="native")  # keep model/provider native orientation
+    ```
 
 
 #### `pooled`

@@ -1,12 +1,31 @@
-# Common Workflows
+# Workflows
 
 This page is task-first: start from what you want to do, then use the smallest API surface that gets you there.
 
 For full signatures and edge cases, see [API Reference](api.md).
 
+=== ":material-map-marker-path: One ROI"
+
+    Use [`get_embedding(...)`](api_embedding.md#get_embedding) for the fastest path to a single embedding.
+
+=== ":material-dots-grid: Many ROIs (one model)"
+
+    Use [`get_embeddings_batch(...)`](api_embedding.md#get_embeddings_batch) when the model is fixed and you have many ROIs.
+
+=== ":material-database-export-outline: Dataset export"
+
+    Use [`export_batch(...)`](api_export.md#export_batch) for reproducible, resumable exports across many ROIs/models.
+
+=== ":material-image-search-outline: Debug inputs"
+
+    Use [`inspect_provider_patch(...)`](api_inspect.md#inspect_provider_patch) before blaming the model.
+
+!!! info "How to read this page"
+    Start from the task tab above, then scroll to the matching section for a runnable example and "Choose this when" guidance.
+
 ---
 
-## Workflow 1: Get a Single Embedding (Fastest Path)
+## Single Embedding (Fastest Path)
 
 Use `get_embedding(...)` when you want one ROI embedding now.
 
@@ -14,14 +33,18 @@ Use `get_embedding(...)` when you want one ROI embedding now.
 from rs_embed import PointBuffer, TemporalSpec, OutputSpec, get_embedding
 
 emb = get_embedding(
-    "remoteclip",
-    spatial=PointBuffer(lon=121.5, lat=31.2, buffer_m=2048),
-    temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
-    output=OutputSpec.pooled(),
+    "remoteclip",  # (1)!
+    spatial=PointBuffer(lon=121.5, lat=31.2, buffer_m=2048),  # (2)!
+    temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),  # (3)!
+    output=OutputSpec.pooled(),  # (4)!
     backend="gee",
     device="auto",
 )
 ```
+1. Model ID (see [Model Overview](models.md) / [Model Reference](models_reference.md)).
+2. ROI centered at a point with a square buffer (meters).
+3. Date range is a window, not a guaranteed single scene.
+4. `pooled()` is the best default for comparison/classification workflows.
 
 Choose this when:
 
@@ -31,7 +54,7 @@ Choose this when:
 
 ---
 
-## Workflow 2: Compare Many Points for One Model
+## Batch Embeddings for One Model
 
 Use `get_embeddings_batch(...)` when the model is fixed and you have multiple ROIs.
 
@@ -60,7 +83,7 @@ Choose this when:
 
 ---
 
-## Workflow 3: Export a Dataset (Recommended for Real Projects)
+## Dataset Export (Recommended)
 
 Use `export_batch(...)` for reproducible data pipelines and downstream experiments.
 For new code, prefer the `out + layout` target style so the same API pattern works for single-ROI and multi-ROI exports.
@@ -75,17 +98,22 @@ spatials = [
 
 export_batch(
     spatials=spatials,
-    names=["p1", "p2"],
-    temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
-    models=["remoteclip", "prithvi"],
-    out="exports",
-    layout="per_item",
+    names=["p1", "p2"],  # (1)!
+    temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),  # (2)!
+    models=["remoteclip", "prithvi"],  # (3)!
+    out="exports",  # (4)!
+    layout="per_item",  # (5)!
     backend="gee",
     save_inputs=True,
     save_embeddings=True,
     resume=True,
 )
 ```
+1. Stable ROI names make exports/manifests easier to track.
+2. Apply one temporal policy consistently across all items for fair comparisons.
+3. Mix multiple models in one export job when building benchmark datasets.
+4. Root output directory for manifests, inputs, and embeddings.
+5. `per_item` keeps each ROI grouped together; useful for inspection and resume.
 
 Choose this when:
 
@@ -96,7 +124,7 @@ Choose this when:
 
 ---
 
-## Workflow 4: Inspect Inputs Before Running a Model
+## Inspect Inputs Before Modeling
 
 Use patch inspection when outputs look suspicious (clouds, wrong band order, bad dynamic range, etc.).
 
@@ -128,7 +156,7 @@ report = inspect_provider_patch(
 
 ---
 
-## Workflow 5: Large ROI with Better Spatial Fidelity
+## Large ROI with Tiling
 
 If you request large ROIs for on-the-fly models, try API-side tiling:
 
@@ -153,7 +181,7 @@ Use `input_prep="tile"` when:
 
 ---
 
-## Workflow 6: Fair Cross-Model Comparisons
+## Fair Cross-Model Comparison
 
 When benchmarking models, prefer:
 
@@ -169,7 +197,7 @@ Then use [Supported Models](models.md) to review model-specific preprocessing an
 
 ## Choosing the Right Page
 
-- Need runnable setup steps: [Quick Start](quickstart.md)
-- Need mental model and semantics: [Core Concepts](concepts.md)
-- Need model capability matrix: [Supported Models](models.md)
+- Need runnable setup steps: [Quickstart](quickstart.md)
+- Need mental model and semantics: [Concepts](concepts.md)
+- Need model capability matrix: [Model Overview](models.md)
 - Need exact function signatures/options: [API Reference](api.md)

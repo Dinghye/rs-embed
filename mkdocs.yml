@@ -1,10 +1,12 @@
 site_name: rs-embed
 site_description: A unified Python toolkit for Remote Sensing Foundation Model embeddings
-repo_url: https://github.com/Dinghye/rs-embed
-repo_name: Dinghye/rs-embed
+repo_url: https://github.com/cybergis/rs-embed
+repo_name: cybergis/rs-embed
 
 theme:
   name: material
+  icon:
+    annotation: material/arrow-right-circle
   features:
     - navigation.tabs
     - navigation.indexes
@@ -13,6 +15,8 @@ theme:
     - navigation.top
     - toc.follow
     - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
     - search.suggest
     - search.highlight
 
@@ -21,7 +25,14 @@ markdown_extensions:
   - attr_list
   - md_in_html
   - pymdownx.details
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
   - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
   - pymdownx.arithmatex:
       generic: true
   - toc:
@@ -30,16 +41,19 @@ markdown_extensions:
 extra_javascript:
   - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
 
+extra_css:
+  - stylesheets/extra.css
+
 nav:
   - Home: index.md
   - Learn:
-    - Quick Start: quickstart.md
-    - Core Concepts: concepts.md
+    - Quickstart: quickstart.md
+    - Concepts: concepts.md
   - Guides:
-    - Common Workflows: workflows.md
-    - Supported Models (Overview): models.md
-    - Supported Models (Advanced Reference): models_reference.md
-    - Model Details (Examples):
+    - Workflows: workflows.md
+    - Model Overview: models.md
+    - Model Reference: models_reference.md
+    - Model Examples:
       - Precomputed:
         - gse: models/gse_annual.md
         - copernicus: models/copernicus_embed.md
@@ -61,12 +75,12 @@ nav:
         - galileo: models/galileo.md
         - agrifm: models/agrifm.md
   - Reference:
-    - API Reference (Overview): api.md
-    - "API: Specs & Data Structures": api_specs.md
-    - "API: Embedding": api_embedding.md
-    - "API: Export": api_export.md
-    - "API: Inspect": api_inspect.md
+    - Overview: api.md
+    - Specs & Data Structures: api_specs.md
+    - Embedding API: api_embedding.md
+    - Export API: api_export.md
+    - Inspect API: api_inspect.md
     - Limitations: limitations.md
   - Development:
     - Extending: extending.md
-    - Model Detail Template: model_detail_template.md
+    - Model Template: model_detail_template.md

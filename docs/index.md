@@ -6,23 +6,28 @@
 
 ## Start Here
 
-### If you are new
+=== ":material-rocket-launch: First Run"
 
-1. Read [Quick Start](quickstart.md) to install and run a first example
-2. Read [Core Concepts](concepts.md) to understand temporal/output semantics
-3. Use [Common Workflows](workflows.md) to pick the right API for your task
+    1. Read [Quickstart](quickstart.md) to install and run a first example
+    2. Read [Concepts](concepts.md) to understand temporal/output semantics
+    3. Use [Workflows](workflows.md) to pick the right API for your task
 
-### If you want to choose a model
+=== ":material-view-grid-outline: Choose a Model"
 
-- Go to [Supported Models](models.md) for the comparison matrix, preprocessing notes, and temporal behavior
+    - Go to [Model Overview](models.md) for the comparison matrix, preprocessing notes, and temporal behavior
+    - Open [Model Reference](models_reference.md) when you need advanced details and exact assumptions
 
-### If you want exact signatures and parameters
+=== ":material-api: Exact Signatures"
 
-- Go to [API Reference](api.md)
+    - Start with [API Reference](api.md)
+    - Then use [Specs & Data Structures](api_specs.md) for `TemporalSpec`, `OutputSpec`, and related types
+
+!!! tip "Suggested reading path"
+    If you're unsure where to start, use **Quickstart → Concepts → Workflows**.
 
 ---
 
-## Common Tasks
+## :material-format-list-checks: Common Tasks
 
 | Goal | Best Entry Point | Main API |
 |---|---|---|
@@ -34,7 +39,7 @@
 
 ---
 
-## Motivation
+## :material-lightbulb-on-outline: Motivation
 
 ![rs-embed background](assets/background.png)
 
@@ -61,17 +66,17 @@ RS-Embed aims to fix this.
 
 ---
 
-## Documentation Map
+## :material-map-search-outline: Documentation Map
 
 ### Learn
 
-- [Quick Start](quickstart.md): installation + first successful runs
-- [Core Concepts](concepts.md): mental model (`TemporalSpec`, `OutputSpec`, backends)
+- [Quickstart](quickstart.md): installation + first successful runs
+- [Concepts](concepts.md): mental model (`TemporalSpec`, `OutputSpec`, backends)
 
 ### Guides
 
-- [Common Workflows](workflows.md): task-oriented usage patterns
-- [Supported Models](models.md): model capabilities, preprocessing, env knobs
+- [Workflows](workflows.md): task-oriented usage patterns
+- [Model Overview](models.md): model capabilities, preprocessing, env knobs
 
 ### Reference
 
