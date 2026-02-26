@@ -4,12 +4,12 @@
 **A single line of code to get embeddings from Any Remote Sensing Foundation Model (RSFM) for Any location and Any time**
 
 
-[![Docs](https://img.shields.io/badge/docs-online-brightgreen)](https://dinghye.github.io/rs-embed/)
-![Visitors](https://visitor-badge.laobi.icu/badge?page_id=Dinghye.rs-embed)
-![License](https://img.shields.io/github/license/Dinghye/rs-embed)
-![Last Commit](https://img.shields.io/github/last-commit/Dinghye/rs-embed)
+[![Docs](https://img.shields.io/badge/docs-online-brightgreen)](https://cybergis.github.io/rs-embed/)
+![Visitors](https://visitor-badge.laobi.icu/badge?page_id=cybergis.rs-embed)
+![License](https://img.shields.io/github/license/cybergis/rs-embed)
+![Last Commit](https://img.shields.io/github/last-commit/cybergis/rs-embed)
 
-[Docs](https://dinghye.github.io/rs-embed/) · [Playground](./examples/playground.ipynb)  · [Demo](./examples/demo.ipynb)
+[Docs](https://cybergis.github.io/rs-embed/) · [Playground](./examples/playground.ipynb)  · [Demo](./examples/demo.ipynb)
 
 </div>
 
@@ -27,7 +27,7 @@ emb = get_embedding("tessera", spatial=..., temporal=..., output=..., backend="l
 ## Install (temporary)
 ```bash
 # temporary
-git clone git@github.com:Dinghye/rs-embed.git
+git clone git@github.com:cybergis/rs-embed.git
 cd rs-embed
 conda env create -f environment.yml
 conda activate rs-embed
@@ -69,7 +69,7 @@ plot_embedding_pseudocolor(
 
 ## Supported Models (Quick Reference)
 
-This is a convenience index with basic model info only (for quick scanning / links). For detailed I/O behavior and preprocessing notes, see [Supported Models](https://dinghye.github.io/rs-embed/models/).
+This is a convenience index with basic model info only (for quick scanning / links). For detailed I/O behavior and preprocessing notes, see [Supported Models](https://cybergis.github.io/rs-embed/models/).
 
 ### Precomputed Embeddings
 
@@ -104,7 +104,7 @@ This is a convenience index with basic model info only (for quick scanning / lin
 
 ## Learn More
 
-📚 [Full documentation](https://dinghye.github.io/rs-embed/)
+📚 [Full documentation](https://cybergis.github.io/rs-embed/)
 
 🪄 [Get Started: Try `rs-embed` Now](/examples/playground.ipynb)
 
@@ -112,9 +112,9 @@ This is a convenience index with basic model info only (for quick scanning / lin
 
 ## Extending
 
-We welcome requests for new model integrations and extensions. If you have your own work, or a model/paper you care about and think is meaningful to include, please open an [Issue](https://github.com/Dinghye/rs-embed/issues) and share it. We will prioritize helping extend `rs-embed` for those requests.
+We welcome requests for new model integrations and extensions. If you have your own work, or a model/paper you care about and think is meaningful to include, please open an [Issue](https://github.com/cybergis/rs-embed/issues) and share it. We will prioritize helping extend `rs-embed` for those requests.
 
-If you want to implement the extension yourself, you can also follow the guide in [`extending`](https://dinghye.github.io/rs-embed/extending/).
+If you want to implement the extension yourself, you can also follow the guide in [`extending`](https://cybergis.github.io/rs-embed/extending/).
 
 
 

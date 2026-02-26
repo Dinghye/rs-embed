@@ -192,10 +192,8 @@ If the behavior of a model input looks wrong, inspect the raw patch first:
 
 ## Performance Notes
 
-### 1. Avoid repeated model initialization
-rs-embed caches embedder instances internally (per `model + backend + device + sensor`), so repeated calls do not re-initialize providers or reload weights.
 
-### 2. Avoid repeated input downloads
+### 1. Avoid repeated input downloads
 When you use:
 
 - `backend="gee"`
@@ -206,7 +204,7 @@ When you use:
 - saving the input patch
 - computing embeddings (via `input_chw`)
 
-### 3. IO parallelism vs inference safety
+### 2. IO parallelism vs inference safety
 `export_batch` currently uses two-level scheduling:
 - **IO level**: remote patch prefetch is parallelized (`num_workers`).
 - **Inference level**:
