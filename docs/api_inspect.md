@@ -45,7 +45,8 @@ inspect_gee_patch(
 ) -> Dict[str, Any]
 ```
 
-Backwards-compatible GEE-focused wrapper around `inspect_provider_patch(...)`.
+Backwards-compatible GEE-focused wrapper around `inspect_provider_patch(...)` (compatibility wrapper).
+New code should prefer `inspect_provider_patch(...)` unless you specifically want the older GEE-focused name.
 It performs the same input quality checks (**without running the model**).
 
 **Returns**

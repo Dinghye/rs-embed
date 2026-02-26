@@ -69,6 +69,20 @@ plot_embedding_pseudocolor(
 
 <img src="./docs/assets/vis.png" width=650 /> 
 
+## Recommended API Entry Points
+
+For new users, start with these primary APIs:
+
+- `get_embedding(...)`: one ROI -> one embedding
+- `get_embeddings_batch(...)`: many ROIs, same model
+- `export_batch(...)`: export datasets / experiments (single or multiple ROIs)
+- `inspect_provider_patch(...)`: inspect raw provider patches before inference
+
+Compatibility / convenience wrappers (still supported, but not required to learn first):
+
+- `export_npz(...)`: single-ROI `.npz` convenience wrapper around `export_batch(...)`
+- `inspect_gee_patch(...)`: GEE-focused wrapper around `inspect_provider_patch(...)`
+
 ## Supported Models (Quick Reference)
 
 This is a convenience index with basic model info only (for quick scanning / links). For detailed I/O behavior and preprocessing notes, see [Supported Models](https://cybergis.github.io/rs-embed/models/).

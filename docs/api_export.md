@@ -10,7 +10,7 @@ Related pages:
 
 ---
 
-## export_batch (core)
+## export_batch (primary / recommended)
 
 ```python
 export_batch(
@@ -46,11 +46,14 @@ export_batch(
 ) -> Any
 ```
 
-**Recommended batch export entry point**: export `inputs + embeddings + manifest` for **multiple ROIs × multiple models** in one go.
+**Recommended export entry point**: export `inputs + embeddings + manifest` for **single or multiple ROIs × one or multiple models** in one go.
 
-- `out_dir` mode: one file per point (recommended for massive numbers of points)
-- `out_path` mode: merge into a single output file (good for fewer points and portability)
-- Decoupled output target API: `out + layout` (maps to the same two modes)
+For new code, prefer learning `export_batch(...)` first and use `out + layout` to choose output organization.
+`out_dir` / `out_path` remain supported as backward-compatible aliases for the same two layouts.
+
+- Decoupled output target API: `out + layout` (recommended for new code)
+- `out_dir` mode: one file per point (legacy-compatible parameter style; good for massive numbers of points)
+- `out_path` mode: merge into a single output file (legacy-compatible parameter style; good for fewer points and portability)
 
 **Parameters**
 
@@ -58,8 +61,8 @@ export_batch(
 - `temporal`: can be `None` (some models don’t require time)
 - `models`: non-empty list of model IDs
 - Output target:
-  - legacy API: choose one of `out_dir` / `out_path`
-  - decoupled API: provide both `out` and `layout` (`"per_item"` or `"combined"`)
+  - recommended API: provide both `out` and `layout` (`"per_item"` or `"combined"`)
+  - legacy-compatible API: choose one of `out_dir` / `out_path`
   - do not mix `out+layout` with `out_dir/out_path`
 - `names`: used only in `out_dir` mode, for output filenames (length must equal `spatials`)
 - `sensor`: a shared `SensorSpec` for all models (if models are on-the-fly)
@@ -92,10 +95,24 @@ export_batch(
 
 **Returns**
 
-- `out_dir` mode: `List[dict]` (manifest for each point)
-- `out_path` mode: `dict` (combined manifest)
+- `layout="per_item"` / `out_dir` mode: `List[dict]` (manifest for each point)
+- `layout="combined"` / `out_path` mode: `dict` (combined manifest)
 
-**Example: out_dir (recommended)**
+**Example: recommended (`out + layout`)**
+
+```python
+from rs_embed import export_batch, PointBuffer, TemporalSpec
+
+export_batch(
+    spatials=[PointBuffer(121.5, 31.2, 2048)],
+    temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
+    models=["remoteclip"],
+    out="exports/combined_run",
+    layout="combined",  # writes exports/combined_run.npz
+)
+```
+
+**Example: legacy-compatible `out_dir` (per-item files)**
 
 ```python
 from rs_embed import export_batch, PointBuffer, TemporalSpec
@@ -118,7 +135,7 @@ export_batch(
 )
 ```
 
-**Example: out_path (single merged file)**
+**Example: legacy-compatible `out_path` (single merged file)**
 
 ```python
 from rs_embed import export_batch, PointBuffer, TemporalSpec
@@ -128,20 +145,6 @@ export_batch(
     temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
     models=["remoteclip"],
     out_path="combined.npz",
-)
-```
-
-**Example: decoupled output target (`out + layout`)**
-
-```python
-from rs_embed import export_batch, PointBuffer, TemporalSpec
-
-export_batch(
-    spatials=[PointBuffer(121.5, 31.2, 2048)],
-    temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
-    models=["remoteclip"],
-    out="exports/combined_run",
-    layout="combined",  # writes exports/combined_run.npz
 )
 ```
 
@@ -162,7 +165,7 @@ export_batch(
 
 ---
 
-## export_npz (single-ROI convenience wrapper)
+## export_npz (compatibility / convenience wrapper)
 
 ```python
 export_npz(
@@ -188,6 +191,7 @@ export_npz(
 ```
 
 Convenience wrapper around `export_batch(...)` for a single `spatial` query that always writes a single `.npz` file.
+New code should usually prefer `export_batch(...)` so you only need to learn one export API.
 
 - Creates parent directory if needed
 - Appends `.npz` suffix if missing

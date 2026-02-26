@@ -96,7 +96,8 @@ def run_local_demo(*, run_export: bool, out_dir: Path) -> None:
         local_out = out_dir / "local_export"
         local_out.mkdir(parents=True, exist_ok=True)
         manifests = export_batch(
-            out_dir=str(local_out),
+            out=str(local_out),
+            layout="per_item",
             names=["p1", "p2"],
             spatials=spatials,
             temporal=temporal,
@@ -121,7 +122,7 @@ def run_gee_demo(*, device: str, run_export: bool, out_dir: Path) -> None:
         export_batch,
         get_embedding,
         get_embeddings_batch,
-        inspect_gee_patch,
+        inspect_provider_patch,
     )
 
     print("\n=== GEE quickstart (on-the-fly: remoteclip) ===")
@@ -137,15 +138,16 @@ def run_gee_demo(*, device: str, run_export: bool, out_dir: Path) -> None:
         composite="median",
     )
 
-    check = inspect_gee_patch(
+    check = inspect_provider_patch(
         spatial=spatial,
         temporal=temporal,
         sensor=sensor,
+        backend="gee",
         name="quickstart_patch",
         return_array=False,
     )
     report = check.get("report") or {}
-    print("\n[inspect_gee_patch]")
+    print("\n[inspect_provider_patch]")
     print(f"ok={check.get('ok')}, shape={report.get('shape')}, dtype={report.get('dtype')}")
 
     pooled = get_embedding(
@@ -176,7 +178,8 @@ def run_gee_demo(*, device: str, run_export: bool, out_dir: Path) -> None:
         gee_out = out_dir / "gee_export"
         gee_out.mkdir(parents=True, exist_ok=True)
         manifests = export_batch(
-            out_dir=str(gee_out),
+            out=str(gee_out),
+            layout="per_item",
             names=["p1", "p2"],
             spatials=spatials,
             temporal=temporal,

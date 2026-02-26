@@ -63,6 +63,7 @@ Choose this when:
 ## Workflow 3: Export a Dataset (Recommended for Real Projects)
 
 Use `export_batch(...)` for reproducible data pipelines and downstream experiments.
+For new code, prefer the `out + layout` target style so the same API pattern works for single-ROI and multi-ROI exports.
 
 ```python
 from rs_embed import export_batch, PointBuffer, TemporalSpec
@@ -77,7 +78,8 @@ export_batch(
     names=["p1", "p2"],
     temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
     models=["remoteclip", "prithvi"],
-    out_dir="exports",
+    out="exports",
+    layout="per_item",
     backend="gee",
     save_inputs=True,
     save_embeddings=True,
@@ -118,6 +120,11 @@ report = inspect_provider_patch(
 ### Backward-compatible alias
 
 - `inspect_gee_patch(...)` calls the same underlying inspection flow for GEE paths.
+
+### Export convenience wrapper (optional)
+
+- `export_npz(...)` is a single-ROI `.npz` convenience wrapper around `export_batch(...)`.
+- Prefer `export_batch(...)` in tutorials and pipelines so one API scales from one ROI to many ROIs.
 
 ---
 

@@ -9,6 +9,9 @@ This page is for getting a first successful run quickly.
 
 Canonical model IDs now use short names (for example `remoteclip`, `prithvi`). Legacy IDs such as `remoteclip_s2rgb` still work as aliases.
 
+This page teaches the **recommended** entry points first (`get_embedding`, `get_embeddings_batch`, `export_batch`, `inspect_provider_patch`).
+Compatibility wrappers such as `export_npz(...)` and `inspect_gee_patch(...)` are documented later for older code and convenience.
+
 ---
 
 ## Install (temporary)
@@ -63,7 +66,7 @@ python examples/quickstart.py --mode local --run-export
 ### GEE mode (on-the-fly)
 
 Runs `remoteclip` examples for:
-- `inspect_gee_patch` (backward-compatible wrapper; see also `inspect_provider_patch`)
+- `inspect_provider_patch` (recommended; `inspect_gee_patch` remains as a backward-compatible alias)
 - single embedding
 - batch embeddings
 - optional export
@@ -148,7 +151,8 @@ export_batch(
     names=["p1", "p2"],
     temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
     models=["remoteclip", "prithvi"],
-    out_dir="exports",
+    out="exports",
+    layout="per_item",
     backend="gee",
     device="auto",
     save_inputs=True,
@@ -159,6 +163,9 @@ export_batch(
     show_progress=True,
 )
 ```
+
+`out + layout` is the recommended output-target style for new code.
+Legacy `out_dir` / `out_path` arguments remain supported for backward compatibility.
 
 ## Working with Providers / Backends
 
@@ -185,10 +192,24 @@ If the behavior of a model input looks wrong, inspect the raw patch first:
 - Current formats: `npz`, `netcdf`
 - Planned: parquet / zarr / hdf5 (depending on your roadmap)
 
-`export_npz(...)` is provided as a convenience wrapper for single-ROI exports and shares the same performance optimizations.
+For a single ROI `.npz`, you can still use `export_batch(...)` directly:
+
+```python
+from rs_embed import export_batch, PointBuffer, TemporalSpec
+
+export_batch(
+    spatials=[PointBuffer(121.5, 31.2, 2048)],
+    temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
+    models=["remoteclip"],
+    out="exports/one_point",
+    layout="combined",  # writes exports/one_point.npz
+)
+```
+
+`export_npz(...)` remains available as a convenience wrapper for single-ROI exports and shares the same performance optimizations.
 
 !!! tip
-    If you are building a repeatable dataset pipeline (many points and/or many models), prefer `export_batch(...)`.
+    If you are building a repeatable dataset pipeline (many points and/or many models), prefer `export_batch(...)` and treat `export_npz(...)` as an optional convenience alias.
     See [Common Workflows](workflows.md) for the task-first export pattern.
 
 

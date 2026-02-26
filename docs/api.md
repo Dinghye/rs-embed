@@ -33,6 +33,22 @@ from rs_embed import (
 
 ---
 
+## Recommended Starting Points
+
+For new code, most users only need these entry points:
+
+- `get_embedding(...)`
+- `get_embeddings_batch(...)`
+- `export_batch(...)`
+- `inspect_provider_patch(...)`
+
+Compatibility / convenience wrappers (still supported):
+
+- `export_npz(...)` -> wrapper around `export_batch(...)` for single-ROI `.npz`
+- `inspect_gee_patch(...)` -> wrapper around `inspect_provider_patch(...)`
+
+---
+
 ## Choose by Task
 
 | I want to... | Read this page |
@@ -58,8 +74,8 @@ from rs_embed import (
 
 ### `api_export.md`
 
-- `export_batch(...)`
-- `export_npz(...)`
+- `export_batch(...)` (primary export API)
+- `export_npz(...)` (compatibility / convenience wrapper)
 - export performance behavior and layout options
 
 ### `api_inspect.md`

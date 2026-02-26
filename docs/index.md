@@ -29,7 +29,7 @@
 | Get one embedding for one ROI | [Quick Start](quickstart.md) | `get_embedding(...)` |
 | Compute embeddings for many ROIs (same model) | [Common Workflows](workflows.md) | `get_embeddings_batch(...)` |
 | Build an export dataset for experiments | [Common Workflows](workflows.md) | `export_batch(...)` |
-| Debug bad inputs/clouds/band issues | [Common Workflows](workflows.md) | `inspect_provider_patch(...)` / `inspect_gee_patch(...)` |
+| Debug bad inputs/clouds/band issues | [Common Workflows](workflows.md) | `inspect_provider_patch(...)` (recommended) |
 | Compare model preprocessing and I/O assumptions | [Supported Models](models.md) | model matrix + notes |
 
 ---
@@ -57,6 +57,7 @@ RS-Embed aims to fix this.
 - **Unified interface** for diverse embedding models (on-the-fly models and precomputed products).
 - **Spatial + temporal specs** to describe what you want, not how to fetch it.
 - **Batch export as a first-class workflow** via `export_batch`.
+- **Compatibility wrappers preserved** (for example `export_npz`, `inspect_gee_patch`) without changing the main learning path.
 
 ---
 
