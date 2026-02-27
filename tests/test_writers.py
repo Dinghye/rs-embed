@@ -5,6 +5,7 @@ import os
 
 import numpy as np
 import pytest
+import xarray as xr
 
 from rs_embed.writers import (
     SUPPORTED_FORMATS,
@@ -120,8 +121,6 @@ def test_write_netcdf_creates_files(tmp_path):
 
 def test_write_netcdf_roundtrip(tmp_path):
     """Verify arrays survive a write → read cycle with correct dimensions."""
-    import xarray as xr
-
     emb = np.arange(16, dtype=np.float32)
     inp = np.ones((3, 8, 8), dtype=np.float32)
     arrays = {
@@ -140,8 +139,6 @@ def test_write_netcdf_roundtrip(tmp_path):
 
 
 def test_write_netcdf_global_attrs(tmp_path):
-    import xarray as xr
-
     manifest = {"created_at": "2025-06-01T12:00:00Z", "backend": "gee", "device": "auto"}
     out = str(tmp_path / "attrs.nc")
     write_arrays(
@@ -180,8 +177,6 @@ def test_write_netcdf_appends_extension(tmp_path):
 
 def test_write_netcdf_batch_embeddings(tmp_path):
     """Combined batch: (point, dim) embeddings round-trip with correct shape."""
-    import xarray as xr
-
     batch = np.random.rand(5, 32).astype(np.float32)
     arrays = {"embeddings__model_a": batch}
     out = str(tmp_path / "batch.nc")
@@ -195,8 +190,6 @@ def test_write_netcdf_batch_embeddings(tmp_path):
 
 def test_write_netcdf_resolves_dim_name_conflicts(tmp_path):
     """Variables with different lengths should not be forced onto one shared dim."""
-    import xarray as xr
-
     arrays = {
         "embedding__model_a": np.zeros((8,), dtype=np.float32),
         "embedding__model_b": np.zeros((4,), dtype=np.float32),
