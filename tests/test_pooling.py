@@ -4,7 +4,9 @@ import pytest
 from rs_embed.ops.pooling import pool_chw_to_vec
 
 
-# ── basic correctness ──────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════
+# basic correctness
+# ══════════════════════════════════════════════════════════════════════
 
 def test_pool_chw_to_vec_mean():
     x = np.array(
@@ -36,7 +38,9 @@ def test_pool_chw_to_vec_unknown_method():
         pool_chw_to_vec(x, method="median")
 
 
-# ── output dtype is always float32 ─────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════
+# output dtype is always float32
+# ══════════════════════════════════════════════════════════════════════
 
 def test_pool_output_dtype_float64_input():
     x = np.ones((2, 3, 3), dtype=np.float64)
@@ -44,7 +48,9 @@ def test_pool_output_dtype_float64_input():
     assert out.dtype == np.float32
 
 
-# ── single pixel (1×1 spatial) ─────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════
+# single pixel (1×1 spatial)
+# ══════════════════════════════════════════════════════════════════════
 
 def test_pool_single_pixel():
     x = np.array([[[5.0]], [[9.0]]], dtype=np.float32)
@@ -52,7 +58,9 @@ def test_pool_single_pixel():
     np.testing.assert_allclose(pool_chw_to_vec(x, method="max"), [5.0, 9.0])
 
 
-# ── single channel ─────────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════
+# single channel
+# ══════════════════════════════════════════════════════════════════════
 
 def test_pool_single_channel():
     x = np.arange(4, dtype=np.float32).reshape(1, 2, 2)
@@ -61,7 +69,9 @@ def test_pool_single_channel():
     np.testing.assert_allclose(out, [1.5])
 
 
-# ── NaN handling (nanmean / nanmax) ────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════
+# NaN handling (nanmean / nanmax)
+# ══════════════════════════════════════════════════════════════════════
 
 def test_pool_with_nans():
     x = np.array([[[1.0, np.nan], [3.0, 4.0]]], dtype=np.float32)
@@ -71,7 +81,9 @@ def test_pool_with_nans():
     np.testing.assert_allclose(out_max, [4.0])
 
 
-# ── wrong ndim raises ──────────────────────────────────────────────
+# ══════════════════════════════════════════════════════════════════════
+# wrong ndim raises
+# ══════════════════════════════════════════════════════════════════════
 
 @pytest.mark.parametrize("shape", [(4,), (2, 3), (1, 2, 3, 4)])
 def test_pool_wrong_ndim(shape):
@@ -80,7 +92,9 @@ def test_pool_wrong_ndim(shape):
         pool_chw_to_vec(x)
 
 
-# ── large array (regression / smoke) ──────────────────────────────
+# ══════════════════════════════════════════════════════════════════════
+# large array (regression / smoke)
+# ══════════════════════════════════════════════════════════════════════
 
 def test_pool_large_array():
     rng = np.random.default_rng(42)

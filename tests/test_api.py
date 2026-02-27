@@ -366,14 +366,12 @@ def test_export_batch_unsupported_format():
 
 
 def test_export_batch_accepts_netcdf_format(tmp_path):
-    """format='netcdf' should pass validation (no GEE needed — it fails later, not at format check)."""
+    """format='netcdf' should be accepted and export successfully with the mock embedder."""
     from rs_embed.api import export_batch
 
-    # This will proceed past format validation and attempt to actually export.
-    # With our mock embedder it should succeed.
     results = export_batch(
         spatials=[_SPATIAL], temporal=_TEMPORAL, models=["mock_model"],
-        out_dir=str(tmp_path), format="netcdf",
+        out_dir=str(tmp_path), format="netcdf", backend="local",
         save_inputs=False, save_embeddings=True, save_manifest=False,
     )
     assert len(results) == 1
@@ -400,6 +398,7 @@ def test_export_batch_decoupled_layout_per_item(tmp_path):
         models=["mock_model"],
         out=str(tmp_path / "dir_out"),
         layout="per_item",
+        backend="local",
         save_inputs=False,
         save_embeddings=True,
         save_manifest=False,
@@ -417,6 +416,7 @@ def test_export_batch_decoupled_layout_combined(tmp_path):
         models=["mock_model"],
         out=str(tmp_path / "combined_out"),
         layout="combined",
+        backend="local",
         save_inputs=False,
         save_embeddings=True,
         save_manifest=False,

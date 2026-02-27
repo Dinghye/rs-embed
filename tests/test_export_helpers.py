@@ -1,6 +1,6 @@
 import numpy as np
-import xarray as xr
 import pytest
+import xarray as xr
 
 from rs_embed.core import registry
 from rs_embed.core.specs import BBox, PointBuffer, TemporalSpec, SensorSpec, OutputSpec
