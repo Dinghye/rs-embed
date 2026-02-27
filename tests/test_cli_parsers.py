@@ -1,3 +1,5 @@
+import argparse
+
 import pytest
 
 from rs_embed import cli
@@ -21,7 +23,7 @@ def test_parse_bands_no_spaces():
 
 
 def test_parse_bands_empty_raises():
-    with pytest.raises(Exception):
+    with pytest.raises(argparse.ArgumentTypeError):
         cli._parse_bands("")
 
 
@@ -54,12 +56,12 @@ def test_parse_value_range_empty():
 
 
 def test_parse_value_range_bad():
-    with pytest.raises(Exception):
+    with pytest.raises(argparse.ArgumentTypeError):
         cli._parse_value_range("bad")
 
 
 def test_parse_value_range_single_number():
-    with pytest.raises(Exception):
+    with pytest.raises(argparse.ArgumentTypeError):
         cli._parse_value_range("42")
 
 
@@ -211,7 +213,7 @@ def test_inspect_gee_missing_collection():
 # ══════════════════════════════════════════════════════════════════════
 
 def test_parse_models_empty_raises():
-    with pytest.raises(Exception):
+    with pytest.raises(argparse.ArgumentTypeError):
         cli._parse_models("")
 
 

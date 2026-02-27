@@ -21,13 +21,13 @@ def test_bbox_validate_invalid_bounds():
 
 def test_bbox_validate_equal_lon():
     bbox = BBox(minlon=1.0, minlat=0.0, maxlon=1.0, maxlat=1.0)
-    with pytest.raises(SpecError):
+    with pytest.raises(SpecError, match="Invalid bbox bounds"):
         bbox.validate()
 
 
 def test_bbox_validate_equal_lat():
     bbox = BBox(minlon=0.0, minlat=1.0, maxlon=1.0, maxlat=1.0)
-    with pytest.raises(SpecError):
+    with pytest.raises(SpecError, match="Invalid bbox bounds"):
         bbox.validate()
 
 
@@ -105,13 +105,13 @@ def test_temporal_spec_year_missing():
 
 def test_temporal_spec_range_missing_start():
     ts = TemporalSpec(mode="range", start=None, end="2022-06-01")
-    with pytest.raises(SpecError):
+    with pytest.raises(SpecError, match="requires start and end"):
         ts.validate()
 
 
 def test_temporal_spec_range_missing_end():
     ts = TemporalSpec(mode="range", start="2022-01-01", end=None)
-    with pytest.raises(SpecError):
+    with pytest.raises(SpecError, match="requires start and end"):
         ts.validate()
 
 

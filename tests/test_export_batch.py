@@ -450,7 +450,7 @@ def test_export_batch_combined_prefetch_reuses_superset_and_slices_subset(tmp_pa
     assert DummyS2Superset.seen == [(2.0, 3.0, 4.0, 8.0), (2.0, 3.0, 4.0, 8.0)]
 
 
-def test_export_batch_per_item_prefers_batch_inference_on_gpu(tmp_path):
+def test_export_batch_per_item_prefers_batch_inference_on_gpu(tmp_path, monkeypatch):
     class DummyBatchGPU:
         single_calls = 0
         batch_calls = 0
@@ -479,6 +479,7 @@ def test_export_batch_per_item_prefers_batch_inference_on_gpu(tmp_path):
 
     import rs_embed.api as api
     api._get_embedder_bundle_cached.cache_clear()
+    monkeypatch.setattr(api, "_provider_factory_for_backend", lambda _b: None)
 
     out_dir = tmp_path / "gpu_dir_batch"
     api.export_batch(
@@ -500,7 +501,7 @@ def test_export_batch_per_item_prefers_batch_inference_on_gpu(tmp_path):
     assert DummyBatchGPU.single_calls == 0
 
 
-def test_export_batch_per_item_cpu_defaults_to_single_inference(tmp_path):
+def test_export_batch_per_item_cpu_defaults_to_single_inference(tmp_path, monkeypatch):
     class DummyBatchGPUOff:
         single_calls = 0
         batch_calls = 0
@@ -529,6 +530,7 @@ def test_export_batch_per_item_cpu_defaults_to_single_inference(tmp_path):
 
     import rs_embed.api as api
     api._get_embedder_bundle_cached.cache_clear()
+    monkeypatch.setattr(api, "_provider_factory_for_backend", lambda _b: None)
 
     out_dir = tmp_path / "gpu_dir_single"
     api.export_batch(

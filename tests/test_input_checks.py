@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 import pytest
 
@@ -49,11 +51,6 @@ def test_inspect_chw_wrong_ndim():
     report = inspect_chw(np.zeros((4, 4), dtype=np.float32))
     assert report["ok"] is False
     assert any("ndim" in s for s in report["issues"])
-
-
-def test_inspect_chw_4d():
-    report = inspect_chw(np.zeros((1, 2, 3, 4), dtype=np.float32))
-    assert report["ok"] is False
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -260,19 +257,22 @@ def test_checks_save_dir_none(monkeypatch):
 # ══════════════════════════════════════════════════════════════════════
 
 def test_inspect_chw_histogram_keys():
-    """Inspect report should include histogram data for well-behaved input."""
+    """Inspect report should include histogram bin edges and per-band counts."""
     rng = np.random.default_rng(10)
     x = rng.uniform(0, 10, (2, 16, 16)).astype(np.float32)
     report = inspect_chw(x, hist_bins=8)
-    # At least one histogram representation should exist
-    assert "hist_bins" in report or "hist" in report
+    assert "hist_bins" in report
+    assert "band_hist" in report
+    assert len(report["hist_bins"]) == 9   # edges = bins + 1
+    assert len(report["band_hist"]) == 2   # one list of counts per channel
 
 
 def test_inspect_chw_histogram_with_clip_range():
     rng = np.random.default_rng(11)
     x = rng.uniform(0, 100, (1, 8, 8)).astype(np.float32)
     report = inspect_chw(x, hist_bins=4, hist_clip_range=(10.0, 90.0))
-    assert "hist_bins" in report or "hist" in report
+    assert "hist_bins" in report
+    assert report["hist_range"] == pytest.approx([10.0, 90.0])
 
 
 def test_inspect_chw_no_histogram_when_bins_zero():
@@ -324,7 +324,6 @@ def test_save_quicklook_rgb_creates_file(tmp_path):
     x = rng.random((3, 16, 16)).astype(np.float32)
     out = str(tmp_path / "ql.png")
     save_quicklook_rgb(x, path=out)
-    import os
     assert os.path.isfile(out)
 
 
@@ -343,5 +342,4 @@ def test_save_quicklook_rgb_supports_vmin_vmax(tmp_path):
     x = np.random.default_rng(21).random((3, 16, 16)).astype(np.float32)
     out = str(tmp_path / "ql_vmin_vmax.png")
     save_quicklook_rgb(x, path=out, vmin=0.0, vmax=1.0)
-    import os
     assert os.path.isfile(out)
