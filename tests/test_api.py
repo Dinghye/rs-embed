@@ -79,13 +79,13 @@ def test_get_embedding_output_modes():
     assert emb_grid.meta["output"] == "grid"
 
 
-def test_get_embedding_precomputed_default_backend_auto_resolves_to_local():
+def test_get_embedding_precomputed_default_backend_auto_resolves_to_auto():
     from rs_embed.api import get_embedding
 
     registry.register("mock_precomputed_local")(_MockPrecomputedLocalEmbedder)
 
     emb = get_embedding("mock_precomputed_local", spatial=_SPATIAL)
-    assert emb.meta["backend_used"] == "local"
+    assert emb.meta["backend_used"] == "auto"
     assert emb.meta["source"] == "mock.fixed.source"
 
 
@@ -133,7 +133,7 @@ def test_get_embeddings_batch_with_sensor():
     assert len(results) == 1
 
 
-def test_get_embeddings_batch_precomputed_default_backend_auto_resolves_to_local():
+def test_get_embeddings_batch_precomputed_default_backend_auto_resolves_to_auto():
     from rs_embed.api import get_embeddings_batch
 
     registry.register("mock_precomputed_local")(_MockPrecomputedLocalEmbedder)
@@ -143,7 +143,7 @@ def test_get_embeddings_batch_precomputed_default_backend_auto_resolves_to_local
         spatials=[_SPATIAL, PointBuffer(lon=1.0, lat=0.0, buffer_m=512)],
     )
     assert len(results) == 2
-    assert all(emb.meta["backend_used"] == "local" for emb in results)
+    assert all(emb.meta["backend_used"] == "auto" for emb in results)
 
 
 # ══════════════════════════════════════════════════════════════════════

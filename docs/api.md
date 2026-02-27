@@ -98,5 +98,5 @@ Different features require different optional dependencies:
 The current version is still early stage (`0.1.x`):
 
 - `BBox/PointBuffer` currently require `crs="EPSG:4326"`
-- Precomputed models mainly use `backend="local"`; on-the-fly models mainly use provider backends (typically `"gee"`)
+- Precomputed models should use `backend="auto"`; on-the-fly models mainly use provider backends (typically `"gee"` or explicit provider names)
 - `export_batch(format=...)` currently supports `"npz"` and `"netcdf"`; it may be extended to parquet/zarr/hdf5, etc.

@@ -36,6 +36,14 @@ def default_sensor_for_model(model_id: str) -> Optional[SensorSpec]:
         s2 = inputs["s2_sr"]
         if isinstance(s2, dict) and "collection" in s2 and "bands" in s2:
             return _mk(s2["collection"], s2["bands"])
+    if isinstance(inputs, dict) and "provider_default" in inputs:
+        provider_default = inputs["provider_default"]
+        if (
+            isinstance(provider_default, dict)
+            and "collection" in provider_default
+            and "bands" in provider_default
+        ):
+            return _mk(provider_default["collection"], provider_default["bands"])
     if "input_bands" in desc:
         return _mk("COPERNICUS/S2_SR_HARMONIZED", desc["input_bands"])
 

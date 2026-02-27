@@ -1,15 +1,15 @@
 # Tessera (`tessera`)
 
-> Precomputed embedding adapter backed by GeoTessera local tiles, with strict tile mosaic + ROI crop behavior and local-only (`backend="local"`/`"auto"`) access.
+> Precomputed embedding adapter backed by GeoTessera tiles, with strict tile mosaic + ROI crop behavior. Use `backend="auto"`.
 
 ## Quick Facts
 
 | Field | Value |
 |---|---|
 | Model ID | `tessera` |
-| Family / Source | GeoTessera local precomputed embeddings |
+| Family / Source | GeoTessera precomputed embeddings |
 | Adapter type | `precomputed` |
-| Typical backend | `local` (or `auto`) |
+| Typical backend | `auto` |
 | Primary input | `BBox` / `PointBuffer` in EPSG:4326 (converted to bbox) |
 | Temporal mode | year-like selection (`year`; `range` uses start year fallback) |
 | Output modes | `pooled`, `grid` |
@@ -22,13 +22,13 @@
 
 ### Good fit for
 
-- fast offline/local baselines using existing GeoTessera cache tiles
+- fast precomputed baselines using existing GeoTessera cache tiles
 - large-area ROI embedding extraction without model inference runtime
-- workflows where local tile mosaic/crop behavior is preferable to provider fetches
+- workflows where adapter tile mosaic/crop behavior is preferable to provider fetches
 
 ### Be careful when
 
-- expecting arbitrary backends (`tessera` is local/auto only)
+- expecting arbitrary backends (`tessera` currently expects `backend="auto"`)
 - using `TemporalSpec.range(...)` and assuming exact temporal semantics (adapter picks the start year)
 - ROI crosses tiles with inconsistent CRS/resolution (adapter requires strict mosaic compatibility)
 
@@ -55,7 +55,7 @@ This is a year selector for tile product lookup, not scene-level temporal filter
 
 ### Backend / cache
 
-- backend must be `local` or `auto`
+- backend should be `auto` (legacy `local` is accepted for compatibility)
 - adapter reads GeoTessera cache from:
   - `RS_EMBED_TESSERA_CACHE`, or
   - `sensor.collection="cache:/path/to/cache"` override
@@ -102,14 +102,14 @@ Non-env override:
 ### `OutputSpec.grid()`
 
 - Returns cropped precomputed embedding grid as `xarray.DataArray` `(D,H,W)`
-- Grid is product pixel/grid space from the precomputed tiles (after local mosaic+crop)
+- Grid is product pixel/grid space from the precomputed tiles (after adapter mosaic+crop)
 - Metadata includes crop/mosaic info (CRS, crop window, transform)
 
 ---
 
 ## Examples
 
-### Minimal local example
+### Minimal example
 
 ```python
 from rs_embed import get_embedding, PointBuffer, TemporalSpec, OutputSpec
@@ -119,7 +119,7 @@ emb = get_embedding(
     spatial=PointBuffer(lon=121.5, lat=31.2, buffer_m=5000),
     temporal=TemporalSpec.year(2021),
     output=OutputSpec.pooled(),
-    backend="local",
+    backend="auto",
 )
 ```
 
@@ -134,7 +134,7 @@ emb = get_embedding(
 
 ## Common Failure Modes / Debugging
 
-- backend is not `local`/`auto`
+- backend is not `auto`
 - no tiles found for ROI/year
 - tile CRS/resolution mismatch during mosaic
 - tile transform has rotation/shear (not north-up)
@@ -163,4 +163,3 @@ Keep fixed and record:
 
 - Registration/catalog: `src/rs_embed/embedders/catalog.py`
 - Adapter implementation: `src/rs_embed/embedders/precomputed_tessera.py`
-

@@ -130,7 +130,7 @@ def _resolve_embedding_api_backend(model_n: str, backend_n: str) -> str:
     """Normalize backend semantics for precomputed models.
 
     For precomputed products, the data source is fixed by the model. This helper
-    makes the public API less coupled to provider-vs-local backend details by
+    makes the public API less coupled to provider/backend naming details by
     auto-selecting a compatible access backend when the generic default
     (historically `gee`) is passed in.
     """
@@ -150,18 +150,21 @@ def _resolve_embedding_api_backend(model_n: str, backend_n: str) -> str:
         if backend_n == "auto" and provider_allowed:
             return _default_provider_backend_for_api()
         return backend_n
+    # Legacy compatibility: some precomputed users still pass backend="local".
+    if backend_n == "local" and "auto" in allowed and not provider_allowed:
+        return "auto"
     if has_provider(backend_n) and provider_allowed:
         return backend_n
 
     # Public API default is historically backend="gee". For precomputed models,
     # treat that as "use the model's fixed source via its supported access path".
     if backend_n in {"gee", "auto"}:
+        if "auto" in allowed:
+            return "auto"
         if "local" in allowed:
             return "local"
         if provider_allowed:
             return _default_provider_backend_for_api()
-        if "auto" in allowed:
-            return "auto"
 
     return backend_n
 

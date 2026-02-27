@@ -207,7 +207,7 @@ class TesseraEmbedder(EmbedderBase):
     def describe(self) -> Dict[str, Any]:
         return {
             "type": "precomputed",
-            "backend": ["local", "auto"],
+            "backend": ["auto"],
             "inputs": {"spatial": "BBox or PointBuffer (EPSG:4326)"},
             "temporal": {"mode": "year_or_range", "default_year": 2021},
             "output": ["pooled", "grid"],
@@ -216,7 +216,7 @@ class TesseraEmbedder(EmbedderBase):
                 "cache_dir_env": "RS_EMBED_TESSERA_CACHE",
             },
             "notes": [
-                "Precomputed GeoTessera tiles are local-cache backed (no provider backend).",
+                "Precomputed GeoTessera tiles use a fixed source path; use backend='auto'.",
                 "TemporalSpec.range uses the start year for tile lookup in v0.1.",
             ],
         }
@@ -249,8 +249,11 @@ class TesseraEmbedder(EmbedderBase):
         backend: str,
         device: str = "auto",
     ) -> Embedding:
-        if backend.lower() not in ("local", "auto"):
-            raise ModelError("tessera is precomputed; use backend='local' or 'auto'.")
+        backend_n = str(backend).strip().lower()
+        if backend_n == "local":
+            backend_n = "auto"
+        if backend_n != "auto":
+            raise ModelError("tessera is precomputed; use backend='auto'.")
 
         bbox = _to_bbox_4326(spatial)
         year = _year_from_temporal(temporal, default_year=2021)
@@ -311,7 +314,7 @@ class TesseraEmbedder(EmbedderBase):
         temporal: Optional[TemporalSpec] = None,
         sensor: Optional[SensorSpec] = None,
         output: OutputSpec = OutputSpec.pooled(),
-        backend: str = "local",
+        backend: str = "auto",
         device: str = "auto",
     ) -> list[Embedding]:
         if not spatials:

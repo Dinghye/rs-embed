@@ -237,6 +237,30 @@ def test_default_sensor_for_model_s2_modality():
     assert sensor.bands == ("B4", "B3", "B2")
 
 
+def test_default_sensor_for_model_provider_default_block():
+    @registry.register("dofa_style")
+    class DummyDofa:
+        def describe(self):
+            return {
+                "type": "on_the_fly",
+                "inputs": {
+                    "provider_default": {
+                        "collection": "COPERNICUS/S2_SR_HARMONIZED",
+                        "bands": ["B1", "B2", "B3"],
+                    }
+                },
+                "defaults": {"scale_m": 30, "cloudy_pct": 40, "composite": "mean"},
+            }
+
+    sensor = _default_sensor_for_model("dofa_style")
+    assert sensor is not None
+    assert sensor.collection == "COPERNICUS/S2_SR_HARMONIZED"
+    assert sensor.bands == ("B1", "B2", "B3")
+    assert sensor.scale_m == 30
+    assert sensor.cloudy_pct == 40
+    assert sensor.composite == "mean"
+
+
 def test_default_sensor_for_model_input_bands_key():
     @registry.register("prithvi_style")
     class DummyPrithvi:

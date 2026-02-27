@@ -72,7 +72,7 @@ class CopernicusEmbedder(EmbedderBase):
     def describe(self) -> Dict[str, Any]:
         return {
             "type": "precomputed",
-            "backend": ["local", "auto"],
+            "backend": ["auto"],
             "inputs": {"spatial": "BBox or PointBuffer (EPSG:4326)"},
             "temporal": {"mode": "ignored",
                          "supported_years": sorted(SUPPORTED_YEARS),},
@@ -130,8 +130,11 @@ class CopernicusEmbedder(EmbedderBase):
                     f"Tip: use TemporalSpec.year(2021)."
             )
         
-            if backend.lower() not in ("local", "auto"):
-                raise ModelError("copernicus_embed is precomputed/local; use backend='local' or 'auto'.")
+            backend_n = str(backend).strip().lower()
+            if backend_n == "local":
+                backend_n = "auto"
+            if backend_n != "auto":
+                raise ModelError("copernicus_embed is precomputed; use backend='auto'.")
 
             try:
                 from torchgeo.datasets import CopernicusEmbed

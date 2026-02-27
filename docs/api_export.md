@@ -65,6 +65,7 @@ For new code, prefer learning `export_batch(...)` first and use `out + layout` t
   - legacy-compatible API: choose one of `out_dir` / `out_path`
   - do not mix `out+layout` with `out_dir/out_path`
 - `names`: used only in `out_dir` mode, for output filenames (length must equal `spatials`)
+- `backend`: recommended to pass `backend="auto"` unless you need an explicit provider override (for example `"gee"`)
 - `sensor`: a shared `SensorSpec` for all models (if models are on-the-fly)
 - `per_model_sensors`: override `SensorSpec` per model; keys are model strings
 - `format`: `"npz"` or `"netcdf"`
@@ -149,7 +150,8 @@ export_batch(
 ```
 
 !!! tip "Key performance feature: avoid duplicate downloads"
-    When `backend="gee"` and `save_inputs=True` and `save_embeddings=True`, `export_batch` **prefetches the raw patch once**,
+    When backend resolves to a provider path (for example `backend="gee"`, or `backend="auto"` on provider-backed models),
+    and `save_inputs=True` and `save_embeddings=True`, `export_batch` **prefetches the raw patch once**,
     and passes that same patch into the embedder via `input_chw` to compute embeddings—avoiding the pattern of “download once to save inputs + download again for embeddings”.
 
 !!! warning "About parallelism"

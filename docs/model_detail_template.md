@@ -29,7 +29,7 @@ Goal: make every model page answer the same questions quickly, so users can comp
 | Model ID | `<model_id>` |
 | Family / Backbone | `TODO` |
 | Adapter type | `precomputed` / `on-the-fly` |
-| Typical backend | `local` / `gee` / other |
+| Typical backend | `auto` / `gee` / provider-specific |
 | Primary input | `TODO` |
 | Temporal mode | `year` / `range` / model-specific |
 | Output modes | `pooled`, `grid` |
@@ -137,7 +137,7 @@ emb = get_embedding(
 - `TODO`: missing optional dependency
 - `TODO`: wrong band order / channel count
 - `TODO`: temporal mode mismatch (`year` vs `range`)
-- `TODO`: backend mismatch (`local` vs `gee`)
+- `TODO`: backend mismatch (`auto` vs provider-specific backend)
 
 Recommended first check:
 

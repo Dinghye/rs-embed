@@ -64,7 +64,7 @@ More model detail pages can be added using the [Model Detail Template](model_det
 
 | Model ID | Type | Primary Input / Source | Outputs | Temporal mode | Notes | Detail |
 |---|---|---|---|---|---|---|
-| `tessera` | Precomputed | GeoTessera embedding tiles | `pooled`, `grid` | yearly coverage product | Fast baseline, local/offline workflows | [detail](models/tessera.md) |
+| `tessera` | Precomputed | GeoTessera embedding tiles | `pooled`, `grid` | yearly coverage product | Fast baseline, source-fixed precomputed workflow | [detail](models/tessera.md) |
 | `gse` | Precomputed | Google Satellite Embedding (annual) | `pooled`, `grid` | `TemporalSpec.year(...)` | Annual product via provider path | [detail](models/gse_annual.md) |
 | `copernicus` | Precomputed | Copernicus embeddings | `pooled`, `grid` | limited (2021) | Coarse resolution product | [detail](models/copernicus_embed.md) |
 

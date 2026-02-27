@@ -66,7 +66,7 @@ class EmbedderBase:
 ```python
 {
   "type": "on_the_fly" | "precomputed",
-  "backend": ["provider" | "gee" | "local" | "auto" | "tensor", ...],
+  "backend": ["provider" | "gee" | "auto" | "tensor", ...],
   "inputs": {
     "sensor_required": true/false,
     "default_sensor": {...} | null,
@@ -109,7 +109,7 @@ class ToyModelV1(EmbedderBase):
     def describe(self) -> Dict[str, Any]:
         return {
             "type": "precomputed",
-            "backend": ["local"],  # use "provider"/"gee" for on-the-fly fetchers
+            "backend": ["auto"],  # use "provider"/"gee" for on-the-fly fetchers
             "inputs": {"sensor_required": False, "default_sensor": None},
             "output": ["pooled"],
         }
@@ -121,7 +121,7 @@ class ToyModelV1(EmbedderBase):
         temporal: Optional[TemporalSpec],
         sensor: Optional[SensorSpec],
         output: OutputSpec,
-        backend: str = "local",
+        backend: str = "auto",
         device: str = "auto",
         input_chw: Optional[np.ndarray] = None,
     ) -> Embedding:
@@ -329,7 +329,7 @@ def test_toy_model_get_embedding():
         spatial=PointBuffer(0, 0, 1000),
         temporal=TemporalSpec.year(2022),
         output=OutputSpec.pooled(),
-        backend="local",
+        backend="auto",
     )
     assert emb.data.shape == (512,)
 ```

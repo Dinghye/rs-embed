@@ -313,7 +313,19 @@ class ScaleMAERGBEmbedder(EmbedderBase):
             "backend": ["provider"],
             "model_id_default": self.DEFAULT_MODEL_ID,
             "image_size": self.DEFAULT_IMAGE_SIZE,
+            "inputs": {
+                "collection": "COPERNICUS/S2_SR_HARMONIZED",
+                "bands": ["B4", "B3", "B2"],
+            },
+            "temporal": {"mode": "range"},
             "output": ["pooled", "grid"],
+            "defaults": {
+                "model_id": self.DEFAULT_MODEL_ID,
+                "image_size": self.DEFAULT_IMAGE_SIZE,
+                "scale_m": 10,
+                "cloudy_pct": 30,
+                "composite": "median",
+            },
         }
 
     

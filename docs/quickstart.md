@@ -51,7 +51,7 @@ You can run the packaged quickstart script directly:
 python examples/quickstart.py --help
 ```
 
-### Local mode (default, precomputed)
+### Auto mode (default, precomputed)
 
 Runs `tessera` examples for:
 - single embedding (`pooled` + `grid`)
@@ -59,8 +59,8 @@ Runs `tessera` examples for:
 - optional export (`export_batch`)
 
 ```bash
-python examples/quickstart.py --mode local
-python examples/quickstart.py --mode local --run-export
+python examples/quickstart.py --mode auto
+python examples/quickstart.py --mode auto --run-export
 ```
 
 ### GEE mode (on-the-fly)
@@ -171,7 +171,8 @@ Legacy `out_dir` / `out_path` arguments remain supported for backward compatibil
 
 rs-embed supports pluggable backends. In most setups:
 
-- `backend="gee"` uses **Google Earth Engine** for patch retrieval and preprocessing (best for on-the-fly models).
+- `backend="auto"` is the recommended default.
+- `backend="gee"` is an explicit provider override for on-the-fly workflows.
 
 If the behavior of a model input looks wrong, inspect the raw patch first:
 

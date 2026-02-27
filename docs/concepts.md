@@ -17,7 +17,7 @@ In practice, most users work with:
 - `spatial`: where (ROI)
 - `temporal`: when (year or time window)
 - `output`: what shape you want (`pooled` or `grid`)
-- `backend`: where data comes from (usually `gee` for on-the-fly models)
+- `backend`: data access route (`auto` recommended; `gee` is a common explicit provider override)
 
 ---
 
@@ -94,8 +94,8 @@ Use this for:
 
 Think of backend as the input retrieval/runtime path.
 
+- `backend="auto"`: recommended default; lets rs-embed choose the model-compatible access path
 - `backend="gee"`: fetch imagery from Google Earth Engine (common for on-the-fly models)
-- `backend="local"`: local/offline access for precomputed products (common for precomputed models)
 
 You usually do not need to customize providers directly unless you are debugging inputs or extending the library.
 

@@ -57,7 +57,7 @@ Computes the embedding for a single ROI.
 - `temporal`: `TemporalSpec` or `None`
 - `sensor`: input descriptor for on-the-fly models; for most precomputed models this can be `None`
 - `output`: `OutputSpec.pooled()` or `OutputSpec.grid(...)`
-- `backend`: access backend (mainly for on-the-fly models, typically `"gee"`). For precomputed models, the data `source` is fixed by the model and a compatible backend is auto-resolved when possible (for example `tessera` -> local access).
+- `backend`: access backend (mainly for on-the-fly models, typically `"gee"`). For precomputed models, the data `source` is fixed by the model; use `backend="auto"` and let rs-embed resolve the concrete access path.
 - `device`: `"auto" / "cpu" / "cuda"` (if the model depends on torch)
 - `input_prep`: `"resize"` (default), `"tile"`, `"auto"`, or `InputPrepSpec(...)`
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 rs-embed quickstart script.
 
 Examples:
-  python examples/quickstart.py --mode local
+  python examples/quickstart.py --mode auto
   python examples/quickstart.py --mode gee --device auto
   python examples/quickstart.py --mode all --run-export
 """
@@ -47,7 +47,7 @@ def _show_batch(tag: str, embeddings: Iterable) -> None:
         print(f"  #{i}: shape={arr.shape}, dtype={arr.dtype}")
 
 
-def run_local_demo(*, run_export: bool, out_dir: Path) -> None:
+def run_auto_demo(*, run_export: bool, out_dir: Path) -> None:
     from rs_embed import (
         PointBuffer,
         TemporalSpec,
@@ -57,7 +57,7 @@ def run_local_demo(*, run_export: bool, out_dir: Path) -> None:
         get_embeddings_batch,
     )
 
-    print("\n=== Local quickstart (precomputed: tessera) ===")
+    print("\n=== Auto quickstart (precomputed: tessera) ===")
     spatial = PointBuffer(lon=121.5, lat=31.2, buffer_m=1024)
     temporal = TemporalSpec.year(2024)
 
@@ -66,7 +66,7 @@ def run_local_demo(*, run_export: bool, out_dir: Path) -> None:
         spatial=spatial,
         temporal=temporal,
         output=OutputSpec.pooled(pooling="mean"),
-        backend="local",
+        backend="auto",
     )
     _show_embedding("single/pooled", pooled)
 
@@ -75,7 +75,7 @@ def run_local_demo(*, run_export: bool, out_dir: Path) -> None:
         spatial=spatial,
         temporal=temporal,
         output=OutputSpec.grid(scale_m=10),
-        backend="local",
+        backend="auto",
     )
     _show_embedding("single/grid", grid)
 
@@ -88,29 +88,29 @@ def run_local_demo(*, run_export: bool, out_dir: Path) -> None:
         spatials=spatials,
         temporal=temporal,
         output=OutputSpec.pooled(pooling="mean"),
-        backend="local",
+        backend="auto",
     )
     _show_batch("batch/pooled", batch)
 
     if run_export:
-        local_out = out_dir / "local_export"
-        local_out.mkdir(parents=True, exist_ok=True)
+        auto_out = out_dir / "auto_export"
+        auto_out.mkdir(parents=True, exist_ok=True)
         manifests = export_batch(
-            out=str(local_out),
+            out=str(auto_out),
             layout="per_item",
             names=["p1", "p2"],
             spatials=spatials,
             temporal=temporal,
             models=["tessera"],
             output=OutputSpec.pooled(),
-            backend="local",
+            backend="auto",
             save_inputs=False,
             save_embeddings=True,
             save_manifest=True,
             resume=True,
             show_progress=True,
         )
-        print(f"\n[export/local] wrote {len(manifests)} items to: {local_out}")
+        print(f"\n[export/auto] wrote {len(manifests)} items to: {auto_out}")
 
 
 def run_gee_demo(*, device: str, run_export: bool, out_dir: Path) -> None:
@@ -202,8 +202,8 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="rs-embed quickstart")
     parser.add_argument(
         "--mode",
-        choices=("local", "gee", "all"),
-        default="local",
+        choices=("auto", "gee", "all"),
+        default="auto",
         help="Which workflow to run.",
     )
     parser.add_argument(
@@ -229,8 +229,8 @@ def main() -> None:
     args = parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
-    if args.mode in ("local", "all"):
-        run_local_demo(run_export=args.run_export, out_dir=args.out_dir)
+    if args.mode in ("auto", "all"):
+        run_auto_demo(run_export=args.run_export, out_dir=args.out_dir)
     if args.mode in ("gee", "all"):
         run_gee_demo(device=args.device, run_export=args.run_export, out_dir=args.out_dir)
 

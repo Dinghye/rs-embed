@@ -1,4 +1,4 @@
-<!-- ![rs-embed banner](assets/banner.png) -->
+![rs-embed banner](assets/banner.png)
 
 > One line of code to get embeddings from **any Remote Sensing Foundation Model (RSFM)** for **any location** and **any time**
 
@@ -71,7 +71,7 @@ RS-Embed aims to fix this.
 ### Learn
 
 - [Quickstart](quickstart.md): installation + first successful runs
-- [Concepts](concepts.md): mental model (`TemporalSpec`, `OutputSpec`, backends)
+- [Concepts](concepts.md): mental model (`TemporalSpec`, `OutputSpec`, and `backend="auto"` access routing)
 
 ### Guides
 

@@ -364,6 +364,7 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
     """
 
     DEFAULT_MODEL_KEY = "prithvi_eo_v2_100_tl"
+    DEFAULT_IMAGE_SIZE = 224
     DEFAULT_IMAGE_SCALE_M = 30  # notebook used 30m
     DEFAULT_CLOUDY_PCT = 30
     DEFAULT_COMPOSITE = "median"
@@ -378,6 +379,14 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
             "model_key_default": self.DEFAULT_MODEL_KEY,
             "input_bands": PRITHVI_S2_BANDS_DST,
             "output": ["pooled", "grid"],
+            "defaults": {
+                "model_key": self.DEFAULT_MODEL_KEY,
+                "image_size": self.DEFAULT_IMAGE_SIZE,
+                "scale_m": self.DEFAULT_IMAGE_SCALE_M,
+                "cloudy_pct": self.DEFAULT_CLOUDY_PCT,
+                "composite": self.DEFAULT_COMPOSITE,
+                "fill_value": 0.0,
+            },
             "notes": [
                 "Uses TerraTorch BACKBONE_REGISTRY.build(...)",
                 "Requires temporal_coords (year, dayofyear-1) and location_coords (lon, lat).",
