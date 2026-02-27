@@ -31,7 +31,13 @@ class _FakeTileEmbedder:
         self.single_calls += 1
         x = np.asarray(input_chw, dtype=np.float32)
         if output.mode == "grid":
-            return Embedding(data=x[:1].copy(), meta={"y_axis_direction": "north_to_south"})
+            return Embedding(
+                data=x[:1].copy(),
+                meta={
+                    "y_axis_direction": "north_to_south",
+                    "grid_hw": (int(x.shape[-2]), int(x.shape[-1])),
+                },
+            )
         return Embedding(data=np.asarray([float(x.mean())], dtype=np.float32), meta={})
 
     def get_embeddings_batch_from_inputs(
@@ -89,6 +95,7 @@ def test_tiled_grid_stitch_restores_shape_and_values():
     assert out.meta["input_prep"]["tile_count"] == 4
     assert out.meta["input_prep"]["tile_layout"] == "cover_shift"
     assert out.meta["input_prep"]["stitch_policy"] == "midpoint_cut"
+    assert out.meta["grid_hw"] == (6, 6)
     assert emb.batch_calls >= 1
 
 

@@ -521,6 +521,9 @@ def _aggregate_tiled_embeddings(
     base_meta["input_prep"]["merged_output"] = "grid_stitch"
     base_meta["input_prep"]["stitched_grid_shape"] = (int(out_h), int(out_w))
     base_meta["input_prep"]["stitch_policy"] = "midpoint_cut"
+    # Keep model-reported grid metadata consistent with stitched output.
+    if "grid_hw" in base_meta:
+        base_meta["grid_hw"] = (int(out_h), int(out_w))
     return Embedding(data=out_arr, meta=base_meta)
 
 

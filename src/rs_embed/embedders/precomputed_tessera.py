@@ -129,6 +129,7 @@ def _mosaic_and_crop_strict_roi(
     """
     # Pass 1: scan tile layout and compute global bounds from metadata only.
     crs0 = None
+    crs0_str = None
     a0 = e0 = None
     d0 = None
     left = bottom = float("inf")
@@ -141,11 +142,12 @@ def _mosaic_and_crop_strict_roi(
 
         if crs0 is None:
             crs0 = crs
+            crs0_str = str(crs0)
             a0 = float(transform.a)
             e0 = float(transform.e)
             d0 = int(d)
         else:
-            if str(crs) != str(crs0):
+            if crs != crs0:
                 raise ModelError("Tiles have different CRS; cannot mosaic.")
             if abs(float(transform.a) - a0) > 1e-12 or abs(float(transform.e) - e0) > 1e-12:
                 raise ModelError("Tiles have different resolution; cannot mosaic without resampling.")
@@ -173,7 +175,7 @@ def _mosaic_and_crop_strict_roi(
     global_transform = Affine(px_w, 0.0, left, 0.0, -px_h, top)
 
     # crop window for ROI in tile CRS
-    xmin, ymin, xmax, ymax = _reproject_bbox_4326_to(str(crs0), bbox_4326)
+    xmin, ymin, xmax, ymax = _reproject_bbox_4326_to(str(crs0_str), bbox_4326)
     inv = ~global_transform
     c0, r0 = inv * (xmin, ymax)  # top-left
     c1, r1 = inv * (xmax, ymin)  # bottom-right
@@ -225,7 +227,7 @@ def _mosaic_and_crop_strict_roi(
     chw = np.moveaxis(cropped_hwc, -1, 0).astype(np.float32)
 
     meta = {
-        "tile_crs": str(crs0),
+        "tile_crs": str(crs0_str),
         "mosaic_hw": (mosaic_h, mosaic_w),
         "crop_px_window": (x0, y0, x1, y1),
         "crop_hw": (y1 - y0, x1 - x0),
