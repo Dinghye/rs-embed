@@ -9,7 +9,7 @@
 ![License](https://img.shields.io/github/license/cybergis/rs-embed)
 ![Last Commit](https://img.shields.io/github/last-commit/cybergis/rs-embed)
 
-[Docs](https://cybergis.github.io/rs-embed/) · [Learn](https://cybergis.github.io/rs-embed/quickstart/) · [Guide](https://cybergis.github.io/rs-embed/workflows/) · [Playground](./examples/playground.ipynb)  · [Demo](./examples/demo.ipynb)
+[Docs](https://cybergis.github.io/rs-embed/) · [Learn](https://cybergis.github.io/rs-embed/quickstart/) · [Guide](https://cybergis.github.io/rs-embed/workflows/) · [StartNow](./examples/playground.ipynb)  · [UseCase](./examples/demo.ipynb)
 
 </div>
 

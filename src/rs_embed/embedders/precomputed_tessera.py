@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, Optional, Tuple, List
+from typing import Any, Dict, Optional, Tuple, List, Iterable, Callable
 
 import numpy as np
 
@@ -11,6 +11,8 @@ from ..core.embedding import Embedding
 from ..core.errors import ModelError
 from ..core.specs import BBox, PointBuffer, SpatialSpec, TemporalSpec, SensorSpec, OutputSpec
 from .base import EmbedderBase
+
+_EMBED_DIMS = (64, 128, 256, 512, 768, 1024)
 
 
 def _buffer_m_to_deg(lat: float, buffer_m: float) -> Tuple[float, float]:
@@ -63,11 +65,23 @@ def _to_hwc(arr: np.ndarray) -> np.ndarray:
     if a.ndim != 3:
         raise ModelError(f"Unexpected embedding ndim={a.ndim}, shape={a.shape}")
     # geotessera：HWC (H, W, D)
-    if a.shape[-1] in (64, 128, 256, 512, 768, 1024):
+    if a.shape[-1] in _EMBED_DIMS:
         return a.astype(np.float32)
     # also support CHW
-    if a.shape[0] in (64, 128, 256, 512, 768, 1024):
+    if a.shape[0] in _EMBED_DIMS:
         return np.moveaxis(a, 0, -1).astype(np.float32)
+    raise ModelError(f"Unexpected embedding shape: {a.shape}")
+
+
+def _infer_hwc_shape(arr: np.ndarray) -> Tuple[int, int, int]:
+    """Return (h, w, d) without materializing a float32 copy."""
+    a = np.asarray(arr)
+    if a.ndim != 3:
+        raise ModelError(f"Unexpected embedding ndim={a.ndim}, shape={a.shape}")
+    if a.shape[-1] in _EMBED_DIMS:
+        return int(a.shape[0]), int(a.shape[1]), int(a.shape[2])
+    if a.shape[0] in _EMBED_DIMS:
+        return int(a.shape[1]), int(a.shape[2]), int(a.shape[0])
     raise ModelError(f"Unexpected embedding shape: {a.shape}")
 
 
@@ -105,46 +119,46 @@ def _reproject_bbox_4326_to(tile_crs_str: str, bbox: BBox) -> Tuple[float, float
 
 
 def _mosaic_and_crop_strict_roi(
-    tiles_rows: List[Tuple[int, float, float, np.ndarray, Any, Any]],
+    tiles_rows_factory: Callable[[], Iterable[Tuple[int, float, float, np.ndarray, Any, Any]]],
     bbox_4326: BBox,
 ) -> Tuple[np.ndarray, Dict[str, Any]]:
     """
-    tiles_rows: list of (year, tile_lon, tile_lat, embedding_array, crs, transform)
+    tiles_rows_factory: returns iterable of
+      (year, tile_lon, tile_lat, embedding_array, crs, transform)
     Return cropped CHW + meta.
     """
-    # normalize + collect tile meta
-    hwc_list = []
+    # Pass 1: scan tile layout and compute global bounds from metadata only.
     crs0 = None
     a0 = e0 = None
+    d0 = None
+    left = bottom = float("inf")
+    right = top = float("-inf")
 
-    bounds_list = []
-    for year, tlon, tlat, emb, crs, transform in tiles_rows:
+    for year, tlon, tlat, emb, crs, transform in tiles_rows_factory():
         _assert_north_up(transform)
-        hwc = _to_hwc(emb)
-        h, w, d = hwc.shape
-        left, bottom, right, top = _tile_bounds(transform, w, h)
+        h, w, d = _infer_hwc_shape(emb)
+        t_left, t_bottom, t_right, t_top = _tile_bounds(transform, w, h)
 
         if crs0 is None:
             crs0 = crs
             a0 = float(transform.a)
             e0 = float(transform.e)
+            d0 = int(d)
         else:
             if str(crs) != str(crs0):
                 raise ModelError("Tiles have different CRS; cannot mosaic.")
             if abs(float(transform.a) - a0) > 1e-12 or abs(float(transform.e) - e0) > 1e-12:
                 raise ModelError("Tiles have different resolution; cannot mosaic without resampling.")
+            if int(d) != int(d0):
+                raise ModelError("Tiles have different embedding dimensions; cannot mosaic.")
 
-        hwc_list.append((hwc, transform, (left, bottom, right, top)))
-        bounds_list.append((left, bottom, right, top))
+        left = min(left, t_left)
+        bottom = min(bottom, t_bottom)
+        right = max(right, t_right)
+        top = max(top, t_top)
 
     if crs0 is None:
         raise ModelError("No tiles fetched; cannot mosaic.")
-
-    # global mosaic bounds
-    left = min(b[0] for b in bounds_list)
-    bottom = min(b[1] for b in bounds_list)
-    right = max(b[2] for b in bounds_list)
-    top = max(b[3] for b in bounds_list)
 
     px_w = float(a0)                 # >0
     px_h = abs(float(e0))            # >0 (since e<0)
@@ -152,21 +166,11 @@ def _mosaic_and_crop_strict_roi(
     mosaic_w = int(np.ceil((right - left) / px_w))
     mosaic_h = int(np.ceil((top - bottom) / px_h))
 
-    d = hwc_list[0][0].shape[-1]
-    mosaic = np.zeros((mosaic_h, mosaic_w, d), dtype=np.float32)
-
     # global transform (north-up)
     # x = left + col*px_w, y = top - row*px_h
     # Affine(a, b, c, d, e, f) = (px_w, 0, left, 0, -px_h, top)
     from affine import Affine
     global_transform = Affine(px_w, 0.0, left, 0.0, -px_h, top)
-
-    # paste tiles into mosaic
-    for hwc, transform, (t_left, t_bottom, t_right, t_top) in hwc_list:
-        h, w, _ = hwc.shape
-        x_off = int(round((t_left - left) / px_w))
-        y_off = int(round((top - t_top) / px_h))
-        mosaic[y_off:y_off + h, x_off:x_off + w, :] = hwc
 
     # crop window for ROI in tile CRS
     xmin, ymin, xmax, ymax = _reproject_bbox_4326_to(str(crs0), bbox_4326)
@@ -187,7 +191,37 @@ def _mosaic_and_crop_strict_roi(
     if x1 <= x0 or y1 <= y0:
         raise ModelError("ROI does not overlap fetched tessera tiles.")
 
-    cropped_hwc = mosaic[y0:y1, x0:x1, :]
+    crop_h = y1 - y0
+    crop_w = x1 - x0
+    cropped_hwc = np.zeros((crop_h, crop_w, int(d0)), dtype=np.float32)
+
+    # Pass 2: paste tiles directly into crop canvas (avoid full mosaic allocation).
+    for year, tlon, tlat, emb, crs, transform in tiles_rows_factory():
+        _assert_north_up(transform)
+        hwc = _to_hwc(emb)
+        h, w, _ = hwc.shape
+        t_left, t_bottom, t_right, t_top = _tile_bounds(transform, w, h)
+
+        x_off = int(round((t_left - left) / px_w))
+        y_off = int(round((top - t_top) / px_h))
+        tx0 = max(x0, x_off)
+        tx1 = min(x1, x_off + w)
+        ty0 = max(y0, y_off)
+        ty1 = min(y1, y_off + h)
+        if tx1 <= tx0 or ty1 <= ty0:
+            continue
+
+        sx0 = tx0 - x_off
+        sx1 = tx1 - x_off
+        sy0 = ty0 - y_off
+        sy1 = ty1 - y_off
+
+        dx0 = tx0 - x0
+        dx1 = tx1 - x0
+        dy0 = ty0 - y0
+        dy1 = ty1 - y0
+        cropped_hwc[dy0:dy1, dx0:dx1, :] = hwc[sy0:sy1, sx0:sx1, :]
+
     chw = np.moveaxis(cropped_hwc, -1, 0).astype(np.float32)
 
     meta = {
@@ -271,8 +305,10 @@ class TesseraEmbedder(EmbedderBase):
         if not tiles:
             raise ModelError(f"No tessera tiles for bounds={bounds}, year={year}")
 
-        rows = list(gt.fetch_embeddings(tiles))
-        chw, crop_meta = _mosaic_and_crop_strict_roi(rows, bbox_4326=bbox)
+        def _tiles_rows():
+            return gt.fetch_embeddings(tiles)
+
+        chw, crop_meta = _mosaic_and_crop_strict_roi(_tiles_rows, bbox_4326=bbox)
 
         meta = {
             "model": self.model_name,
