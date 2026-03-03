@@ -105,7 +105,7 @@ This is a convenience index with basic model info only (for quick scanning / lin
 
 ### On-the-fly Foundation Models
 
-| Model ID |  Primary Input  | Publication | Link |
+| Model ID |  Primary Input  | Publication | Github Link |
 |---|---|---|---|
 | `satmae` |  S2 RGB | [NeurIPS 2022](https://arxiv.org/abs/2207.08051) |[link](https://github.com/sustainlab-group/SatMAE)|
 | `prithvi` | S2 6-band | [arXiv 2023](https://arxiv.org/abs/2310.18660) | [link](https://huggingface.co/ibm-nasa-geospatial) |
