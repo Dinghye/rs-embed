@@ -28,9 +28,9 @@ This page is best used after you already narrowed down candidate models and want
 | Goal | Start with | Why |
 |---|---|---|
 | Fast baseline / simple pipeline | `tessera`, `gse`, `copernicus` | Precomputed embeddings, fewer runtime dependencies |
-| General on-the-fly RGB experiments | `remoteclip`, `satmae`, `scalemae` | Simple S2 RGB input paths |
+| General on-the-fly RGB experiments | `remoteclip`, `satmae`, `satmaepp`, `scalemae` | Simple S2 RGB input paths |
 | Time-series modeling | `agrifm`, `anysat`, `galileo` | Native multi-frame temporal packaging |
-| Multispectral / strict spectral semantics | `dofa`, `terramind`, `thor`, `satvision` | Strong channel/schema assumptions |
+| Multispectral / strict spectral semantics | `satmaepp_s2_10b`, `dofa`, `terramind`, `thor`, `satvision` | Strong channel/schema assumptions |
 | S1/S2 modality experiments | `terrafm` | Supports S2 or S1 paths (per call) |
 
 ### Readability tips
@@ -63,6 +63,8 @@ Documented on-the-fly IDs:
 
 - `remoteclip`
 - `satmae`
+- `satmaepp`
+- `satmaepp_s2_10b`
 - `scalemae`
 - `anysat`
 - `galileo`
@@ -82,6 +84,8 @@ Documented on-the-fly IDs:
 |---|---|---|---|---|---|---|
 | `remoteclip` | `rshf.remoteclip.RemoteCLIP` (open_clip style CLIP ViT) | S2 RGB (`B4,B3,B2`) | raw SR `0..10000` -> `/10000` -> RGB `uint8`; then model transform if available, else CLIP norm | image size 224; fallback path uses `Resize + CenterCrop`; no pad | pooled vector or ViT token grid | Medium (high if wrapper transform matches training; fallback is generic CLIP pipeline) |
 | `satmae` | `rshf.satmae.SatMAE` | S2 RGB (`B4,B3,B2`) | raw SR -> `/10000` -> RGB `uint8`; prefer model transform, else CLIP norm | default 224; CLIP fallback has `Resize + CenterCrop`; no pad | token sequence -> pooled or patch-token grid | Medium |
+| `satmaepp` | `rshf.satmaepp.SatMAEPP` | S2 RGB (`B4,B3,B2`) | raw SR -> `/10000` -> RGB `uint8`; SatMAE++ fMoW eval preprocessing (`Normalize + Resize(short side) + CenterCrop`), default channel order `bgr` | default 224; source-aligned short-side resize + center crop; no pad | token sequence -> pooled or patch-token grid | High |
+| `satmaepp_s2_10b` | SatMAE++ grouped-channel source branch (`models_mae_group_channels.py`) | S2 SR 10-band (`B2,B3,B4,B5,B6,B7,B8,B8A,B11,B12`) | clip `0..10000`; source Sentinel min/max mapping to `uint8`; `ToTensor + Resize(short side) + CenterCrop` | default 96 with patch size 8; source-style resize/crop; no pad | grouped token sequence -> pooled or group-reduced spatial token grid | High |
 | `scalemae` | `rshf.scalemae.ScaleMAE` (ViT style) | S2 RGB (`B4,B3,B2`) + `input_res_m` | raw SR -> `/10000` -> RGB `uint8`; CLIP norm tensor; pass `input_res_m` | default 224; CLIP path has `Resize + CenterCrop`; no pad | token sequence or pooled vector depending on wrapper output | Medium |
 | `anysat` | AnySat from upstream `hubconf.py` (`AnySat`) | S2 10-band TCHW (or CHW auto-expanded) | clip to `0..10000`; normalize mode default `per_tile_zscore`; builds per-frame `s2_dates` | resize TCHW to default 24; no crop, no pad | patch output `[D,H,W]`, pooled by spatial mean/max | Medium |
 | `galileo` | `Encoder` from official `single_file_galileo.py` | S2 10-band TCHW (or CHW auto-expanded) | clip to `0..10000`; normalize mode default `unit_scale`; constructs Galileo tensors with configurable `T` + per-frame `months`, optional NDVI channel | default 64 with patch 8; bilinear resize; no pad | pooled token vector and S2-group token grid | Medium |
@@ -100,7 +104,7 @@ Documented on-the-fly IDs:
 - For most on-the-fly adapters, `TemporalSpec.range(start, end)` means: filter imagery in `[start, end)`, then build one composite patch for model input (`median` by default, or `mosaic` if configured via `SensorSpec.composite`).
 - In these adapters, `meta.input_time` is typically the midpoint of the temporal window and is mainly metadata (or an auxiliary time signal for models that require it), not a guaranteed single-scene acquisition date.
 - Multi-frame adapters: `agrifm`, `anysat`, and `galileo` fetch TCHW sequences by splitting the requested range into sub-windows and compositing each sub-window into one frame.
-- Current single-composite adapters include: `remoteclip`, `satmae`, `scalemae`, `wildsat`, `prithvi`, `terrafm`, `terramind`, `dofa`, `fomo`, `thor`, and `satvision`.
+- Current single-composite adapters include: `remoteclip`, `satmae`, `satmaepp`, `satmaepp_s2_10b`, `scalemae`, `wildsat`, `prithvi`, `terrafm`, `terramind`, `dofa`, `fomo`, `thor`, and `satvision`.
 
 ### Multi-frame Semantics
 
@@ -132,6 +136,8 @@ Interpretation:
 |---|---|---|---|---|
 | `remoteclip` | No | No | No | No |
 | `satmae` | No | No | No | No |
+| `satmaepp` | No | No | No | No |
+| `satmaepp_s2_10b` | No (this adapter path) | No | No | No (but strict 10-band order is required) |
 | `scalemae` | No | No | Yes (`input_res_m`) | Yes: scale/resolution (`sensor.scale_m`) |
 | `anysat` | Yes | Partially (S2-only imagery, plus temporal date tokens) | Yes (`s2`, `s2_dates`) | Yes: day-of-year/date signal (derived from temporal range) |
 | `galileo` | Yes | Mostly S2 path in current adapter + temporal month tokens | Yes (multiple tensors + masks + `months`) | Yes: month/time signal (derived from temporal range) |
@@ -159,6 +165,8 @@ Practically multi-input models:
 |---|---|
 | `remoteclip` | fixed `image_size=224` in code path; no per-model preprocess env switch |
 | `satmae` | `RS_EMBED_SATMAE_IMG` |
+| `satmaepp` | `RS_EMBED_SATMAEPP_ID`, `RS_EMBED_SATMAEPP_IMG`, `RS_EMBED_SATMAEPP_CHANNEL_ORDER`, `RS_EMBED_SATMAEPP_BGR` |
+| `satmaepp_s2_10b` | `RS_EMBED_SATMAEPP_S2_CKPT_REPO`, `RS_EMBED_SATMAEPP_S2_CKPT_FILE`, `RS_EMBED_SATMAEPP_S2_CODE_REPO`, `RS_EMBED_SATMAEPP_S2_CODE_REF`, `RS_EMBED_SATMAEPP_S2_MODEL_FN`, `RS_EMBED_SATMAEPP_S2_IMG`, `RS_EMBED_SATMAEPP_S2_PATCH`, `RS_EMBED_SATMAEPP_S2_GRID_REDUCE`, `RS_EMBED_SATMAEPP_S2_WEIGHTS_ONLY` |
 | `scalemae` | `RS_EMBED_SCALEMAE_IMG` |
 | `anysat` | `RS_EMBED_ANYSAT_IMG`, `RS_EMBED_ANYSAT_NORM`, `RS_EMBED_ANYSAT_FRAMES` |
 | `galileo` | `RS_EMBED_GALILEO_IMG`, `RS_EMBED_GALILEO_PATCH`, `RS_EMBED_GALILEO_NORM`, `RS_EMBED_GALILEO_INCLUDE_NDVI`, `RS_EMBED_GALILEO_FRAMES`, `RS_EMBED_GALILEO_MONTH` |

@@ -3,6 +3,23 @@ import numpy as np
 from rs_embed.core.specs import OutputSpec, PointBuffer, TemporalSpec
 from rs_embed.embedders.onthefly_dofa import DOFAEmbedder
 from rs_embed.embedders.onthefly_satmae import SatMAERGBEmbedder
+from rs_embed.embedders.onthefly_satmaepp import SatMAEPPEmbedder
+from rs_embed.embedders.onthefly_satmaepp_s2 import SatMAEPPSentinel10Embedder
+
+
+def test_satmaepp_channel_order_defaults_to_bgr_for_fmow_rgb(monkeypatch):
+    import rs_embed.embedders.onthefly_satmaepp as satpp
+
+    monkeypatch.delenv("RS_EMBED_SATMAEPP_CHANNEL_ORDER", raising=False)
+    monkeypatch.delenv("RS_EMBED_SATMAEPP_BGR", raising=False)
+    assert satpp._resolve_satmaepp_channel_order("MVRL/satmaepp_ViT-L_pretrain_fmow_rgb") == "bgr"
+
+
+def test_satmaepp_channel_order_respects_env_override(monkeypatch):
+    import rs_embed.embedders.onthefly_satmaepp as satpp
+
+    monkeypatch.setenv("RS_EMBED_SATMAEPP_CHANNEL_ORDER", "rgb")
+    assert satpp._resolve_satmaepp_channel_order("MVRL/satmaepp_ViT-L_pretrain_fmow_rgb") == "rgb"
 
 
 def test_satmae_batch_loads_once_and_batches_forward(monkeypatch):
@@ -58,6 +75,116 @@ def test_satmae_batch_loads_once_and_batches_forward(monkeypatch):
     assert calls["load"] == 1
     assert calls["forward_batch"] == 3  # ceil(5 / batch_size=2)
     assert [float(e.data[0]) for e in out] == [10.0, 11.0, 12.0, 13.0, 14.0]
+
+
+def test_satmaepp_batch_loads_once_and_batches_forward(monkeypatch):
+    import rs_embed.embedders.onthefly_satmaepp as satpp
+
+    emb = SatMAEPPEmbedder()
+    calls = {"fetch": 0, "load": 0, "forward_batch": 0}
+
+    monkeypatch.setattr(emb, "_get_provider", lambda: object())
+    monkeypatch.setenv("RS_EMBED_SATMAEPP_FETCH_WORKERS", "1")
+    monkeypatch.setenv("RS_EMBED_SATMAEPP_BATCH_SIZE", "2")
+
+    def _fake_fetch(*, spatial, temporal, sensor, out_size, provider):
+        calls["fetch"] += 1
+        v = int(spatial.lon) + 20
+        return np.full((out_size, out_size, 3), v, dtype=np.uint8)
+
+    def _fake_load(*, model_id, device):
+        calls["load"] += 1
+        return object(), {"device": "cpu"}
+
+    def _fake_forward_batch(model, rgb_u8_batch, *, image_size, device, model_id):
+        calls["forward_batch"] += 1
+        out = []
+        for rgb in rgb_u8_batch:
+            val = float(rgb[0, 0, 0])
+            out.append(np.full((4, 2), val, dtype=np.float32))
+        return out
+
+    monkeypatch.setattr(satpp, "fetch_s2_rgb_u8_from_gee", _fake_fetch)
+    monkeypatch.setattr(satpp, "_load_satmaepp", _fake_load)
+    monkeypatch.setattr(satpp, "_satmaepp_forward_tokens_batch", _fake_forward_batch)
+
+    spatials = [
+        PointBuffer(lon=0.0, lat=0.0, buffer_m=256),
+        PointBuffer(lon=1.0, lat=0.0, buffer_m=256),
+        PointBuffer(lon=2.0, lat=0.0, buffer_m=256),
+        PointBuffer(lon=3.0, lat=0.0, buffer_m=256),
+        PointBuffer(lon=4.0, lat=0.0, buffer_m=256),
+    ]
+
+    out = emb.get_embeddings_batch(
+        spatials=spatials,
+        temporal=TemporalSpec.year(2020),
+        output=OutputSpec.pooled(),
+        backend="gee",
+        device="auto",
+    )
+
+    assert len(out) == 5
+    assert calls["fetch"] == 5
+    assert calls["load"] == 1
+    assert calls["forward_batch"] == 3  # ceil(5 / batch_size=2)
+    assert [float(e.data[0]) for e in out] == [20.0, 21.0, 22.0, 23.0, 24.0]
+
+
+def test_satmaepp_s2_batch_loads_once_and_batches_forward(monkeypatch):
+    import rs_embed.embedders.onthefly_satmaepp_s2 as satpp_s2
+
+    emb = SatMAEPPSentinel10Embedder()
+    calls = {"fetch": 0, "load": 0, "forward_batch": 0}
+
+    monkeypatch.setattr(emb, "_get_provider", lambda: object())
+    monkeypatch.setenv("RS_EMBED_SATMAEPP_S2_FETCH_WORKERS", "1")
+    monkeypatch.setenv("RS_EMBED_SATMAEPP_S2_BATCH_SIZE", "2")
+
+    def _fake_fetch(*, provider, spatial, temporal, scale_m, cloudy_pct, composite, fill_value):
+        calls["fetch"] += 1
+        v = float(int(spatial.lon) + 30)
+        return np.full((10, 8, 8), v, dtype=np.float32)
+
+    def _fake_load(**kwargs):
+        calls["load"] += 1
+        return object(), {"device": "cpu"}
+
+    def _fake_forward_batch(model, raw_chw_batch, *, image_size, device):
+        calls["forward_batch"] += 1
+        out = []
+        # 1 + G*L with G=3, L=4 (square) to satisfy grouped-token assumptions.
+        for raw in raw_chw_batch:
+            val = float(raw[0, 0, 0])
+            toks = np.full((13, 2), val, dtype=np.float32)
+            out.append(toks)
+        return out
+
+    monkeypatch.setattr(satpp_s2, "_fetch_s2_sr_10_raw_chw", _fake_fetch)
+    monkeypatch.setattr(satpp_s2, "_load_satmaepp_s2", _fake_load)
+    monkeypatch.setattr(satpp_s2, "_satmaepp_s2_forward_tokens_batch", _fake_forward_batch)
+
+    spatials = [
+        PointBuffer(lon=0.0, lat=0.0, buffer_m=256),
+        PointBuffer(lon=1.0, lat=0.0, buffer_m=256),
+        PointBuffer(lon=2.0, lat=0.0, buffer_m=256),
+        PointBuffer(lon=3.0, lat=0.0, buffer_m=256),
+        PointBuffer(lon=4.0, lat=0.0, buffer_m=256),
+    ]
+
+    out = emb.get_embeddings_batch(
+        spatials=spatials,
+        temporal=TemporalSpec.year(2020),
+        output=OutputSpec.pooled(),
+        backend="gee",
+        device="auto",
+    )
+
+    assert len(out) == 5
+    assert calls["fetch"] == 5
+    assert calls["load"] == 1
+    assert calls["forward_batch"] == 3  # ceil(5 / batch_size=2)
+    assert [float(e.data[0]) for e in out] == [30.0, 31.0, 32.0, 33.0, 34.0]
 
 
 def test_dofa_gee_uses_cached_provider_path(monkeypatch):

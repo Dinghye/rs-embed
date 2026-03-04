@@ -9,3 +9,4 @@ __all__ = [
     "inspect_gee_patch",
     "export_npz"
 ]
+__version__ = "0.1.0"

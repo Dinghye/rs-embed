@@ -24,9 +24,9 @@ Recommended flow:
 | Goal | Good starting models | Why |
 |---|---|---|
 | Fast baseline / simple pipeline | `tessera`, `gse`, `copernicus` | Precomputed embeddings, fewer runtime dependencies |
-| Simple S2 RGB on-the-fly experiments | `remoteclip`, `satmae`, `scalemae` | Straightforward RGB input paths |
+| Simple S2 RGB on-the-fly experiments | `remoteclip`, `satmae`, `satmaepp`, `scalemae` | Straightforward RGB input paths |
 | Time-series temporal modeling | `agrifm`, `anysat`, `galileo` | Native multi-frame temporal packaging |
-| Multispectral / strict spectral semantics | `dofa`, `terramind`, `thor`, `satvision` | Strong channel/schema assumptions |
+| Multispectral / strict spectral semantics | `satmaepp_s2_10b`, `dofa`, `terramind`, `thor`, `satvision` | Strong channel/schema assumptions |
 | Mixed-modality experiments (S1/S2) | `terrafm` | Supports S2 or S1 path (per call) |
 
 ---
@@ -45,6 +45,8 @@ Canonical model IDs are the short names shown below. Legacy IDs (for example `re
 - [`thor`](models/thor_1_0_base.md)
 - [`agrifm`](models/agrifm.md)
 - [`satmae`](models/satmae_rgb.md)
+- [`satmaepp`](models/satmaepp.md)
+- [`satmaepp_s2_10b`](models/satmaepp.md)
 - [`scalemae`](models/scalemae_rgb.md)
 - [`wildsat`](models/wildsat.md)
 - [`fomo`](models/fomo.md)
@@ -73,6 +75,8 @@ More model detail pages can be added using the [Model Detail Template](model_det
 |---|---|---|---|---|---|
 | `remoteclip` | S2 RGB (`B4,B3,B2`) | single composite window | `pooled`, `grid` | provider backend; RGB preprocessing | [detail](models/remoteclip_s2rgb.md) |
 | `satmae` | S2 RGB (`B4,B3,B2`) | single composite window | `pooled`, `grid` | RGB path; ViT token/grid behavior | [detail](models/satmae_rgb.md) |
+| `satmaepp` | S2 RGB (`B4,B3,B2`) | single composite window | `pooled`, `grid` | SatMAE++ fMoW-style eval preprocessing; channel order control | [detail](models/satmaepp.md) |
+| `satmaepp_s2_10b` | S2 SR 10-band (`B2,B3,B4,B5,B6,B7,B8,B8A,B11,B12`) | single composite window | `pooled`, `grid` | strict 10-band order; grouped-channel token handling | [detail](models/satmaepp.md) |
 | `scalemae` | S2 RGB + scale | single composite window | `pooled`, `grid` | requires `sensor.scale_m` / `input_res_m` | [detail](models/scalemae_rgb.md) |
 | `wildsat` | S2 RGB | single composite window | `pooled`, `grid` | normalization options | [detail](models/wildsat.md) |
 | `prithvi` | S2 6-band | single composite window | `pooled`, `grid` | required temporal + location side inputs | [detail](models/prithvi_eo_v2_s2_6b.md) |

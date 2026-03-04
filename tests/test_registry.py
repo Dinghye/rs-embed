@@ -129,6 +129,22 @@ def test_get_embedder_cls_accepts_legacy_alias():
     assert cls_old is cls_new
 
 
+def test_get_embedder_cls_accepts_satmaepp_aliases():
+    cls_new = registry.get_embedder_cls("satmaepp")
+    cls_old = registry.get_embedder_cls("satmaepp_rgb")
+    cls_pp = registry.get_embedder_cls("satmae++")
+    assert cls_old is cls_new
+    assert cls_pp is cls_new
+
+
+def test_get_embedder_cls_accepts_satmaepp_s2_aliases():
+    cls_new = registry.get_embedder_cls("satmaepp_s2_10b")
+    cls_old = registry.get_embedder_cls("satmaepp_sentinel10")
+    cls_alt = registry.get_embedder_cls("satmaepp_s2")
+    assert cls_old is cls_new
+    assert cls_alt is cls_new
+
+
 def test_get_embedder_cls_can_reregister_when_registry_was_cleared():
     cls1 = registry.get_embedder_cls("remoteclip")
     registry._REGISTRY.clear()

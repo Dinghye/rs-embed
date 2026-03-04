@@ -61,6 +61,7 @@ nav:
       - On-the-fly:
         - remoteclip: models/remoteclip_s2rgb.md
         - satmae: models/satmae_rgb.md
+        - satmaepp family: models/satmaepp.md
         - scalemae: models/scalemae_rgb.md
         - wildsat: models/wildsat.md
         - prithvi: models/prithvi_eo_v2_s2_6b.md
