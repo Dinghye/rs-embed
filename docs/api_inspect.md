@@ -51,12 +51,8 @@ It performs the same input quality checks (**without running the model**).
 
 **Returns**
 
-- A JSON-serializable dict:
-  - `ok`: bool
-  - `report`: stats/check report
-  - `sensor`, `temporal`, `backend`
-  - `artifacts`: optional quicklook save paths
-  - If `return_array=True`, includes `array_chw` (numpy array, not JSON-serializable)
+- A JSON-serializable dict with `ok`, `report`, `sensor`, `temporal`, `backend`, and optional `artifacts` quicklook save paths.
+- If `return_array=True`, the result also includes `array_chw` (numpy array, not JSON-serializable).
 
 **Example**
 

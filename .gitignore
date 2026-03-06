@@ -16,3 +16,4 @@ examples/**
 !examples/plot_utils.py
 !examples/quickstart.py
 !examples/demo.ipynb
+!examples/utils_demo.py

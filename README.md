@@ -1,7 +1,7 @@
 <div align="center">
 
 # <img src="./docs/assets/icon.png" width="35" alt="icon" />  rs-embed
-**A single line of code to get embeddings from Any Remote Sensing Foundation Model (RSFM) for Any location and Any time**
+**A single line of code to get embeddings from Any Remote Sensing Foundation Model (RSFM) for Any Place and Any Time**
 
 
 [![arXiv](https://img.shields.io/badge/arXiv-2602.23678-b31b1b.svg)](https://arxiv.org/abs/2602.23678)
@@ -98,8 +98,8 @@ This is a convenience index with basic model info only (for quick scanning / lin
 | Model ID |  Primary Input  | Publication | Link |
 |---|---|---|---|
 | `satmae` |  S2 RGB | [NeurIPS 2022](https://arxiv.org/abs/2207.08051) |[link](https://github.com/sustainlab-group/SatMAE)|
-| `satmaepp` | S2 RGB (`B4,B3,B2`) | [SatMAE++](https://arxiv.org/abs/2403.05419) | [link](https://github.com/techmn/satmae_pp) |
-| `satmaepp_s2_10b` | S2 SR 10-band (`B2,B3,B4,B5,B6,B7,B8,B8A,B11,B12`) | [SatMAE++](https://arxiv.org/abs/2403.05419) | [link](https://github.com/techmn/satmae_pp) |
+| `satmaepp` | S2 RGB | [SatMAE++](https://arxiv.org/abs/2403.05419) | [link](https://github.com/techmn/satmae_pp) |
+| `satmaepp_s2_10b` | S2 SR 10-band | [SatMAE++](https://arxiv.org/abs/2403.05419) | [link](https://github.com/techmn/satmae_pp) |
 | `prithvi` | S2 6-band | [arXiv 2023](https://arxiv.org/abs/2310.18660) | [link](https://huggingface.co/ibm-nasa-geospatial) |
 | `scalemae` | S2 RGB (+ scale) | [ICCV 2023](https://arxiv.org/abs/2212.14532) | [link](https://github.com/bair-climate-initiative/scale-mae) |
 | `remoteclip` |  S2 RGB | [TGRS 2024](https://arxiv.org/abs/2306.11029) |[link](https://github.com/ChenDelong1999/RemoteCLIP) |
