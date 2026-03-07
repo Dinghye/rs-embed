@@ -30,7 +30,9 @@ def test_resolve_wildsat_ckpt_uses_local_env_path(monkeypatch, tmp_path):
     monkeypatch.setenv("RS_EMBED_WILDSAT_CKPT", str(p))
 
     def _should_not_be_called(**_kw):
-        raise AssertionError("auto-download should not be called when RS_EMBED_WILDSAT_CKPT is set")
+        raise AssertionError(
+            "auto-download should not be called when RS_EMBED_WILDSAT_CKPT is set"
+        )
 
     monkeypatch.setattr(ws, "_download_wildsat_ckpt_from_hf", _should_not_be_called)
     monkeypatch.setattr(ws, "_download_wildsat_ckpt_from_gdrive", _should_not_be_called)
@@ -50,7 +52,10 @@ def test_resolve_wildsat_ckpt_hf_vars_must_be_paired(monkeypatch):
     _clear_wildsat_env(monkeypatch)
     monkeypatch.setenv("RS_EMBED_WILDSAT_HF_REPO", "foo/bar")
 
-    with pytest.raises(ModelError, match="Set both RS_EMBED_WILDSAT_HF_REPO and RS_EMBED_WILDSAT_HF_FILE"):
+    with pytest.raises(
+        ModelError,
+        match="Set both RS_EMBED_WILDSAT_HF_REPO and RS_EMBED_WILDSAT_HF_FILE",
+    ):
         ws._resolve_wildsat_ckpt_path()
 
 
@@ -71,7 +76,11 @@ def test_resolve_wildsat_ckpt_prefers_hf_when_configured(monkeypatch):
         return "/tmp/from_hf/model.pth"
 
     monkeypatch.setattr(ws, "_download_wildsat_ckpt_from_hf", _fake_hf)
-    monkeypatch.setattr(ws, "_download_wildsat_ckpt_from_gdrive", lambda **_kw: "/tmp/should_not_happen.pth")
+    monkeypatch.setattr(
+        ws,
+        "_download_wildsat_ckpt_from_gdrive",
+        lambda **_kw: "/tmp/should_not_happen.pth",
+    )
 
     out = ws._resolve_wildsat_ckpt_path()
     assert out == "/tmp/from_hf/model.pth"
@@ -94,7 +103,9 @@ def test_resolve_wildsat_ckpt_uses_default_gdrive_source(monkeypatch):
         seen["min_bytes"] = min_bytes
         return "/tmp/from_gdrive/model.pth"
 
-    monkeypatch.setattr(ws, "_download_wildsat_ckpt_from_hf", lambda **_kw: "/tmp/should_not_happen.pth")
+    monkeypatch.setattr(
+        ws, "_download_wildsat_ckpt_from_hf", lambda **_kw: "/tmp/should_not_happen.pth"
+    )
     monkeypatch.setattr(ws, "_download_wildsat_ckpt_from_gdrive", _fake_gdrive)
 
     out = ws._resolve_wildsat_ckpt_path()

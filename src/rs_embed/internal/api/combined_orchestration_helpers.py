@@ -82,7 +82,7 @@ def write_combined_checkpoint(
     write_one_payload: Callable[..., Dict[str, Any]],
 ) -> Dict[str, Any]:
     manifest["stage"] = stage
-    manifest["resume_incomplete"] = (not final)
+    manifest["resume_incomplete"] = not final
     if not final:
         manifest["status"] = "running"
     if final and (not save_manifest):

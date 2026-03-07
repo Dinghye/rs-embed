@@ -5,24 +5,18 @@ from rs_embed.core.specs import BBox, SensorSpec, TemporalSpec
 
 
 def test_runtime_utils_fetch_sensor_patch_uses_shared_helper(monkeypatch):
-    calls = {"helper": 0, "provider_direct": 0}
+    """runtime_utils.fetch_sensor_patch_chw delegates to provider.fetch_sensor_patch_chw."""
+    calls = {"provider": 0}
 
     class _FakeProvider:
-        def fetch_sensor_patch_chw(self, **kwargs):  # pragma: no cover - should not be called
-            calls["provider_direct"] += 1
-            raise AssertionError("runtime_utils.fetch_sensor_patch_chw should use shared helper when to_float_image=False")
-
-    def _fake_fetch_provider_patch_raw(provider, *, spatial, temporal, sensor, to_float_image=False):
-        calls["helper"] += 1
-        assert isinstance(provider, _FakeProvider)
-        assert isinstance(spatial, BBox)
-        assert sensor.collection == "FAKE/COLL"
-        assert bool(to_float_image) is False
-        return np.ones((1, 2, 2), dtype=np.float32)
-
-    import rs_embed.internal.api.api_helpers as ah
-
-    monkeypatch.setattr(ah, "fetch_provider_patch_raw", _fake_fetch_provider_patch_raw)
+        def fetch_sensor_patch_chw(
+            self, *, spatial, temporal, sensor, to_float_image=False
+        ):
+            calls["provider"] += 1
+            assert isinstance(spatial, BBox)
+            assert sensor.collection == "FAKE/COLL"
+            assert bool(to_float_image) is False
+            return np.ones((1, 2, 2), dtype=np.float32)
 
     out = ru.fetch_sensor_patch_chw(
         _FakeProvider(),
@@ -33,26 +27,21 @@ def test_runtime_utils_fetch_sensor_patch_uses_shared_helper(monkeypatch):
     )
 
     assert out.shape == (1, 2, 2)
-    assert calls["helper"] == 1
-    assert calls["provider_direct"] == 0
+    assert calls["provider"] == 1
 
 
 def test_runtime_utils_fetch_sensor_patch_to_float_uses_shared_helper(monkeypatch):
-    calls = {"helper": 0}
+    """runtime_utils.fetch_sensor_patch_chw passes to_float_image through to provider."""
+    calls = {"provider": 0}
 
     class _FakeProvider:
-        pass
-
-    def _fake_fetch_provider_patch_raw(provider, *, spatial, temporal, sensor, to_float_image=False):
-        calls["helper"] += 1
-        assert isinstance(provider, _FakeProvider)
-        assert isinstance(spatial, BBox)
-        assert bool(to_float_image) is True
-        return np.ones((1, 2, 2), dtype=np.float32)
-
-    import rs_embed.internal.api.api_helpers as ah
-
-    monkeypatch.setattr(ah, "fetch_provider_patch_raw", _fake_fetch_provider_patch_raw)
+        def fetch_sensor_patch_chw(
+            self, *, spatial, temporal, sensor, to_float_image=False
+        ):
+            calls["provider"] += 1
+            assert isinstance(spatial, BBox)
+            assert bool(to_float_image) is True
+            return np.ones((1, 2, 2), dtype=np.float32)
 
     out = ru.fetch_sensor_patch_chw(
         _FakeProvider(),
@@ -62,7 +51,7 @@ def test_runtime_utils_fetch_sensor_patch_to_float_uses_shared_helper(monkeypatc
         to_float_image=True,
     )
     assert out.shape == (1, 2, 2)
-    assert calls["helper"] == 1
+    assert calls["provider"] == 1
 
 
 def test_runtime_utils_fetch_s1_uses_bbox_fallback_wrapper(monkeypatch):
@@ -70,9 +59,13 @@ def test_runtime_utils_fetch_s1_uses_bbox_fallback_wrapper(monkeypatch):
 
     class _FakeProvider:
         def fetch_s1_vvvh_raw_chw(self, **kwargs):
-            raise AssertionError("Should be invoked through wrapper callback, not directly in test")
+            raise AssertionError(
+                "Should be invoked through wrapper callback, not directly in test"
+            )
 
-    def _fake_wrapper(provider, *, spatial, scale_m, fill_value, fetch_fn, split_depth=0):  # noqa: ARG001
+    def _fake_wrapper(
+        provider, *, spatial, scale_m, fill_value, fetch_fn, split_depth=0
+    ):  # noqa: ARG001
         calls["wrapper"] += 1
         assert isinstance(provider, _FakeProvider)
         assert isinstance(spatial, BBox)
@@ -93,9 +86,13 @@ def test_runtime_utils_fetch_multiframe_uses_bbox_fallback_wrapper(monkeypatch):
 
     class _FakeProvider:
         def fetch_multiframe_collection_raw_tchw(self, **kwargs):
-            raise AssertionError("Should be invoked through wrapper callback, not directly in test")
+            raise AssertionError(
+                "Should be invoked through wrapper callback, not directly in test"
+            )
 
-    def _fake_wrapper(provider, *, spatial, scale_m, fill_value, fetch_fn, split_depth=0):  # noqa: ARG001
+    def _fake_wrapper(
+        provider, *, spatial, scale_m, fill_value, fetch_fn, split_depth=0
+    ):  # noqa: ARG001
         calls["wrapper"] += 1
         assert isinstance(provider, _FakeProvider)
         assert isinstance(spatial, BBox)

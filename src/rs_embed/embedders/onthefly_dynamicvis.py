@@ -17,16 +17,13 @@ from ..core.specs import OutputSpec, SensorSpec, SpatialSpec, TemporalSpec
 from ..providers.base import ProviderBase
 from .base import EmbedderBase
 from .runtime_utils import (
-    call_provider_getter as _call_provider_getter,
     fetch_s2_rgb_chw as _fetch_s2_rgb_chw,
-    get_cached_provider,
     is_provider_backend,
     load_cached_with_device as _load_cached_with_device,
     resolve_device_auto_torch as _resolve_device,
 )
 from .meta_utils import build_meta, temporal_midpoint_str, temporal_to_range
 from ._vit_mae_utils import fetch_s2_rgb_u8_from_provider, resize_rgb_u8, ensure_torch
-
 
 
 def _missing_runtime_modules() -> List[str]:
@@ -84,14 +81,20 @@ def _ensure_dynamicvis_importable(
         import dynamicvis  # noqa: F401
 
         mod = sys.modules.get("dynamicvis")
-        return os.path.dirname(os.path.abspath(getattr(mod, "__file__", ""))) if mod is not None else "pythonpath"
+        return (
+            os.path.dirname(os.path.abspath(getattr(mod, "__file__", "")))
+            if mod is not None
+            else "pythonpath"
+        )
     except Exception:
         pass
 
     if repo_path:
         repo_root = os.path.expanduser(repo_path)
         if not os.path.isdir(repo_root):
-            raise ModelError(f"RS_EMBED_DYNAMICVIS_REPO_PATH does not exist: {repo_root}")
+            raise ModelError(
+                f"RS_EMBED_DYNAMICVIS_REPO_PATH does not exist: {repo_root}"
+            )
     elif auto_download:
         repo_root = _ensure_dynamicvis_repo(repo_url=repo_url, cache_root=cache_root)
     else:
@@ -124,11 +127,15 @@ def _download_dynamicvis_ckpt(
     try:
         from huggingface_hub import hf_hub_download
     except Exception as e:
-        raise ModelError("DynamicVis requires huggingface_hub. Install: pip install huggingface_hub") from e
+        raise ModelError(
+            "DynamicVis requires huggingface_hub. Install: pip install huggingface_hub"
+        ) from e
 
     p = hf_hub_download(repo_id=hf_repo, filename=ckpt_file, cache_dir=cache_dir)
     if not os.path.exists(p):
-        raise ModelError(f"Failed to download DynamicVis checkpoint: {hf_repo}/{ckpt_file}")
+        raise ModelError(
+            f"Failed to download DynamicVis checkpoint: {hf_repo}/{ckpt_file}"
+        )
     sz = os.path.getsize(p)
     if sz < min_bytes:
         raise ModelError(
@@ -226,7 +233,9 @@ def _load_dynamicvis_backbone_cached(
             "Check DynamicVis code and dependencies."
         ) from e
 
-    ckpt_path = _download_dynamicvis_ckpt(hf_repo=hf_repo, ckpt_file=ckpt_file, cache_dir=hf_cache_dir)
+    ckpt_path = _download_dynamicvis_ckpt(
+        hf_repo=hf_repo, ckpt_file=ckpt_file, cache_dir=hf_cache_dir
+    )
 
     try:
         model = DynamicVisBackbone(
@@ -259,13 +268,17 @@ def _load_dynamicvis_backbone_cached(
             p0 = p.detach()
             break
     if p0 is None:
-        raise ModelError("DynamicVis model has no parameters; cannot verify loaded weights.")
+        raise ModelError(
+            "DynamicVis model has no parameters; cannot verify loaded weights."
+        )
 
     ensure_torch()
     import torch
 
     if not torch.isfinite(p0).all():
-        raise ModelError("DynamicVis parameters contain NaN/Inf; checkpoint load likely failed.")
+        raise ModelError(
+            "DynamicVis parameters contain NaN/Inf; checkpoint load likely failed."
+        )
 
     p0f = p0.float()
     meta = {
@@ -329,7 +342,9 @@ def _rgb_u8_to_tensor_imagenet(rgb_u8: np.ndarray, *, image_size: int):
     import torch
 
     if rgb_u8.dtype != np.uint8 or rgb_u8.ndim != 3 or int(rgb_u8.shape[2]) != 3:
-        raise ModelError(f"Expected uint8 HWC RGB image, got dtype={rgb_u8.dtype}, shape={rgb_u8.shape}")
+        raise ModelError(
+            f"Expected uint8 HWC RGB image, got dtype={rgb_u8.dtype}, shape={rgb_u8.shape}"
+        )
 
     if rgb_u8.shape[0] != image_size or rgb_u8.shape[1] != image_size:
         rgb_u8 = resize_rgb_u8(rgb_u8, image_size)
@@ -396,13 +411,17 @@ def _dynamicvis_forward_last_fmap(
         }
         return fmap, meta
 
-    raise ModelError(f"DynamicVis forward output tensor has unsupported shape: {tuple(t.shape)}")
+    raise ModelError(
+        f"DynamicVis forward output tensor has unsupported shape: {tuple(t.shape)}"
+    )
 
 
 @register("dynamicvis")
 class DynamicVisEmbedder(EmbedderBase):
     DEFAULT_MODEL_REPO = "KyanChen/DynamicVis"
-    DEFAULT_CKPT_FILE = "pretrain_dynamicvis_b_bf16_mamba_best_single-label_f1-score_epoch_170.pth"
+    DEFAULT_CKPT_FILE = (
+        "pretrain_dynamicvis_b_bf16_mamba_best_single-label_f1-score_epoch_170.pth"
+    )
     DEFAULT_ARCH = "b"
     DEFAULT_IMAGE_SIZE = 512
     DEFAULT_FETCH_WORKERS = 8
@@ -411,7 +430,10 @@ class DynamicVisEmbedder(EmbedderBase):
         return {
             "type": "on_the_fly",
             "backend": ["provider"],
-            "inputs": {"collection": "COPERNICUS/S2_SR_HARMONIZED", "bands": ["B4", "B3", "B2"]},
+            "inputs": {
+                "collection": "COPERNICUS/S2_SR_HARMONIZED",
+                "bands": ["B4", "B3", "B2"],
+            },
             "temporal": {"mode": "range"},
             "output": ["pooled", "grid"],
             "defaults": {
@@ -429,16 +451,6 @@ class DynamicVisEmbedder(EmbedderBase):
             ],
         }
 
-    def __init__(self) -> None:
-        self._providers: Dict[str, ProviderBase] = {}
-
-    def _get_provider(self, backend: str) -> ProviderBase:
-        return get_cached_provider(
-            self._providers,
-            backend=backend,
-            allow_auto=True,
-        )
-
     @staticmethod
     def _default_sensor() -> SensorSpec:
         return SensorSpec(
@@ -451,7 +463,12 @@ class DynamicVisEmbedder(EmbedderBase):
 
     @staticmethod
     def _resolve_fetch_workers(n_items: int) -> int:
-        v = int(os.environ.get("RS_EMBED_DYNAMICVIS_FETCH_WORKERS", str(DynamicVisEmbedder.DEFAULT_FETCH_WORKERS)))
+        v = int(
+            os.environ.get(
+                "RS_EMBED_DYNAMICVIS_FETCH_WORKERS",
+                str(DynamicVisEmbedder.DEFAULT_FETCH_WORKERS),
+            )
+        )
         return max(1, min(int(n_items), v))
 
     def get_embedding(
@@ -472,21 +489,43 @@ class DynamicVisEmbedder(EmbedderBase):
             sensor = self._default_sensor()
 
         t = temporal_to_range(temporal)
-        image_size = int(os.environ.get("RS_EMBED_DYNAMICVIS_IMG", str(self.DEFAULT_IMAGE_SIZE)))
-        hf_repo = os.environ.get("RS_EMBED_DYNAMICVIS_HF_REPO", self.DEFAULT_MODEL_REPO).strip()
-        ckpt_file = os.environ.get("RS_EMBED_DYNAMICVIS_CKPT_FILE", self.DEFAULT_CKPT_FILE).strip()
+        image_size = int(
+            os.environ.get("RS_EMBED_DYNAMICVIS_IMG", str(self.DEFAULT_IMAGE_SIZE))
+        )
+        hf_repo = os.environ.get(
+            "RS_EMBED_DYNAMICVIS_HF_REPO", self.DEFAULT_MODEL_REPO
+        ).strip()
+        ckpt_file = os.environ.get(
+            "RS_EMBED_DYNAMICVIS_CKPT_FILE", self.DEFAULT_CKPT_FILE
+        ).strip()
         arch_env = os.environ.get("RS_EMBED_DYNAMICVIS_ARCH", "auto").strip().lower()
-        arch = arch_env if arch_env in ("b", "base", "l", "large") else ("l" if "_l_" in ckpt_file else "b")
-        path_type = os.environ.get("RS_EMBED_DYNAMICVIS_PATH_TYPE", "forward_reverse_mean").strip()
-        sampling_scale = float(os.environ.get("RS_EMBED_DYNAMICVIS_SAMPLING_SCALE", "0.1"))
-        mamba2 = os.environ.get("RS_EMBED_DYNAMICVIS_MAMBA2", "0").strip() in {"1", "true", "True"}
-        auto_download_repo = os.environ.get("RS_EMBED_DYNAMICVIS_AUTO_DOWNLOAD_REPO", "1").strip() not in {
+        arch = (
+            arch_env
+            if arch_env in ("b", "base", "l", "large")
+            else ("l" if "_l_" in ckpt_file else "b")
+        )
+        path_type = os.environ.get(
+            "RS_EMBED_DYNAMICVIS_PATH_TYPE", "forward_reverse_mean"
+        ).strip()
+        sampling_scale = float(
+            os.environ.get("RS_EMBED_DYNAMICVIS_SAMPLING_SCALE", "0.1")
+        )
+        mamba2 = os.environ.get("RS_EMBED_DYNAMICVIS_MAMBA2", "0").strip() in {
+            "1",
+            "true",
+            "True",
+        }
+        auto_download_repo = os.environ.get(
+            "RS_EMBED_DYNAMICVIS_AUTO_DOWNLOAD_REPO", "1"
+        ).strip() not in {
             "0",
             "false",
             "False",
         }
         repo_path = os.environ.get("RS_EMBED_DYNAMICVIS_REPO_PATH")
-        repo_url = os.environ.get("RS_EMBED_DYNAMICVIS_REPO_URL", "https://github.com/KyanChen/DynamicVis.git").strip()
+        repo_url = os.environ.get(
+            "RS_EMBED_DYNAMICVIS_REPO_URL", "https://github.com/KyanChen/DynamicVis.git"
+        ).strip()
         repo_cache_root = os.environ.get(
             "RS_EMBED_DYNAMICVIS_REPO_CACHE",
             os.path.join("~", ".cache", "rs_embed", "dynamicvis"),
@@ -503,7 +542,7 @@ class DynamicVisEmbedder(EmbedderBase):
                 temporal=t,
                 sensor=sensor,
                 out_size=image_size,
-                provider=_call_provider_getter(self._get_provider, backend),
+                provider=self._get_provider(backend),
             )
         else:
             if input_chw.ndim != 3 or int(input_chw.shape[0]) != 3:
@@ -560,7 +599,12 @@ class DynamicVisEmbedder(EmbedderBase):
                 vec = np.max(fmap, axis=(1, 2)).astype(np.float32)
             else:
                 vec = np.mean(fmap, axis=(1, 2)).astype(np.float32)
-            meta.update({"pooling": f"featmap_{output.pooling}", "pooled_shape": tuple(vec.shape)})
+            meta.update(
+                {
+                    "pooling": f"featmap_{output.pooling}",
+                    "pooled_shape": tuple(vec.shape),
+                }
+            )
             return Embedding(data=vec, meta=meta)
 
         if output.mode == "grid":
@@ -568,7 +612,9 @@ class DynamicVisEmbedder(EmbedderBase):
             try:
                 import xarray as xr
             except Exception as e:
-                raise ModelError("grid output requires xarray. Install: pip install xarray") from e
+                raise ModelError(
+                    "grid output requires xarray. Install: pip install xarray"
+                ) from e
 
             gmeta = {
                 **meta,
@@ -609,7 +655,7 @@ class DynamicVisEmbedder(EmbedderBase):
 
         t = temporal_to_range(temporal)
         ss = sensor or self._default_sensor()
-        provider = _call_provider_getter(self._get_provider, backend)
+        provider = self._get_provider(backend)
         n = len(spatials)
 
         scale_m = int(ss.scale_m)
@@ -646,7 +692,9 @@ class DynamicVisEmbedder(EmbedderBase):
         for i, sp in enumerate(spatials):
             raw = prefetched_raw[i]
             if raw is None:
-                raise ModelError(f"Missing prefetched input at index={i} for dynamicvis.")
+                raise ModelError(
+                    f"Missing prefetched input at index={i} for dynamicvis."
+                )
             out.append(
                 self.get_embedding(
                     spatial=sp,

@@ -22,9 +22,7 @@ from ._vit_mae_utils import (
 )
 from .base import EmbedderBase
 from .runtime_utils import (
-    call_provider_getter as _call_provider_getter,
     fetch_sensor_patch_chw as _fetch_sensor_patch_chw,
-    get_cached_provider,
     is_provider_backend,
     load_cached_with_device as _load_cached_with_device,
     resolve_device_auto_torch as _resolve_device,
@@ -32,19 +30,53 @@ from .runtime_utils import (
 
 
 # SatVision-TOA model defaults from published config/model card.
-_DEFAULT_MODEL_ID = "nasa-cisto-data-science-group/satvision-toa-giant-patch8-window8-128"
+_DEFAULT_MODEL_ID = (
+    "nasa-cisto-data-science-group/satvision-toa-giant-patch8-window8-128"
+)
 _DEFAULT_IN_CHANS = 14
 _DEFAULT_IMAGE_SIZE = 128
 _DEFAULT_PATCH_SIZE = 4
 _DEFAULT_MODIS_COLLECTION = "MODIS/061/MOD021KM"
-_DEFAULT_MODIS_BANDS = ("1", "2", "3", "26", "6", "20", "7", "27", "28", "29", "31", "32", "33", "34")
+_DEFAULT_MODIS_BANDS = (
+    "1",
+    "2",
+    "3",
+    "26",
+    "6",
+    "20",
+    "7",
+    "27",
+    "28",
+    "29",
+    "31",
+    "32",
+    "33",
+    "34",
+)
 _DEFAULT_REFLECTANCE_INDICES = (0, 1, 2, 3, 4, 6)
 _DEFAULT_EMISSIVE_INDICES = (5, 7, 8, 9, 10, 11, 12, 13)
-_DEFAULT_EMISSIVE_MINS = (223.1222, 178.9174, 204.3739, 204.7677, 194.8686, 202.1759, 201.3823, 203.3537)
-_DEFAULT_EMISSIVE_MAXS = (352.7182, 261.2920, 282.5529, 319.0373, 295.0209, 324.0677, 321.5254, 285.9848)
+_DEFAULT_EMISSIVE_MINS = (
+    223.1222,
+    178.9174,
+    204.3739,
+    204.7677,
+    194.8686,
+    202.1759,
+    201.3823,
+    203.3537,
+)
+_DEFAULT_EMISSIVE_MAXS = (
+    352.7182,
+    261.2920,
+    282.5529,
+    319.0373,
+    295.0209,
+    324.0677,
+    321.5254,
+    285.9848,
+)
 _FALLBACK_MOD09_COLLECTION = "MODIS/061/MOD09GA"
 _FALLBACK_MOD21_COLLECTION = "MODIS/061/MOD21A1D"
-
 
 
 def _parse_int_list(s: str) -> Tuple[int, ...]:
@@ -100,7 +132,9 @@ def _resize_chw(x_chw: np.ndarray, *, out_size: int) -> np.ndarray:
         return x_chw.astype(np.float32, copy=False)
 
     xt = torch.from_numpy(x_chw.astype(np.float32, copy=False)).reshape(1, c, h, w)
-    yt = F.interpolate(xt, size=(int(out_size), int(out_size)), mode="bilinear", align_corners=False)
+    yt = F.interpolate(
+        xt, size=(int(out_size), int(out_size)), mode="bilinear", align_corners=False
+    )
     return yt[0].detach().cpu().numpy().astype(np.float32)
 
 
@@ -127,7 +161,9 @@ def _normalize_satvision_toa_input(
     """
     x = np.asarray(raw_chw, dtype=np.float32)
     if x.ndim != 3:
-        raise ModelError(f"SatVision-TOA input must be CHW, got {getattr(x, 'shape', None)}")
+        raise ModelError(
+            f"SatVision-TOA input must be CHW, got {getattr(x, 'shape', None)}"
+        )
 
     x = np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
     mode_l = str(mode).strip().lower()
@@ -160,8 +196,12 @@ def _normalize_satvision_toa_input(
             f"len(emissive_maxs)={len(emissive_maxs)}"
         )
 
-    e_min_map = {int(e_indices[i]): float(emissive_mins[i]) for i in range(len(e_indices))}
-    e_max_map = {int(e_indices[i]): float(emissive_maxs[i]) for i in range(len(e_indices))}
+    e_min_map = {
+        int(e_indices[i]): float(emissive_mins[i]) for i in range(len(e_indices))
+    }
+    e_max_map = {
+        int(e_indices[i]): float(emissive_maxs[i]) for i in range(len(e_indices))
+    }
     r_set = set(int(i) for i in r_indices)
     e_set = set(int(i) for i in e_indices)
     y = np.empty_like(x, dtype=np.float32)
@@ -174,7 +214,9 @@ def _normalize_satvision_toa_input(
             lo = float(e_min_map[c])
             hi = float(e_max_map[c])
             if hi <= lo:
-                raise ModelError(f"Invalid emissive calibration range for channel index {c}: ({lo}, {hi})")
+                raise ModelError(
+                    f"Invalid emissive calibration range for channel index {c}: ({lo}, {hi})"
+                )
             ch = (ch - lo) / (hi - lo)
         else:
             # Fallback for unspecified channels: use reflectance scaling.
@@ -212,7 +254,9 @@ def _pick_first_tensor(obj: Any):
     return None
 
 
-def _decode_features_to_batch_arrays(out: Any, batch_size: int) -> Tuple[List[np.ndarray], Dict[str, Any]]:
+def _decode_features_to_batch_arrays(
+    out: Any, batch_size: int
+) -> Tuple[List[np.ndarray], Dict[str, Any]]:
     """
     Convert model.forward_features output to per-item arrays.
 
@@ -225,7 +269,9 @@ def _decode_features_to_batch_arrays(out: Any, batch_size: int) -> Tuple[List[np
 
     t = _pick_first_tensor(out)
     if t is None or (not torch.is_tensor(t)):
-        raise ModelError("SatVision-TOA forward_features returned unsupported output type.")
+        raise ModelError(
+            "SatVision-TOA forward_features returned unsupported output type."
+        )
 
     if int(t.shape[0]) != int(batch_size):
         raise ModelError(
@@ -235,7 +281,10 @@ def _decode_features_to_batch_arrays(out: Any, batch_size: int) -> Tuple[List[np
     # [B, N, D]
     if t.ndim == 3:
         arr = t.detach().float().cpu().numpy().astype(np.float32)
-        return [arr[i] for i in range(arr.shape[0])], {"tokens_kind": "tokens", "tensor_shape": tuple(arr.shape)}
+        return [arr[i] for i in range(arr.shape[0])], {
+            "tokens_kind": "tokens",
+            "tensor_shape": tuple(arr.shape),
+        }
 
     # [B, H, W, D] or [B, D, H, W]
     if t.ndim == 4:
@@ -262,9 +311,14 @@ def _decode_features_to_batch_arrays(out: Any, batch_size: int) -> Tuple[List[np
     # [B, D] pooled vector
     if t.ndim == 2:
         arr = t.detach().float().cpu().numpy().astype(np.float32)
-        return [arr[i] for i in range(arr.shape[0])], {"tokens_kind": "pooled", "tensor_shape": tuple(arr.shape)}
+        return [arr[i] for i in range(arr.shape[0])], {
+            "tokens_kind": "pooled",
+            "tensor_shape": tuple(arr.shape),
+        }
 
-    raise ModelError(f"SatVision-TOA forward_features shape unsupported: {tuple(int(v) for v in t.shape)}")
+    raise ModelError(
+        f"SatVision-TOA forward_features shape unsupported: {tuple(int(v) for v in t.shape)}"
+    )
 
 
 def _extract_state_dict(obj: Any) -> Dict[str, Any]:
@@ -273,7 +327,14 @@ def _extract_state_dict(obj: Any) -> Dict[str, Any]:
     import torch
 
     if isinstance(obj, dict):
-        for k in ("state_dict", "model_state_dict", "model", "module", "net", "weights"):
+        for k in (
+            "state_dict",
+            "model_state_dict",
+            "model",
+            "module",
+            "net",
+            "weights",
+        ):
             v = obj.get(k)
             if isinstance(v, dict) and v:
                 # Accept dict if at least one tensor value.
@@ -281,7 +342,9 @@ def _extract_state_dict(obj: Any) -> Dict[str, Any]:
                     return v
         if obj and any(torch.is_tensor(x) for x in obj.values()):
             return obj
-    raise ModelError("Unsupported SatVision checkpoint format: cannot locate state_dict")
+    raise ModelError(
+        "Unsupported SatVision checkpoint format: cannot locate state_dict"
+    )
 
 
 def _strip_prefix(sd: Dict[str, Any], prefix: str) -> Dict[str, Any]:
@@ -295,7 +358,9 @@ def _strip_prefix(sd: Dict[str, Any], prefix: str) -> Dict[str, Any]:
     return out
 
 
-def _select_best_state_dict(sd: Dict[str, Any], model_keys: Iterable[str]) -> Dict[str, Any]:
+def _select_best_state_dict(
+    sd: Dict[str, Any], model_keys: Iterable[str]
+) -> Dict[str, Any]:
     mkeys = set(model_keys)
     candidates = [
         sd,
@@ -340,7 +405,9 @@ def _shift_downsample_indices(sd: Dict[str, Any], delta: int) -> Dict[str, Any]:
     return out
 
 
-def _align_swinv2_downsample_layout(sd: Dict[str, Any], model_keys: Iterable[str]) -> Dict[str, Any]:
+def _align_swinv2_downsample_layout(
+    sd: Dict[str, Any], model_keys: Iterable[str]
+) -> Dict[str, Any]:
     """
     Align known SwinV2 naming layout mismatch between checkpoints and timm versions:
       - checkpoint: layers.{0,1,2}.downsample.*
@@ -418,7 +485,14 @@ def _resolve_ckpt(
             repo_id=model_id,
             token=token,
             local_files_only=not bool(auto_download),
-            allow_patterns=["*.pth", "*.pt", "*.ckpt", "*.bin", "*config*.yml", "*config*.yaml"],
+            allow_patterns=[
+                "*.pth",
+                "*.pt",
+                "*.ckpt",
+                "*.bin",
+                "*config*.yml",
+                "*config*.yaml",
+            ],
         )
     except Exception as e:
         msg = (
@@ -446,7 +520,9 @@ def _load_satvision_toa_cached(
     try:
         from timm.models.swin_transformer_v2 import SwinTransformerV2
     except Exception as e:
-        raise ModelError("SatVision-TOA requires timm. Install: pip install timm") from e
+        raise ModelError(
+            "SatVision-TOA requires timm. Install: pip install timm"
+        ) from e
 
     # Build architecture from SatVision published config.
     try:
@@ -491,7 +567,9 @@ def _load_satvision_toa_cached(
     missing, unexpected = model.load_state_dict(state, strict=False)
     matched = len([k for k in model.state_dict().keys() if k in state])
     if matched <= 0:
-        raise ModelError("SatVision-TOA checkpoint load failed: no parameters matched model keys.")
+        raise ModelError(
+            "SatVision-TOA checkpoint load failed: no parameters matched model keys."
+        )
 
     try:
         model = model.to(dev).eval()
@@ -506,7 +584,9 @@ def _load_satvision_toa_cached(
     if p0 is None:
         raise ModelError("SatVision-TOA model has no parameters after load.")
     if not torch.isfinite(p0).all():
-        raise ModelError("SatVision-TOA parameters contain NaN/Inf after checkpoint load.")
+        raise ModelError(
+            "SatVision-TOA parameters contain NaN/Inf after checkpoint load."
+        )
 
     p0f = p0.float()
     meta = {
@@ -530,7 +610,9 @@ def _load_satvision_toa(
     in_chans: int,
     device: str,
 ) -> Tuple[Any, Dict[str, Any]]:
-    ckpt_file, source = _resolve_ckpt(model_id=model_id, local_ckpt=local_ckpt, auto_download=auto_download)
+    ckpt_file, source = _resolve_ckpt(
+        model_id=model_id, local_ckpt=local_ckpt, auto_download=auto_download
+    )
     loaded, dev = _load_cached_with_device(
         _load_satvision_toa_cached,
         device=device,
@@ -574,7 +656,14 @@ def _fetch_toa_raw_chw_from_gee(
         # Output is already normalized to [0,1].
         ref_sensor = SensorSpec(
             collection=_FALLBACK_MOD09_COLLECTION,
-            bands=("sur_refl_b01", "sur_refl_b02", "sur_refl_b03", "sur_refl_b04", "sur_refl_b06", "sur_refl_b07"),
+            bands=(
+                "sur_refl_b01",
+                "sur_refl_b02",
+                "sur_refl_b03",
+                "sur_refl_b04",
+                "sur_refl_b06",
+                "sur_refl_b07",
+            ),
             scale_m=int(sensor.scale_m),
             cloudy_pct=None,  # type: ignore[arg-type]
             fill_value=float(sensor.fill_value),
@@ -605,28 +694,30 @@ def _fetch_toa_raw_chw_from_gee(
 
         # Normalize proxies to [0,1].
         r01, r02, r03, r04, r06, r07 = [np.clip(ch / 10000.0, 0.0, 1.0) for ch in ref]
-        lst = np.clip((th[0] - 200.0) / 130.0, 0.0, 1.0)  # LST_1KM in Kelvin (already scaled in MOD21A1D)
-        e29 = np.clip((th[1] - 0.8) / 0.2, 0.0, 1.0)      # emissivity ~[0.8,1.0]
+        lst = np.clip(
+            (th[0] - 200.0) / 130.0, 0.0, 1.0
+        )  # LST_1KM in Kelvin (already scaled in MOD21A1D)
+        e29 = np.clip((th[1] - 0.8) / 0.2, 0.0, 1.0)  # emissivity ~[0.8,1.0]
         e31 = np.clip((th[2] - 0.8) / 0.2, 0.0, 1.0)
         e32 = np.clip((th[3] - 0.8) / 0.2, 0.0, 1.0)
 
         # SatVision order: 1,2,3,26,6,20,7,27,28,29,31,32,33,34
         assembled = np.stack(
             [
-                r01,      # 1
-                r02,      # 2
-                r03,      # 3
-                r04,      # 26 proxy
-                r06,      # 6
-                lst,      # 20 proxy
-                r07,      # 7
-                lst,      # 27 proxy
-                lst,      # 28 proxy
-                e29,      # 29
-                e31,      # 31
-                e32,      # 32
-                lst,      # 33 proxy
-                lst,      # 34 proxy
+                r01,  # 1
+                r02,  # 2
+                r03,  # 3
+                r04,  # 26 proxy
+                r06,  # 6
+                lst,  # 20 proxy
+                r07,  # 7
+                lst,  # 27 proxy
+                lst,  # 28 proxy
+                e29,  # 29
+                e31,  # 31
+                e32,  # 32
+                lst,  # 33 proxy
+                lst,  # 34 proxy
             ],
             axis=0,
         ).astype(np.float32)
@@ -634,7 +725,10 @@ def _fetch_toa_raw_chw_from_gee(
             "source_collection": str(sensor.collection),
             "fallback_used": True,
             "fallback_reason": repr(e),
-            "fallback_collections": (_FALLBACK_MOD09_COLLECTION, _FALLBACK_MOD21_COLLECTION),
+            "fallback_collections": (
+                _FALLBACK_MOD09_COLLECTION,
+                _FALLBACK_MOD21_COLLECTION,
+            ),
             "already_unit_scaled": True,
             "proxy_band_order": tuple(_DEFAULT_MODIS_BANDS),
         }
@@ -666,7 +760,9 @@ def _satvision_forward_batch(
     import torch
 
     dev = _resolve_device(device)
-    xb = torch.from_numpy(np.stack([x.astype(np.float32, copy=False) for x in x_chw_batch], axis=0)).to(dev)
+    xb = torch.from_numpy(
+        np.stack([x.astype(np.float32, copy=False) for x in x_chw_batch], axis=0)
+    ).to(dev)
 
     ff = getattr(model, "forward_features", None)
     if not callable(ff):
@@ -692,9 +788,6 @@ class SatVisionTOAEmbedder(EmbedderBase):
     DEFAULT_FETCH_WORKERS = 8
     DEFAULT_BATCH_CPU = 2
     DEFAULT_BATCH_CUDA = 8
-
-    def __init__(self) -> None:
-        self._providers: Dict[str, ProviderBase] = {}
 
     def describe(self) -> Dict[str, Any]:
         return {
@@ -731,7 +824,9 @@ class SatVisionTOAEmbedder(EmbedderBase):
         else:
             bands = _DEFAULT_MODIS_BANDS
         return SensorSpec(
-            collection=os.environ.get("RS_EMBED_SATVISION_TOA_COLLECTION", _DEFAULT_MODIS_COLLECTION),
+            collection=os.environ.get(
+                "RS_EMBED_SATVISION_TOA_COLLECTION", _DEFAULT_MODIS_COLLECTION
+            ),
             bands=tuple(bands),
             scale_m=int(os.environ.get("RS_EMBED_SATVISION_TOA_SCALE_M", "1000")),
             cloudy_pct=int(os.environ.get("RS_EMBED_SATVISION_TOA_CLOUDY_PCT", "100")),
@@ -739,22 +834,22 @@ class SatVisionTOAEmbedder(EmbedderBase):
             composite=os.environ.get("RS_EMBED_SATVISION_TOA_COMPOSITE", "mosaic"),
         )
 
-    def _get_provider(self, backend: str) -> ProviderBase:
-        return get_cached_provider(
-            self._providers,
-            backend=backend,
-            allow_auto=True,
-        )
-
     @staticmethod
     def _resolve_fetch_workers(n_items: int) -> int:
-        v = int(os.environ.get("RS_EMBED_SATVISION_TOA_FETCH_WORKERS", str(SatVisionTOAEmbedder.DEFAULT_FETCH_WORKERS)))
+        v = int(
+            os.environ.get(
+                "RS_EMBED_SATVISION_TOA_FETCH_WORKERS",
+                str(SatVisionTOAEmbedder.DEFAULT_FETCH_WORKERS),
+            )
+        )
         return max(1, min(int(n_items), v))
 
     @staticmethod
     def _resolve_infer_batch(dev: str) -> int:
         default_bs = (
-            SatVisionTOAEmbedder.DEFAULT_BATCH_CUDA if str(dev).startswith("cuda") else SatVisionTOAEmbedder.DEFAULT_BATCH_CPU
+            SatVisionTOAEmbedder.DEFAULT_BATCH_CUDA
+            if str(dev).startswith("cuda")
+            else SatVisionTOAEmbedder.DEFAULT_BATCH_CPU
         )
         v = int(os.environ.get("RS_EMBED_SATVISION_TOA_BATCH_SIZE", str(default_bs)))
         return max(1, int(v))
@@ -790,19 +885,27 @@ class SatVisionTOAEmbedder(EmbedderBase):
         return x.astype(np.float32)
 
     def _resolve_runtime(self, *, sensor: SensorSpec, device: str) -> Dict[str, Any]:
-        model_id = os.environ.get("RS_EMBED_SATVISION_TOA_ID", _DEFAULT_MODEL_ID).strip()
+        model_id = os.environ.get(
+            "RS_EMBED_SATVISION_TOA_ID", _DEFAULT_MODEL_ID
+        ).strip()
         local_ckpt = os.environ.get("RS_EMBED_SATVISION_TOA_CKPT")
         auto_download = _as_bool_env("RS_EMBED_SATVISION_TOA_AUTO_DOWNLOAD", True)
 
-        image_size = int(os.environ.get("RS_EMBED_SATVISION_TOA_IMG", str(_DEFAULT_IMAGE_SIZE)))
-        in_chans = int(os.environ.get("RS_EMBED_SATVISION_TOA_IN_CHANS", str(_DEFAULT_IN_CHANS)))
+        image_size = int(
+            os.environ.get("RS_EMBED_SATVISION_TOA_IMG", str(_DEFAULT_IMAGE_SIZE))
+        )
+        in_chans = int(
+            os.environ.get("RS_EMBED_SATVISION_TOA_IN_CHANS", str(_DEFAULT_IN_CHANS))
+        )
         if len(sensor.bands) != int(in_chans):
             raise ModelError(
                 f"satvision_toa requires exactly {in_chans} sensor bands, got {len(sensor.bands)}. "
                 "Set RS_EMBED_SATVISION_TOA_IN_CHANS or adjust SensorSpec.bands."
             )
 
-        norm_mode = os.environ.get("RS_EMBED_SATVISION_TOA_NORM", "auto").strip().lower()
+        norm_mode = (
+            os.environ.get("RS_EMBED_SATVISION_TOA_NORM", "auto").strip().lower()
+        )
         reflectance_indices = _parse_int_list(
             os.environ.get(
                 "RS_EMBED_SATVISION_TOA_REFLECTANCE_IDXS",
@@ -815,7 +918,9 @@ class SatVisionTOAEmbedder(EmbedderBase):
                 ",".join(str(i) for i in _DEFAULT_EMISSIVE_INDICES),
             )
         )
-        reflectance_divisor = float(os.environ.get("RS_EMBED_SATVISION_TOA_REF_DIV", "100"))
+        reflectance_divisor = float(
+            os.environ.get("RS_EMBED_SATVISION_TOA_REF_DIV", "100")
+        )
         emissive_mins = _parse_float_list(
             os.environ.get(
                 "RS_EMBED_SATVISION_TOA_EMISSIVE_MINS",
@@ -874,7 +979,12 @@ class SatVisionTOAEmbedder(EmbedderBase):
 
         if input_chw is None:
             raw, fetch_meta = _coerce_fetch_result(
-                _fetch_toa_raw_chw_from_gee(_call_provider_getter(self._get_provider, backend), spatial, t, sensor)
+                _fetch_toa_raw_chw_from_gee(
+                    self._get_provider(backend),
+                    spatial,
+                    t,
+                    sensor,
+                )
             )
         else:
             raw = np.asarray(input_chw, dtype=np.float32)
@@ -916,9 +1026,15 @@ class SatVisionTOAEmbedder(EmbedderBase):
                 "norm_mode": rt["norm_mode"],
                 "norm_mode_effective": norm_mode_eff,
                 "reflectance_indices": tuple(
-                    int(i) for i in _normalize_indices(rt["reflectance_indices"], rt["in_chans"])
+                    int(i)
+                    for i in _normalize_indices(
+                        rt["reflectance_indices"], rt["in_chans"]
+                    )
                 ),
-                "emissive_indices": tuple(int(i) for i in _normalize_indices(rt["emissive_indices"], rt["in_chans"])),
+                "emissive_indices": tuple(
+                    int(i)
+                    for i in _normalize_indices(rt["emissive_indices"], rt["in_chans"])
+                ),
                 "reflectance_divisor": float(rt["reflectance_divisor"]),
                 "emissive_mins": tuple(float(v) for v in rt["emissive_mins"]),
                 "emissive_maxs": tuple(float(v) for v in rt["emissive_maxs"]),
@@ -933,12 +1049,19 @@ class SatVisionTOAEmbedder(EmbedderBase):
         if output.mode == "pooled":
             if out_arr.ndim == 2:
                 vec, cls_removed = pool_from_tokens(out_arr, output.pooling)
-                meta.update({"pooling": f"patch_{output.pooling}", "cls_removed": bool(cls_removed)})
+                meta.update(
+                    {
+                        "pooling": f"patch_{output.pooling}",
+                        "cls_removed": bool(cls_removed),
+                    }
+                )
                 return Embedding(data=vec, meta=meta)
             if out_arr.ndim == 1:
                 meta.update({"pooling": "model_pooled", "cls_removed": False})
                 return Embedding(data=out_arr.astype(np.float32), meta=meta)
-            raise ModelError(f"Unexpected SatVision output shape for pooled mode: {out_arr.shape}")
+            raise ModelError(
+                f"Unexpected SatVision output shape for pooled mode: {out_arr.shape}"
+            )
 
         if output.mode == "grid":
             if out_arr.ndim != 2:
@@ -947,16 +1070,28 @@ class SatVisionTOAEmbedder(EmbedderBase):
                     f"Got {out_arr.shape} (tokens_kind={meta.get('tokens_kind')})."
                 )
             grid, (h, w), cls_removed = tokens_to_grid_dhw(out_arr)
-            meta.update({"grid_hw": (h, w), "grid_kind": "patch_tokens", "cls_removed": bool(cls_removed)})
+            meta.update(
+                {
+                    "grid_hw": (h, w),
+                    "grid_kind": "patch_tokens",
+                    "cls_removed": bool(cls_removed),
+                }
+            )
             try:
                 import xarray as xr
             except Exception as e:
-                raise ModelError("grid output requires xarray. Install: pip install xarray") from e
+                raise ModelError(
+                    "grid output requires xarray. Install: pip install xarray"
+                ) from e
 
             da = xr.DataArray(
                 grid,
                 dims=("d", "y", "x"),
-                coords={"d": np.arange(grid.shape[0]), "y": np.arange(h), "x": np.arange(w)},
+                coords={
+                    "d": np.arange(grid.shape[0]),
+                    "y": np.arange(h),
+                    "x": np.arange(w),
+                },
                 name="embedding",
                 attrs=meta,
             )
@@ -988,9 +1123,11 @@ class SatVisionTOAEmbedder(EmbedderBase):
         prefetched_raw: List[Optional[np.ndarray]] = [None] * n
         prefetched_meta: List[Optional[Dict[str, Any]]] = [None] * n
 
-        def _fetch_one(i: int, sp: SpatialSpec) -> Tuple[int, np.ndarray, Dict[str, Any]]:
+        def _fetch_one(
+            i: int, sp: SpatialSpec
+        ) -> Tuple[int, np.ndarray, Dict[str, Any]]:
             raw, fetch_meta = _coerce_fetch_result(
-                _fetch_toa_raw_chw_from_gee(_call_provider_getter(self._get_provider, backend), sp, t, sensor)
+                _fetch_toa_raw_chw_from_gee(self._get_provider(backend), sp, t, sensor)
             )
             return i, raw, fetch_meta
 
@@ -1016,9 +1153,13 @@ class SatVisionTOAEmbedder(EmbedderBase):
             raws = prefetched_raw[s0:s1]
             metas = prefetched_meta[s0:s1]
             if any(x is None for x in raws):
-                raise ModelError(f"Missing prefetched SatVision input in batch slice [{s0}:{s1}].")
+                raise ModelError(
+                    f"Missing prefetched SatVision input in batch slice [{s0}:{s1}]."
+                )
             if any(m is None for m in metas):
-                raise ModelError(f"Missing prefetched SatVision metadata in batch slice [{s0}:{s1}].")
+                raise ModelError(
+                    f"Missing prefetched SatVision metadata in batch slice [{s0}:{s1}]."
+                )
 
             x_batch: List[np.ndarray] = []
             norm_modes_eff: List[str] = []
@@ -1043,7 +1184,9 @@ class SatVisionTOAEmbedder(EmbedderBase):
                 )
                 norm_modes_eff.append(norm_mode_eff)
 
-            arrs, fmeta = _satvision_forward_batch(rt["model"], x_batch, device=rt["device"])
+            arrs, fmeta = _satvision_forward_batch(
+                rt["model"], x_batch, device=rt["device"]
+            )
 
             for j, arr in enumerate(arrs):
                 i = s0 + j
@@ -1064,10 +1207,16 @@ class SatVisionTOAEmbedder(EmbedderBase):
                         "norm_mode": rt["norm_mode"],
                         "norm_mode_effective": norm_modes_eff[j],
                         "reflectance_indices": tuple(
-                            int(k) for k in _normalize_indices(rt["reflectance_indices"], rt["in_chans"])
+                            int(k)
+                            for k in _normalize_indices(
+                                rt["reflectance_indices"], rt["in_chans"]
+                            )
                         ),
                         "emissive_indices": tuple(
-                            int(k) for k in _normalize_indices(rt["emissive_indices"], rt["in_chans"])
+                            int(k)
+                            for k in _normalize_indices(
+                                rt["emissive_indices"], rt["in_chans"]
+                            )
                         ),
                         "reflectance_divisor": float(rt["reflectance_divisor"]),
                         "emissive_mins": tuple(float(v) for v in rt["emissive_mins"]),
@@ -1083,13 +1232,20 @@ class SatVisionTOAEmbedder(EmbedderBase):
                 if output.mode == "pooled":
                     if arr.ndim == 2:
                         vec, cls_removed = pool_from_tokens(arr, output.pooling)
-                        meta.update({"pooling": f"patch_{output.pooling}", "cls_removed": bool(cls_removed)})
+                        meta.update(
+                            {
+                                "pooling": f"patch_{output.pooling}",
+                                "cls_removed": bool(cls_removed),
+                            }
+                        )
                         out[i] = Embedding(data=vec, meta=meta)
                     elif arr.ndim == 1:
                         meta.update({"pooling": "model_pooled", "cls_removed": False})
                         out[i] = Embedding(data=arr.astype(np.float32), meta=meta)
                     else:
-                        raise ModelError(f"Unexpected SatVision output shape for pooled mode: {arr.shape}")
+                        raise ModelError(
+                            f"Unexpected SatVision output shape for pooled mode: {arr.shape}"
+                        )
                     continue
 
                 if output.mode == "grid":
@@ -1099,16 +1255,28 @@ class SatVisionTOAEmbedder(EmbedderBase):
                             f"Got {arr.shape} (tokens_kind={meta.get('tokens_kind')})."
                         )
                     grid, (h, w), cls_removed = tokens_to_grid_dhw(arr)
-                    meta.update({"grid_hw": (h, w), "grid_kind": "patch_tokens", "cls_removed": bool(cls_removed)})
+                    meta.update(
+                        {
+                            "grid_hw": (h, w),
+                            "grid_kind": "patch_tokens",
+                            "cls_removed": bool(cls_removed),
+                        }
+                    )
                     try:
                         import xarray as xr
                     except Exception as e:
-                        raise ModelError("grid output requires xarray. Install: pip install xarray") from e
+                        raise ModelError(
+                            "grid output requires xarray. Install: pip install xarray"
+                        ) from e
 
                     da = xr.DataArray(
                         grid,
                         dims=("d", "y", "x"),
-                        coords={"d": np.arange(grid.shape[0]), "y": np.arange(h), "x": np.arange(w)},
+                        coords={
+                            "d": np.arange(grid.shape[0]),
+                            "y": np.arange(h),
+                            "x": np.arange(w),
+                        },
                         name="embedding",
                         attrs=meta,
                     )
@@ -1118,5 +1286,7 @@ class SatVisionTOAEmbedder(EmbedderBase):
                 raise ModelError(f"Unknown output mode: {output.mode}")
 
         if any(e is None for e in out):
-            raise ModelError("satvision_toa batch inference produced incomplete outputs.")
+            raise ModelError(
+                "satvision_toa batch inference produced incomplete outputs."
+            )
         return [e for e in out if e is not None]

@@ -3,19 +3,22 @@ import pytest
 import xarray as xr
 
 from rs_embed.core import registry
-from rs_embed.core.specs import BBox, PointBuffer, TemporalSpec, SensorSpec, OutputSpec
+from rs_embed.core.specs import BBox, SensorSpec
 from rs_embed.core.embedding import Embedding
-from rs_embed.export import (
-    _sanitize_key,
-    _sha1,
-    _jsonable,
-    _utc_ts,
-    _embedding_to_numpy,
-    _default_sensor_for_model,
+from rs_embed.core.export_helpers import (
+    sanitize_key as _sanitize_key,
+    sha1 as _sha1,
+    jsonable as _jsonable,
+    utc_ts as _utc_ts,
+    embedding_to_numpy as _embedding_to_numpy,
+)
+from rs_embed.internal.api.model_defaults_helpers import (
+    default_sensor_for_model as _default_sensor_for_model,
 )
 
 
 # ── fixture to isolate registry ────────────────────────────────────
+
 
 @pytest.fixture(autouse=True)
 def clean_registry():
@@ -27,6 +30,7 @@ def clean_registry():
 # ══════════════════════════════════════════════════════════════════════
 # _sanitize_key
 # ══════════════════════════════════════════════════════════════════════
+
 
 def test_sanitize_key_slashes_spaces():
     assert _sanitize_key("foo/bar baz") == "foo_bar_baz"
@@ -55,6 +59,7 @@ def test_sanitize_key_consecutive_special():
 # ══════════════════════════════════════════════════════════════════════
 # _sha1
 # ══════════════════════════════════════════════════════════════════════
+
 
 def test_sha1_deterministic():
     arr = np.arange(10, dtype=np.int32)
@@ -85,6 +90,7 @@ def test_sha1_large_array():
 # ══════════════════════════════════════════════════════════════════════
 # _jsonable
 # ══════════════════════════════════════════════════════════════════════
+
 
 def test_jsonable_primitives():
     assert _jsonable(None) is None
@@ -156,6 +162,7 @@ def test_jsonable_fallback_repr():
 # _utc_ts
 # ══════════════════════════════════════════════════════════════════════
 
+
 def test_utc_ts_format():
     ts = _utc_ts()
     assert ts.endswith("Z")
@@ -165,6 +172,7 @@ def test_utc_ts_format():
 # ══════════════════════════════════════════════════════════════════════
 # _embedding_to_numpy
 # ══════════════════════════════════════════════════════════════════════
+
 
 def test_embedding_to_numpy_ndarray():
     e = Embedding(data=np.array([1.0, 2.0], dtype=np.float64), meta={})
@@ -184,6 +192,7 @@ def test_embedding_to_numpy_xarray():
 # ══════════════════════════════════════════════════════════════════════
 # _default_sensor_for_model
 # ══════════════════════════════════════════════════════════════════════
+
 
 def test_default_sensor_for_model_precomputed():
     @registry.register("precomputed_test")
@@ -226,7 +235,10 @@ def test_default_sensor_for_model_s2_modality():
             return {
                 "type": "onthefly",
                 "inputs": {
-                    "s2_sr": {"collection": "COPERNICUS/S2_SR_HARMONIZED", "bands": ["B4", "B3", "B2"]},
+                    "s2_sr": {
+                        "collection": "COPERNICUS/S2_SR_HARMONIZED",
+                        "bands": ["B4", "B3", "B2"],
+                    },
                 },
                 "defaults": {},
             }
@@ -288,6 +300,7 @@ def test_default_sensor_for_model_no_info():
 # ══════════════════════════════════════════════════════════════════════
 # _embedding_to_numpy — generic fallback
 # ══════════════════════════════════════════════════════════════════════
+
 
 def test_embedding_to_numpy_generic_list():
     """Generic array-like (not ndarray or xarray) goes through np.asarray fallback."""

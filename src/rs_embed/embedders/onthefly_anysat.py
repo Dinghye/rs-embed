@@ -20,10 +20,8 @@ from ..core.temporal_utils import temporal_frame_midpoints
 from ..providers import ProviderBase
 from .base import EmbedderBase
 from .runtime_utils import (
-    call_provider_getter as _call_provider_getter,
     coerce_input_to_tchw as _coerce_input_to_tchw,
     fetch_s2_multiframe_raw_tchw as _fetch_s2_multiframe_raw_tchw,
-    get_cached_provider,
     is_provider_backend,
     load_cached_with_device as _load_cached_with_device,
 )
@@ -34,7 +32,6 @@ from ._vit_mae_utils import ensure_torch
 _S2_10_BANDS = ["B2", "B3", "B4", "B5", "B6", "B7", "B8", "B8A", "B11", "B12"]
 
 
-
 def _resize_tchw(x_tchw: np.ndarray, *, out_hw: int) -> np.ndarray:
     ensure_torch()
     import torch
@@ -43,7 +40,9 @@ def _resize_tchw(x_tchw: np.ndarray, *, out_hw: int) -> np.ndarray:
     if x_tchw.ndim != 4:
         raise ModelError(f"Expected [T,C,H,W], got {x_tchw.shape}")
     x = torch.from_numpy(x_tchw.astype(np.float32, copy=False))
-    y = F.interpolate(x, size=(int(out_hw), int(out_hw)), mode="bilinear", align_corners=False)
+    y = F.interpolate(
+        x, size=(int(out_hw), int(out_hw)), mode="bilinear", align_corners=False
+    )
     return y.detach().cpu().numpy().astype(np.float32)
 
 
@@ -118,7 +117,9 @@ def _ensure_anysat_repo(
     os.makedirs(root, exist_ok=True)
     dst = os.path.join(root, "AnySat")
 
-    if os.path.isdir(os.path.join(dst, "src")) and os.path.isfile(os.path.join(dst, "hubconf.py")):
+    if os.path.isdir(os.path.join(dst, "src")) and os.path.isfile(
+        os.path.join(dst, "hubconf.py")
+    ):
         return dst
 
     try:
@@ -180,7 +181,11 @@ def _load_ckpt_state_dict(ckpt_path: str) -> Dict[str, Any]:
     import torch
 
     obj = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-    if isinstance(obj, dict) and "state_dict" in obj and isinstance(obj["state_dict"], dict):
+    if (
+        isinstance(obj, dict)
+        and "state_dict" in obj
+        and isinstance(obj["state_dict"], dict)
+    ):
         return obj["state_dict"]
     if isinstance(obj, dict):
         return obj
@@ -219,17 +224,23 @@ def _load_anysat_cached(
             raise ModelError(f"AnySat checkpoint not found: {ckpt_local}")
         if os.path.getsize(ckpt_local) < 50 * 1024 * 1024:
             raise ModelError(f"AnySat checkpoint seems too small: {ckpt_local}")
-        model = hub.AnySat(model_size=model_size, flash_attn=bool(flash_attn), device=dev)
+        model = hub.AnySat(
+            model_size=model_size, flash_attn=bool(flash_attn), device=dev
+        )
         sd = _load_ckpt_state_dict(ckpt_local)
         model.model.load_state_dict(sd, strict=True)
         loaded_from = ckpt_local
     else:
         if pretrained:
             # AnySat hubconf handles download from HF.
-            model = hub.AnySat.from_pretrained(model_size=model_size, flash_attn=bool(flash_attn), device=dev)
+            model = hub.AnySat.from_pretrained(
+                model_size=model_size, flash_attn=bool(flash_attn), device=dev
+            )
             loaded_from = "hf://g-astruc/AnySat/models/AnySat.pth"
         else:
-            model = hub.AnySat(model_size=model_size, flash_attn=bool(flash_attn), device=dev)
+            model = hub.AnySat(
+                model_size=model_size, flash_attn=bool(flash_attn), device=dev
+            )
             loaded_from = "random_init"
 
     try:
@@ -245,7 +256,9 @@ def _load_anysat_cached(
     if p0 is None:
         raise ModelError("AnySat model has no parameters; cannot verify load.")
     if not torch.isfinite(p0).all():
-        raise ModelError("AnySat parameters contain NaN/Inf; checkpoint load likely failed.")
+        raise ModelError(
+            "AnySat parameters contain NaN/Inf; checkpoint load likely failed."
+        )
     p0f = p0.float()
 
     meta = {
@@ -305,7 +318,9 @@ def _prepare_anysat_s2_input(
         raise ModelError(f"AnySat s2 expects [T,10,H,W], got shape={raw_tchw.shape}")
     x_tchw = raw_tchw.astype(np.float32, copy=False)
 
-    if image_size > 0 and (x_tchw.shape[-1] != image_size or x_tchw.shape[-2] != image_size):
+    if image_size > 0 and (
+        x_tchw.shape[-1] != image_size or x_tchw.shape[-2] != image_size
+    ):
         x_tchw = _resize_tchw(x_tchw, out_hw=image_size)
 
     x_tchw = _normalize_series(x_tchw, mode=norm_mode)
@@ -314,7 +329,9 @@ def _prepare_anysat_s2_input(
     if doy.size == 0:
         doy = np.full((t,), 182, dtype=np.int64)
     if doy.size < t:
-        doy = np.concatenate([doy, np.full((t - doy.size,), int(doy[-1]), dtype=np.int64)], axis=0)
+        doy = np.concatenate(
+            [doy, np.full((t - doy.size,), int(doy[-1]), dtype=np.int64)], axis=0
+        )
     elif doy.size > t:
         doy = doy[:t]
     dates = doy[None, :]
@@ -335,17 +352,23 @@ def _anysat_patch_features(
     import torch
 
     if patch_size_m <= 0 or (patch_size_m % 10) != 0:
-        raise ModelError(f"AnySat patch_size must be a positive multiple of 10 (meters), got {patch_size_m}")
+        raise ModelError(
+            f"AnySat patch_size must be a positive multiple of 10 (meters), got {patch_size_m}"
+        )
 
     with torch.no_grad():
         out = model(s2_input, patch_size=int(patch_size_m), output="patch")
 
     if not hasattr(out, "ndim") or int(out.ndim) != 4:
-        raise ModelError(f"AnySat output='patch' returned unexpected shape/type: {type(out)} {getattr(out, 'shape', None)}")
+        raise ModelError(
+            f"AnySat output='patch' returned unexpected shape/type: {type(out)} {getattr(out, 'shape', None)}"
+        )
 
     # AnySat patch output: [B,H,W,D]
     if int(out.shape[0]) != 1:
-        raise ModelError(f"AnySat embedder expects B=1 per call, got {tuple(out.shape)}")
+        raise ModelError(
+            f"AnySat embedder expects B=1 per call, got {tuple(out.shape)}"
+        )
     arr = out[0].detach().float().cpu().numpy().astype(np.float32)  # [H,W,D]
     grid = np.transpose(arr, (2, 0, 1)).astype(np.float32)  # [D,H,W]
     meta = {
@@ -360,12 +383,16 @@ def _anysat_patch_features(
 class AnySatEmbedder(EmbedderBase):
     DEFAULT_FETCH_WORKERS = 8
     DEFAULT_FRAMES = 8
+    _allow_auto_backend = False
 
     def describe(self) -> Dict[str, Any]:
         return {
             "type": "on_the_fly",
             "backend": ["provider"],
-            "inputs": {"collection": "COPERNICUS/S2_SR_HARMONIZED", "bands": _S2_10_BANDS},
+            "inputs": {
+                "collection": "COPERNICUS/S2_SR_HARMONIZED",
+                "bands": _S2_10_BANDS,
+            },
             "temporal": {"mode": "range"},
             "output": ["pooled", "grid"],
             "defaults": {
@@ -385,16 +412,6 @@ class AnySatEmbedder(EmbedderBase):
             ],
         }
 
-    def __init__(self) -> None:
-        self._providers: Dict[str, ProviderBase] = {}
-
-    def _get_provider(self, backend: str) -> ProviderBase:
-        return get_cached_provider(
-            self._providers,
-            backend=backend,
-            allow_auto=False,
-        )
-
     @staticmethod
     def _default_sensor() -> SensorSpec:
         return SensorSpec(
@@ -408,7 +425,12 @@ class AnySatEmbedder(EmbedderBase):
 
     @staticmethod
     def _resolve_fetch_workers(n_items: int) -> int:
-        v = int(os.environ.get("RS_EMBED_ANYSAT_FETCH_WORKERS", str(AnySatEmbedder.DEFAULT_FETCH_WORKERS)))
+        v = int(
+            os.environ.get(
+                "RS_EMBED_ANYSAT_FETCH_WORKERS",
+                str(AnySatEmbedder.DEFAULT_FETCH_WORKERS),
+            )
+        )
         return max(1, min(int(n_items), v))
 
     def get_embedding(
@@ -427,23 +449,42 @@ class AnySatEmbedder(EmbedderBase):
 
         ss = sensor or self._default_sensor()
         t = temporal_to_range(temporal)
-        n_frames = max(1, int(os.environ.get("RS_EMBED_ANYSAT_FRAMES", str(self.DEFAULT_FRAMES))))
+        n_frames = max(
+            1, int(os.environ.get("RS_EMBED_ANYSAT_FRAMES", str(self.DEFAULT_FRAMES)))
+        )
 
-        model_size = os.environ.get("RS_EMBED_ANYSAT_MODEL_SIZE", "base").strip().lower()
-        flash_attn = os.environ.get("RS_EMBED_ANYSAT_FLASH_ATTN", "0").strip() in {"1", "true", "True"}
+        model_size = (
+            os.environ.get("RS_EMBED_ANYSAT_MODEL_SIZE", "base").strip().lower()
+        )
+        flash_attn = os.environ.get("RS_EMBED_ANYSAT_FLASH_ATTN", "0").strip() in {
+            "1",
+            "true",
+            "True",
+        }
         image_size = int(os.environ.get("RS_EMBED_ANYSAT_IMG", "24"))
         norm_mode = os.environ.get("RS_EMBED_ANYSAT_NORM", "per_tile_zscore").strip()
         patch_size_m = int(getattr(output, "scale_m", 10))
 
         repo_path = os.environ.get("RS_EMBED_ANYSAT_REPO_PATH")
-        repo_url = os.environ.get("RS_EMBED_ANYSAT_REPO_URL", "https://github.com/gastruc/AnySat.git")
-        repo_cache = os.environ.get("RS_EMBED_ANYSAT_REPO_CACHE", os.path.join("~", ".cache", "rs_embed", "anysat"))
-        auto_download_repo = os.environ.get("RS_EMBED_ANYSAT_AUTO_DOWNLOAD_REPO", "1").strip() not in {"0", "false", "False"}
+        repo_url = os.environ.get(
+            "RS_EMBED_ANYSAT_REPO_URL", "https://github.com/gastruc/AnySat.git"
+        )
+        repo_cache = os.environ.get(
+            "RS_EMBED_ANYSAT_REPO_CACHE",
+            os.path.join("~", ".cache", "rs_embed", "anysat"),
+        )
+        auto_download_repo = os.environ.get(
+            "RS_EMBED_ANYSAT_AUTO_DOWNLOAD_REPO", "1"
+        ).strip() not in {"0", "false", "False"}
         ckpt_path = os.environ.get("RS_EMBED_ANYSAT_CKPT")
-        pretrained = os.environ.get("RS_EMBED_ANYSAT_PRETRAINED", "1").strip() not in {"0", "false", "False"}
+        pretrained = os.environ.get("RS_EMBED_ANYSAT_PRETRAINED", "1").strip() not in {
+            "0",
+            "false",
+            "False",
+        }
 
         if input_chw is None:
-            provider = _call_provider_getter(self._get_provider, backend)
+            provider = self._get_provider(backend)
             raw_tchw = _fetch_s2_10_raw_tchw(
                 provider,
                 spatial,
@@ -524,7 +565,11 @@ class AnySatEmbedder(EmbedderBase):
                 vec = np.max(grid, axis=(1, 2)).astype(np.float32)
             else:
                 vec = np.mean(grid, axis=(1, 2)).astype(np.float32)
-            ometa = {**meta, "pooling": f"patch_{output.pooling}", "pooled_shape": tuple(vec.shape)}
+            ometa = {
+                **meta,
+                "pooling": f"patch_{output.pooling}",
+                "pooled_shape": tuple(vec.shape),
+            }
             return Embedding(data=vec, meta=ometa)
 
         if output.mode == "grid":
@@ -567,8 +612,10 @@ class AnySatEmbedder(EmbedderBase):
 
         t = temporal_to_range(temporal)
         ss = sensor or self._default_sensor()
-        provider = _call_provider_getter(self._get_provider, backend)
-        n_frames = max(1, int(os.environ.get("RS_EMBED_ANYSAT_FRAMES", str(self.DEFAULT_FRAMES))))
+        provider = self._get_provider(backend)
+        n_frames = max(
+            1, int(os.environ.get("RS_EMBED_ANYSAT_FRAMES", str(self.DEFAULT_FRAMES)))
+        )
 
         n = len(spatials)
         prefetched_raw: List[Optional[np.ndarray]] = [None] * n

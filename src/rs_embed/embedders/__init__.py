@@ -17,4 +17,6 @@ def __getattr__(name: str) -> Any:
     try:
         return getattr(mod, name)
     except AttributeError as e:
-        raise AttributeError(f"module {mod.__name__!r} has no attribute {name!r}") from e
+        raise AttributeError(
+            f"module {mod.__name__!r} has no attribute {name!r}"
+        ) from e

@@ -50,4 +50,6 @@ def canonical_model_id(name: str) -> str:
 
 
 # Optional convenience map for lazy class access from rs_embed.embedders
-CLASS_TO_MODULE: Dict[str, str] = {class_name: module for module, class_name in MODEL_SPECS.values()}
+CLASS_TO_MODULE: Dict[str, str] = {
+    class_name: module for module, class_name in MODEL_SPECS.values()
+}

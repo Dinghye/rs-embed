@@ -47,7 +47,9 @@ def split_date_range(start: str, end: str, n_parts: int) -> Tuple[Tuple[str, str
     return tuple(out)
 
 
-def split_temporal_range(temporal: TemporalSpec, n_parts: int) -> Tuple[Tuple[str, str], ...]:
+def split_temporal_range(
+    temporal: TemporalSpec, n_parts: int
+) -> Tuple[Tuple[str, str], ...]:
     start, end = temporal_to_start_end(temporal)
     return split_date_range(start, end, n_parts)
 

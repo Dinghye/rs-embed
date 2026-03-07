@@ -39,6 +39,7 @@ def get_extension(fmt: str) -> str:
 
 # ── public dispatcher ──────────────────────────────────────────────
 
+
 def write_arrays(
     *,
     fmt: str,
@@ -59,6 +60,7 @@ def write_arrays(
 
 
 # ── NPZ writer ────────────────────────────────────────────────────
+
 
 def _write_npz(
     out_path: str,
@@ -84,6 +86,7 @@ def _write_npz(
 
 
 # ── NetCDF writer ──────────────────────────────────────────────────
+
 
 def _write_netcdf(
     out_path: str,
@@ -171,6 +174,7 @@ def _resolve_conflicting_dims(
 
 # ── dimension inference ────────────────────────────────────────────
 
+
 def _infer_dims(key: str, arr: np.ndarray) -> Tuple[str, ...]:
     """Map array key + shape to semantically named NetCDF dimensions.
 
@@ -210,9 +214,14 @@ def _infer_dims(key: str, arr: np.ndarray) -> Tuple[str, ...]:
 
 # ── engine selection ───────────────────────────────────────────────
 
+
 def _pick_engine() -> str:
     """Return the best available xarray NetCDF engine."""
-    for engine, pkg in [("netcdf4", "netCDF4"), ("h5netcdf", "h5netcdf"), ("scipy", "scipy")]:
+    for engine, pkg in [
+        ("netcdf4", "netCDF4"),
+        ("h5netcdf", "h5netcdf"),
+        ("scipy", "scipy"),
+    ]:
         try:
             __import__(pkg)
             return engine

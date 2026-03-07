@@ -44,7 +44,9 @@ def normalize_input_chw(
 ) -> np.ndarray:
     x = np.asarray(x_chw, dtype=np.float32)
     if x.ndim != 3:
-        raise ModelError(f"{name} must be CHW with ndim=3, got shape={getattr(x, 'shape', None)}")
+        raise ModelError(
+            f"{name} must be CHW with ndim=3, got shape={getattr(x, 'shape', None)}"
+        )
     if expected_channels is not None and int(x.shape[0]) != int(expected_channels):
         raise ModelError(
             f"{name} channel mismatch: got C={int(x.shape[0])}, expected C={int(expected_channels)}"
@@ -90,14 +92,18 @@ def _looks_like_bbox_spatial(spatial: SpatialSpec) -> bool:
     if isinstance(spatial, BBox):
         return True
     needed = ("minlon", "minlat", "maxlon", "maxlat")
-    return all(hasattr(spatial, k) for k in needed) and (getattr(spatial, "crs", "EPSG:4326") == "EPSG:4326")
+    return all(hasattr(spatial, k) for k in needed) and (
+        getattr(spatial, "crs", "EPSG:4326") == "EPSG:4326"
+    )
 
 
 def _coerce_bbox_like(spatial: SpatialSpec) -> BBox:
     if isinstance(spatial, BBox):
         return spatial
     if not _looks_like_bbox_spatial(spatial):
-        raise ModelError(f"Expected BBox-like spatial for GEE fallback, got {type(spatial)}")
+        raise ModelError(
+            f"Expected BBox-like spatial for GEE fallback, got {type(spatial)}"
+        )
     return BBox(
         minlon=float(getattr(spatial, "minlon")),
         minlat=float(getattr(spatial, "minlat")),
@@ -121,7 +127,9 @@ def _lonlat_to_web_mercator_xy(lon_deg: float, lat_deg: float) -> tuple[float, f
 
 def _web_mercator_xy_to_lonlat(x_m: float, y_m: float) -> tuple[float, float]:
     lon = math.degrees(float(x_m) / _WEB_MERCATOR_R)
-    lat = math.degrees((2.0 * math.atan(math.exp(float(y_m) / _WEB_MERCATOR_R))) - (math.pi / 2.0))
+    lat = math.degrees(
+        (2.0 * math.atan(math.exp(float(y_m) / _WEB_MERCATOR_R))) - (math.pi / 2.0)
+    )
     lat = _clamp_lat_for_web_mercator(lat)
     return (float(lon), float(lat))
 
@@ -135,7 +143,9 @@ def _bbox_span_pixels_estimate(bbox: BBox, *, scale_m: int) -> tuple[int, int]:
     return (h, w)
 
 
-def _split_bbox_for_recursive_fetch(bbox: BBox, *, prefer_axis: str) -> tuple[BBox, BBox, str]:
+def _split_bbox_for_recursive_fetch(
+    bbox: BBox, *, prefer_axis: str
+) -> tuple[BBox, BBox, str]:
     x0, y0 = _lonlat_to_web_mercator_xy(bbox.minlon, bbox.minlat)
     x1, y1 = _lonlat_to_web_mercator_xy(bbox.maxlon, bbox.maxlat)
     dx = abs(x1 - x0)
@@ -150,7 +160,9 @@ def _split_bbox_for_recursive_fetch(bbox: BBox, *, prefer_axis: str) -> tuple[BB
     if axis == "y" and dy <= 0.0 and dx > 0.0:
         axis = "x"
     if dx <= 0.0 and dy <= 0.0:
-        raise ModelError("Cannot split degenerate BBox while handling GEE sampleRectangle pixel-limit error.")
+        raise ModelError(
+            "Cannot split degenerate BBox while handling GEE sampleRectangle pixel-limit error."
+        )
 
     if axis == "x":
         xm = 0.5 * (x0 + x1)
@@ -160,7 +172,9 @@ def _split_bbox_for_recursive_fetch(bbox: BBox, *, prefer_axis: str) -> tuple[BB
         if not (float(bbox.minlon) < lon_mid < float(bbox.maxlon)):
             lon_mid = 0.5 * (float(bbox.minlon) + float(bbox.maxlon))
         if not (float(bbox.minlon) < lon_mid < float(bbox.maxlon)):
-            raise ModelError("Failed to split BBox along longitude for GEE sampleRectangle fallback.")
+            raise ModelError(
+                "Failed to split BBox along longitude for GEE sampleRectangle fallback."
+            )
         west = BBox(
             minlon=float(bbox.minlon),
             minlat=float(bbox.minlat),
@@ -183,7 +197,9 @@ def _split_bbox_for_recursive_fetch(bbox: BBox, *, prefer_axis: str) -> tuple[BB
     if not (float(bbox.minlat) < lat_mid < float(bbox.maxlat)):
         lat_mid = 0.5 * (float(bbox.minlat) + float(bbox.maxlat))
     if not (float(bbox.minlat) < lat_mid < float(bbox.maxlat)):
-        raise ModelError("Failed to split BBox along latitude for GEE sampleRectangle fallback.")
+        raise ModelError(
+            "Failed to split BBox along latitude for GEE sampleRectangle fallback."
+        )
 
     north = BBox(
         minlon=float(bbox.minlon),
@@ -225,7 +241,10 @@ def _fetch_provider_array_chw_with_bbox_fallback(
         )
         return np.asarray(arr, dtype=np.float32)
     except Exception as e:
-        if not (_looks_like_gee_sample_too_many_pixels(e) and _looks_like_bbox_spatial(spatial)):
+        if not (
+            _looks_like_gee_sample_too_many_pixels(e)
+            and _looks_like_bbox_spatial(spatial)
+        ):
             raise
         if int(split_depth) >= _MAX_GEE_BBOX_SPLIT_DEPTH:
             raise ModelError(
@@ -236,7 +255,9 @@ def _fetch_provider_array_chw_with_bbox_fallback(
         spatial_bbox = _coerce_bbox_like(spatial)
         h_est, w_est = _bbox_span_pixels_estimate(spatial_bbox, scale_m=int(scale_m))
         prefer_axis = "x" if int(w_est) >= int(h_est) else "y"
-        a_sp, b_sp, axis = _split_bbox_for_recursive_fetch(spatial_bbox, prefer_axis=prefer_axis)
+        a_sp, b_sp, axis = _split_bbox_for_recursive_fetch(
+            spatial_bbox, prefer_axis=prefer_axis
+        )
 
         arr_a = _fetch_provider_array_chw_with_bbox_fallback(
             provider,
@@ -259,17 +280,6 @@ def _fetch_provider_array_chw_with_bbox_fallback(
             split_depth=int(split_depth) + 1,
         )
 
-        if arr_a.ndim != 3 or arr_b.ndim != 3:
-            raise ModelError(
-                "Recursive GEE BBox fetch fallback expected CHW arrays, got "
-                f"{getattr(arr_a, 'shape', None)} and {getattr(arr_b, 'shape', None)}"
-            )
-        if int(arr_a.shape[0]) != int(arr_b.shape[0]):
-            raise ModelError(
-                "Recursive GEE BBox fetch fallback channel mismatch between tiles: "
-                f"{arr_a.shape} vs {arr_b.shape}"
-            )
-
         return _stitch_bbox_split_arrays(
             arr_a=arr_a,
             arr_b=arr_b,
@@ -284,59 +294,58 @@ def _stitch_bbox_split_arrays(
     *,
     arr_a: np.ndarray,
     arr_b: np.ndarray,
-    parent_spatial: BBox,
+    parent_spatial: Any,
     axis: str,
     scale_m: int,
     fill_value: float,
 ) -> np.ndarray:
-    if arr_a.ndim != 3 or arr_b.ndim != 3:
+    """Stitch two bbox-split arrays along a spatial axis.
+
+    Works for any array where the last two dims are spatial (H, W).
+    Handles overlap trimming and gap filling within a pixel tolerance.
+    """
+    arr_a = np.asarray(arr_a, dtype=np.float32)
+    arr_b = np.asarray(arr_b, dtype=np.float32)
+    if arr_a.ndim < 2 or arr_b.ndim < 2:
         raise ModelError(
-            "Recursive GEE BBox fetch fallback expected CHW arrays, got "
-            f"{getattr(arr_a, 'shape', None)} and {getattr(arr_b, 'shape', None)}"
+            f"Expected arrays with spatial last2 dims for bbox stitching, got {arr_a.shape} and {arr_b.shape}"
         )
-    if int(arr_a.shape[0]) != int(arr_b.shape[0]):
+    if tuple(arr_a.shape[:-2]) != tuple(arr_b.shape[:-2]):
         raise ModelError(
-            "Recursive GEE BBox fetch fallback channel mismatch between tiles: "
-            f"{arr_a.shape} vs {arr_b.shape}"
+            f"Leading shape mismatch while stitching bbox tiles: {arr_a.shape} vs {arr_b.shape}"
         )
 
+    spatial_bbox = _coerce_bbox_like(parent_spatial)
     axis = str(axis).lower()
-    if axis == "x":
-        non_split_axis = 1
-        split_axis = 2
-        if int(arr_a.shape[non_split_axis]) != int(arr_b.shape[non_split_axis]):
-            raise ModelError(
-                "Recursive GEE BBox fetch fallback row mismatch while stitching x-split tiles: "
-                f"{arr_a.shape} vs {arr_b.shape}"
-            )
-        _, target_len = _bbox_span_pixels_estimate(parent_spatial, scale_m=int(scale_m))
-    elif axis == "y":
-        non_split_axis = 2
-        split_axis = 1
+    split_axis = arr_a.ndim - 1 if axis == "x" else arr_a.ndim - 2
+    nonsplit_axis = arr_a.ndim - 2 if axis == "x" else arr_a.ndim - 1
+
+    if int(arr_a.shape[nonsplit_axis]) != int(arr_b.shape[nonsplit_axis]):
+        raise ModelError(
+            f"Non-split spatial dim mismatch while stitching bbox tiles: {arr_a.shape} vs {arr_b.shape}"
+        )
+
+    if axis == "y":
         # sampleRectangle tiles can arrive with local row order opposite to the
         # north/south BBox split order. Normalize each child tile before stitching.
-        arr_a = np.flip(arr_a, axis=1)
-        arr_b = np.flip(arr_b, axis=1)
-        if int(arr_a.shape[non_split_axis]) != int(arr_b.shape[non_split_axis]):
-            raise ModelError(
-                "Recursive GEE BBox fetch fallback col mismatch while stitching y-split tiles: "
-                f"{arr_a.shape} vs {arr_b.shape}"
-            )
-        target_len, _ = _bbox_span_pixels_estimate(parent_spatial, scale_m=int(scale_m))
-    else:
+        arr_a = np.flip(arr_a, axis=arr_a.ndim - 2)
+        arr_b = np.flip(arr_b, axis=arr_b.ndim - 2)
+    elif axis != "x":
         raise ModelError(f"Invalid bbox fallback stitch axis={axis!r}")
 
+    target_h, target_w = _bbox_span_pixels_estimate(spatial_bbox, scale_m=int(scale_m))
+    target_len = int(target_w if axis == "x" else target_h)
     len_a = int(arr_a.shape[split_axis])
     len_b = int(arr_b.shape[split_axis])
     combined_len = int(len_a + len_b)
-    delta = int(combined_len - int(target_len))
+    delta = int(combined_len - target_len)
 
     # GEE sampleRectangle on adjacent clipped regions can duplicate or drop a boundary pixel
     # because region edges need not land exactly on the projected pixel grid.
     if delta > 0:
         if delta > _GEE_BBOX_STITCH_LEN_TOLERANCE_PX:
             raise ModelError(
-                "Recursive GEE BBox fetch fallback saw excessive overlap while stitching tiles: "
+                "Excessive overlap while stitching bbox tiles: "
                 f"combined={combined_len}, target~={target_len}, delta={delta}"
             )
         trim_a = int(delta // 2)
@@ -355,15 +364,19 @@ def _stitch_bbox_split_arrays(
         gap = int(-delta)
         if gap > _GEE_BBOX_STITCH_LEN_TOLERANCE_PX:
             raise ModelError(
-                "Recursive GEE BBox fetch fallback saw excessive gap while stitching tiles: "
+                "Excessive gap while stitching bbox tiles: "
                 f"combined={combined_len}, target~={target_len}, gap={gap}"
             )
         pad_shape = list(arr_a.shape)
         pad_shape[split_axis] = gap
         gap_arr = np.full(tuple(pad_shape), float(fill_value), dtype=np.float32)
-        return np.concatenate([arr_a, gap_arr, arr_b], axis=split_axis).astype(np.float32, copy=False)
+        return np.concatenate([arr_a, gap_arr, arr_b], axis=split_axis).astype(
+            np.float32, copy=False
+        )
 
-    return np.concatenate([arr_a, arr_b], axis=split_axis).astype(np.float32, copy=False)
+    return np.concatenate([arr_a, arr_b], axis=split_axis).astype(
+        np.float32, copy=False
+    )
 
 
 def fetch_provider_patch_raw(
@@ -395,14 +408,18 @@ def fetch_provider_patch_raw(
         expected_channels=len(sensor.bands),
         name=f"gee_input[{sensor.collection}]",
     )
-    return np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32, copy=False)
+    return np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0).astype(
+        np.float32, copy=False
+    )
 
 
 # Backwards-compatible alias kept for existing imports/tests.
 fetch_gee_patch_raw = fetch_provider_patch_raw
 
 
-def inspect_input_raw(x_chw: np.ndarray, *, sensor: SensorSpec, name: str) -> Dict[str, Any]:
+def inspect_input_raw(
+    x_chw: np.ndarray, *, sensor: SensorSpec, name: str
+) -> Dict[str, Any]:
     from ...core.input_checks import inspect_chw
 
     x = normalize_input_chw(
@@ -417,4 +434,8 @@ def inspect_input_raw(x_chw: np.ndarray, *, sensor: SensorSpec, name: str) -> Di
         value_range=None,
         fill_value=float(sensor.fill_value),
     )
-    return {"ok": bool(rep.get("ok", False)), "report": rep, "sensor": _jsonable(sensor)}
+    return {
+        "ok": bool(rep.get("ok", False)),
+        "report": rep,
+        "sensor": _jsonable(sensor),
+    }

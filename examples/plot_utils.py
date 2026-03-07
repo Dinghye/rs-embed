@@ -4,6 +4,7 @@ from collections import defaultdict
 import json
 from pathlib import Path
 
+
 def _to_dhw(arr):
     if hasattr(arr, "values"):  # xarray
         arr = arr.values
@@ -13,9 +14,18 @@ def _to_dhw(arr):
     if arr.ndim != 3:
         raise ValueError(f"Expected 2D/3D array, got {arr.shape}")
     # HWD -> DHW if last dim looks like D
-    if arr.shape[-1] in (32, 64, 128, 256, 512, 768, 1024) and arr.shape[0] not in (32, 64, 128, 256, 512, 768, 1024):
+    if arr.shape[-1] in (32, 64, 128, 256, 512, 768, 1024) and arr.shape[0] not in (
+        32,
+        64,
+        128,
+        256,
+        512,
+        768,
+        1024,
+    ):
         arr = np.moveaxis(arr, -1, 0)
     return arr.astype(np.float32)
+
 
 def _infer_should_flipud_from_meta(meta):
     """
@@ -61,6 +71,7 @@ def _infer_should_flipud_from_meta(meta):
 
     return False, "no orientation metadata; keep as-is"
 
+
 def _robust_scale01(x, lo=2.0, hi=98.0, eps=1e-8):
     """Scale array to [0,1] with percentile clipping."""
     x = np.asarray(x, dtype=np.float32)
@@ -71,6 +82,7 @@ def _robust_scale01(x, lo=2.0, hi=98.0, eps=1e-8):
     y = np.clip((x - a) / (b - a + eps), 0.0, 1.0)
     y = np.nan_to_num(y, nan=0.0, posinf=1.0, neginf=0.0)
     return y
+
 
 def _stabilize_pca_sign(components: np.ndarray) -> np.ndarray:
     """
@@ -86,6 +98,7 @@ def _stabilize_pca_sign(components: np.ndarray) -> np.ndarray:
         if row[j] < 0:
             comps[i] = -row
     return comps
+
 
 def fit_pca_rgb(
     emb,
@@ -144,6 +157,7 @@ def fit_pca_rgb(
         "center": bool(center),
     }
 
+
 def transform_pca_rgb(
     emb,
     pca,
@@ -173,6 +187,7 @@ def transform_pca_rgb(
         rgb[:, k] = _robust_scale01(Y[:, k], lo=robust_lo, hi=robust_hi)
 
     return rgb.reshape(H, W, 3)
+
 
 def plot_embedding_pseudocolor(
     emb,
@@ -238,13 +253,16 @@ def plot_embedding_pseudocolor(
                 img = np.flipud(img)
             plt.figure(figsize=figsize)
             plt.imshow(img)
-            plt.title(f"{title} | PC{k+1}")
+            plt.title(f"{title} | PC{k + 1}")
             plt.axis("off")
             plt.show()
-    plt.savefig(f"{title.replace(' ','_')}_pca.png")
+    plt.savefig(f"{title.replace(' ', '_')}_pca.png")
     return pca
 
-def percentile_stretch(rgb_hwc: np.ndarray, p_low=1.0, p_high=99.0, gamma=1.0) -> np.ndarray:
+
+def percentile_stretch(
+    rgb_hwc: np.ndarray, p_low=1.0, p_high=99.0, gamma=1.0
+) -> np.ndarray:
     """Per-channel percentile stretch to [0,1]."""
     rgb = rgb_hwc.astype(np.float32)
     rgb = np.nan_to_num(rgb, nan=0.0, posinf=0.0, neginf=0.0)
@@ -263,14 +281,18 @@ def percentile_stretch(rgb_hwc: np.ndarray, p_low=1.0, p_high=99.0, gamma=1.0) -
     return out
 
 
-def show_input_chw(x_chw: np.ndarray, title: str, rgb_idx=(0, 1, 2), p_low=1, p_high=99):
+def show_input_chw(
+    x_chw: np.ndarray, title: str, rgb_idx=(0, 1, 2), p_low=1, p_high=99
+):
     """Visualize CHW input. If C>=3 show RGB via indices; else show grayscale."""
     if x_chw.ndim != 3:
         print(f"Skip {title}: expected CHW, got shape={x_chw.shape}")
         return
 
     c, h, w = x_chw.shape
-    print(f"{title:40s} shape={x_chw.shape} dtype={x_chw.dtype} min={x_chw.min():.3g} max={x_chw.max():.3g}")
+    print(
+        f"{title:40s} shape={x_chw.shape} dtype={x_chw.dtype} min={x_chw.min():.3g} max={x_chw.max():.3g}"
+    )
 
     plt.figure(figsize=(6, 6))
     if c >= 3:
@@ -305,7 +327,9 @@ def show_s1_vvvh_chw(
     if x.ndim != 3:
         raise ValueError(f"Expected CHW array, got shape={getattr(x, 'shape', None)}")
     if int(x.shape[0]) < 2:
-        raise ValueError(f"Expected at least 2 channels for VV/VH, got C={int(x.shape[0])}")
+        raise ValueError(
+            f"Expected at least 2 channels for VV/VH, got C={int(x.shape[0])}"
+        )
 
     fig, axes = plt.subplots(1, 2, figsize=figsize)
     for ax, band_img, band_name in zip(axes, x[:2], tuple(band_names)[:2]):
@@ -448,7 +472,9 @@ def infer_rgb_idx_from_sensor(sensor_meta, channels: int):
     return (0, 1, 2)
 
 
-def visualize_manifest_inputs(manifest: dict, npz_obj, p_low: float = 1, p_high: float = 99):
+def visualize_manifest_inputs(
+    manifest: dict, npz_obj, p_low: float = 1, p_high: float = 99
+):
     """Visualize exact model inputs using manifest.models[*].input.npz_key."""
     models = (manifest or {}).get("models") or []
     by_key = defaultdict(list)
@@ -489,7 +515,9 @@ def visualize_manifest_inputs(manifest: dict, npz_obj, p_low: float = 1, p_high:
 def load_export_npz(npz_path, json_path=None):
     """Load exported NPZ + sidecar manifest JSON."""
     npz_path = Path(npz_path)
-    json_path = Path(json_path) if json_path is not None else npz_path.with_suffix(".json")
+    json_path = (
+        Path(json_path) if json_path is not None else npz_path.with_suffix(".json")
+    )
 
     if not npz_path.exists():
         raise FileNotFoundError(f"Missing: {npz_path}")

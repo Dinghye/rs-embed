@@ -85,7 +85,9 @@ def resolve_preview_group_dirs(candidates):
             continue
         if any(cand.glob("p*.npz")):
             return [cand]
-        group_dirs = sorted(p for p in cand.iterdir() if p.is_dir() and p.name.startswith("group"))
+        group_dirs = sorted(
+            p for p in cand.iterdir() if p.is_dir() and p.name.startswith("group")
+        )
         if group_dirs:
             return group_dirs
     return []
@@ -110,7 +112,11 @@ def to_feature_vector(arr: np.ndarray) -> np.ndarray:
             b = np.moveaxis(a, -1, 0)
         else:
             b = None
-        vec = np.nanmean(b.reshape(b.shape[0], -1), axis=1) if b is not None else a.reshape(-1)
+        vec = (
+            np.nanmean(b.reshape(b.shape[0], -1), axis=1)
+            if b is not None
+            else a.reshape(-1)
+        )
     return np.nan_to_num(vec, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
 
 
@@ -121,7 +127,9 @@ def iter_export_points(export_root: Path):
         if point_manifests is None:
             print("Warning: failed to read _all_points_manifest.json:", agg)
         else:
-            yield from _iter_manifest_points(point_manifests, export_root, "flat_aggregate")
+            yield from _iter_manifest_points(
+                point_manifests, export_root, "flat_aggregate"
+            )
             return
 
     sidecars = list(_iter_sidecar_points(export_root))
@@ -272,7 +280,21 @@ def _extract_preview_from_record(group_dir: Path, pm: dict, npz_path: Path, df):
 
 
 def _dim_like_embedding(size: int) -> bool:
-    return int(size) in {32, 64, 96, 128, 192, 256, 384, 512, 768, 1024, 1536, 2048, 4096}
+    return int(size) in {
+        32,
+        64,
+        96,
+        128,
+        192,
+        256,
+        384,
+        512,
+        768,
+        1024,
+        1536,
+        2048,
+        4096,
+    }
 
 
 def _iter_manifest_points(point_manifests, base_dir: Path, mode: str):
@@ -297,11 +319,15 @@ def _iter_sidecar_points(export_root: Path):
 def _iter_legacy_group_points(export_root: Path):
     if not export_root.exists():
         return
-    group_dirs = sorted(p for p in export_root.iterdir() if p.is_dir() and p.name.startswith("group"))
+    group_dirs = sorted(
+        p for p in export_root.iterdir() if p.is_dir() and p.name.startswith("group")
+    )
     for group_dir in group_dirs:
         point_manifests = _read_json_list(group_dir / "_group_manifest.json")
         if point_manifests is not None:
-            yield from _iter_manifest_points(point_manifests, group_dir, "legacy_groups")
+            yield from _iter_manifest_points(
+                point_manifests, group_dir, "legacy_groups"
+            )
 
 
 def _candidate_embedding_keys(m_entry: dict):

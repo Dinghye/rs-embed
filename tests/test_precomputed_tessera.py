@@ -30,10 +30,38 @@ def _fake_rows():
     # 2x2 tiles on a shared north-up grid:
     # x in [0,8], y in [0,8], each tile is 4x4 pixels.
     rows = [
-        (2021, 0.0, 0.0, np.full((h, w, d), 1.0, dtype=np.float32), "EPSG:4326", Affine(1, 0, 0, 0, -1, 8)),
-        (2021, 0.0, 0.0, np.full((h, w, d), 2.0, dtype=np.float32), "EPSG:4326", Affine(1, 0, 4, 0, -1, 8)),
-        (2021, 0.0, 0.0, np.full((h, w, d), 3.0, dtype=np.float32), "EPSG:4326", Affine(1, 0, 0, 0, -1, 4)),
-        (2021, 0.0, 0.0, np.full((h, w, d), 4.0, dtype=np.float32), "EPSG:4326", Affine(1, 0, 4, 0, -1, 4)),
+        (
+            2021,
+            0.0,
+            0.0,
+            np.full((h, w, d), 1.0, dtype=np.float32),
+            "EPSG:4326",
+            Affine(1, 0, 0, 0, -1, 8),
+        ),
+        (
+            2021,
+            0.0,
+            0.0,
+            np.full((h, w, d), 2.0, dtype=np.float32),
+            "EPSG:4326",
+            Affine(1, 0, 4, 0, -1, 8),
+        ),
+        (
+            2021,
+            0.0,
+            0.0,
+            np.full((h, w, d), 3.0, dtype=np.float32),
+            "EPSG:4326",
+            Affine(1, 0, 0, 0, -1, 4),
+        ),
+        (
+            2021,
+            0.0,
+            0.0,
+            np.full((h, w, d), 4.0, dtype=np.float32),
+            "EPSG:4326",
+            Affine(1, 0, 4, 0, -1, 4),
+        ),
     ]
     return rows
 
@@ -43,7 +71,9 @@ def test_tessera_pooled_uses_crop_canvas_not_full_mosaic(monkeypatch):
 
     embedder = TesseraEmbedder()
     embedder.model_name = "tessera"
-    monkeypatch.setattr(embedder, "_get_gt", lambda _cache: _FakeGeoTessera(_fake_rows()))
+    monkeypatch.setattr(
+        embedder, "_get_gt", lambda _cache: _FakeGeoTessera(_fake_rows())
+    )
 
     zeros_calls = []
     real_zeros = tessera_mod.np.zeros
@@ -68,4 +98,3 @@ def test_tessera_pooled_uses_crop_canvas_not_full_mosaic(monkeypatch):
     assert (8, 8, 64) not in zeros_calls
     assert (1, 1, 64) in zeros_calls
     np.testing.assert_allclose(emb.data, np.full((64,), 4.0, dtype=np.float32))
-

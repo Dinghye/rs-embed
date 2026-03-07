@@ -13,7 +13,9 @@ _LEGACY_RESOLVE_BANDS_WARNED = False
 
 def sensor_fetch_group_key(sensor: SensorSpec) -> Tuple[str, int, int, float, str]:
     """Fetch identity excluding bands; used to build reusable band supersets."""
-    cloudy = -1 if getattr(sensor, "cloudy_pct", None) is None else int(sensor.cloudy_pct)
+    cloudy = (
+        -1 if getattr(sensor, "cloudy_pct", None) is None else int(sensor.cloudy_pct)
+    )
     return (
         str(sensor.collection),
         int(sensor.scale_m),
@@ -52,7 +54,9 @@ def build_prefetch_plan(
         sensor_by_key.setdefault(skey, sspec)
         sensor_models.setdefault(skey, []).append(m)
 
-    groups: Dict[Tuple[str, int, int, float, str], List[Tuple[str, SensorSpec, Tuple[str, ...]]]] = {}
+    groups: Dict[
+        Tuple[str, int, int, float, str], List[Tuple[str, SensorSpec, Tuple[str, ...]]]
+    ] = {}
     for skey, sspec in sensor_by_key.items():
         gkey = sensor_fetch_group_key(sspec)
         if resolve_bands_fn is None:
@@ -100,7 +104,11 @@ def build_prefetch_plan(
             collection=str(base.collection),
             bands=tuple(union_bands),
             scale_m=int(base.scale_m),
-            cloudy_pct=(base.cloudy_pct if getattr(base, "cloudy_pct", None) is None else int(base.cloudy_pct)),
+            cloudy_pct=(
+                base.cloudy_pct
+                if getattr(base, "cloudy_pct", None) is None
+                else int(base.cloudy_pct)
+            ),
             fill_value=float(base.fill_value),
             composite=str(base.composite),
             check_input=bool(getattr(base, "check_input", False)),
@@ -118,7 +126,13 @@ def build_prefetch_plan(
             if member_key not in fetch_members[fetch_key]:
                 fetch_members[fetch_key].append(member_key)
 
-    return sensor_by_key, fetch_sensor_by_key, sensor_to_fetch, sensor_models, fetch_members
+    return (
+        sensor_by_key,
+        fetch_sensor_by_key,
+        sensor_to_fetch,
+        sensor_models,
+        fetch_members,
+    )
 
 
 # Backwards-compatible alias kept for existing imports/tests.

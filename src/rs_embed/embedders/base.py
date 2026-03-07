@@ -5,9 +5,22 @@ import numpy as np
 
 from ..core.specs import SpatialSpec, TemporalSpec, SensorSpec, OutputSpec
 from ..core.embedding import Embedding
+from ..providers.base import ProviderBase
+
 
 class EmbedderBase:
     model_name: str = "base"
+    _allow_auto_backend: bool = True
+
+    def __init__(self) -> None:
+        self._providers: Dict[str, ProviderBase] = {}
+
+    def _get_provider(self, backend: str) -> ProviderBase:
+        from .runtime_utils import get_cached_provider
+
+        return get_cached_provider(
+            self._providers, backend=backend, allow_auto=self._allow_auto_backend
+        )
 
     def describe(self) -> Dict[str, Any]:
         """Return model/product capabilities and requirements."""
@@ -24,7 +37,7 @@ class EmbedderBase:
         device: str = "auto",
         input_chw: Optional[np.ndarray] = None,
     ) -> Embedding:
-        
+
         raise NotImplementedError
 
     def get_embeddings_batch(

@@ -66,7 +66,9 @@ def test_coerce_fetch_result_supports_array_and_tuple():
     assert meta0["fallback_used"] is False
     assert meta0["already_unit_scaled"] is False
 
-    arr1, meta1 = _coerce_fetch_result((raw, {"fallback_used": True, "already_unit_scaled": True}))
+    arr1, meta1 = _coerce_fetch_result(
+        (raw, {"fallback_used": True, "already_unit_scaled": True})
+    )
     assert arr1.shape == (14, 4, 4)
     assert meta1["fallback_used"] is True
     assert meta1["already_unit_scaled"] is True
@@ -76,7 +78,7 @@ def test_satvision_single_forces_unit_norm_when_fetch_is_unit_scaled(monkeypatch
     import rs_embed.embedders.onthefly_satvision_toa as sv
 
     emb = SatVisionTOAEmbedder()
-    monkeypatch.setattr(emb, "_get_provider", lambda: object())
+    monkeypatch.setattr(emb, "_get_provider", lambda _backend: object())
     monkeypatch.setattr(
         emb,
         "_resolve_runtime",
@@ -113,7 +115,10 @@ def test_satvision_single_forces_unit_norm_when_fetch_is_unit_scaled(monkeypatch
     monkeypatch.setattr(
         sv,
         "_satvision_forward_batch",
-        lambda model, x_chw_batch, **kw: ([np.full((4,), 1.0, dtype=np.float32)], {"tokens_kind": "pooled"}),
+        lambda model, x_chw_batch, **kw: (
+            [np.full((4,), 1.0, dtype=np.float32)],
+            {"tokens_kind": "pooled"},
+        ),
     )
 
     sensor = SensorSpec(

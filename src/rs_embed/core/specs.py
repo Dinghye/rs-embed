@@ -5,9 +5,11 @@ from typing import Literal, Optional, Tuple
 
 from .errors import SpecError
 
+
 @dataclass(frozen=True)
 class BBox:
     """EPSG:4326 bbox."""
+
     minlon: float
     minlat: float
     maxlon: float
@@ -19,6 +21,7 @@ class BBox:
             raise SpecError("BBox currently must be EPSG:4326 (v0.1).")
         if not (self.minlon < self.maxlon and self.minlat < self.maxlat):
             raise SpecError("Invalid bbox bounds.")
+
 
 @dataclass(frozen=True)
 class PointBuffer:
@@ -33,11 +36,14 @@ class PointBuffer:
         if self.buffer_m <= 0:
             raise SpecError("buffer_m must be positive.")
 
+
 SpatialSpec = BBox | PointBuffer
+
 
 @dataclass(frozen=True)
 class TemporalSpec:
     """Either year-based (for annual products) or start/end range."""
+
     mode: Literal["year", "range"]
     year: Optional[int] = None
     start: Optional[str] = None
@@ -68,15 +74,19 @@ class TemporalSpec:
                 start_d = date.fromisoformat(str(self.start))
                 end_d = date.fromisoformat(str(self.end))
             except Exception as e:
-                raise SpecError("TemporalSpec.range expects ISO dates 'YYYY-MM-DD'.") from e
+                raise SpecError(
+                    "TemporalSpec.range expects ISO dates 'YYYY-MM-DD'."
+                ) from e
             if start_d >= end_d:
                 raise SpecError("TemporalSpec.range requires start < end.")
         else:
             raise SpecError(f"Unknown TemporalSpec mode: {self.mode}")
 
+
 @dataclass(frozen=True)
 class SensorSpec:
     """For on-the-fly models: what imagery to pull and how."""
+
     collection: str
     bands: Tuple[str, ...]
     scale_m: int = 10
@@ -90,6 +100,7 @@ class SensorSpec:
     check_input: bool = False
     check_raise: bool = True
     check_save_dir: Optional[str] = None
+
 
 @dataclass(frozen=True)
 class OutputSpec:
@@ -107,11 +118,15 @@ class OutputSpec:
         *,
         grid_orientation: Literal["north_up", "native"] = "north_up",
     ) -> "OutputSpec":
-        return OutputSpec(mode="grid", scale_m=scale_m, grid_orientation=grid_orientation)
+        return OutputSpec(
+            mode="grid", scale_m=scale_m, grid_orientation=grid_orientation
+        )
 
     @staticmethod
-    def pooled(pooling: Literal["mean","max"]="mean") -> "OutputSpec":
-        return OutputSpec(mode="pooled", scale_m=10, pooling=pooling, grid_orientation="north_up")
+    def pooled(pooling: Literal["mean", "max"] = "mean") -> "OutputSpec":
+        return OutputSpec(
+            mode="pooled", scale_m=10, pooling=pooling, grid_orientation="north_up"
+        )
 
 
 @dataclass(frozen=True)

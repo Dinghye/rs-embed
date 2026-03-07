@@ -16,9 +16,7 @@ from ..providers import ProviderBase
 from ._vit_mae_utils import ensure_torch, pool_from_tokens, tokens_to_grid_dhw
 from .base import EmbedderBase
 from .runtime_utils import (
-    call_provider_getter as _call_provider_getter,
     fetch_collection_patch_chw as _fetch_collection_patch_chw,
-    get_cached_provider,
     is_provider_backend,
     load_cached_with_device as _load_cached_with_device,
     resolve_device_auto_torch as _resolve_device,
@@ -72,7 +70,6 @@ _THOR_S2_STD = np.array(
 )
 
 
-
 def _resize_chw(x_chw: np.ndarray, *, out_hw: int) -> np.ndarray:
     ensure_torch()
     import torch
@@ -81,13 +78,17 @@ def _resize_chw(x_chw: np.ndarray, *, out_hw: int) -> np.ndarray:
     if x_chw.ndim != 3:
         raise ModelError(f"Expected CHW array, got {x_chw.shape}")
     x = torch.from_numpy(x_chw.astype(np.float32, copy=False)).unsqueeze(0)
-    y = F.interpolate(x, size=(int(out_hw), int(out_hw)), mode="bilinear", align_corners=False)
+    y = F.interpolate(
+        x, size=(int(out_hw), int(out_hw)), mode="bilinear", align_corners=False
+    )
     return y[0].detach().cpu().numpy().astype(np.float32)
 
 
 def _normalize_s2_for_thor(raw_chw: np.ndarray, *, mode: str) -> np.ndarray:
     if raw_chw.ndim != 3 or int(raw_chw.shape[0]) != len(_S2_SR_10_BANDS):
-        raise ModelError(f"Expected CHW with 10 S2 bands, got {getattr(raw_chw, 'shape', None)}")
+        raise ModelError(
+            f"Expected CHW with 10 S2 bands, got {getattr(raw_chw, 'shape', None)}"
+        )
 
     x = np.asarray(raw_chw, dtype=np.float32)
     x = np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
@@ -136,7 +137,9 @@ def _fetch_s2_sr_10_raw_chw(
     return np.clip(raw, 0.0, 10000.0).astype(np.float32)
 
 
-def _extract_feature_and_channel_params(out: Any) -> Tuple[Any, Optional[Dict[str, Any]]]:
+def _extract_feature_and_channel_params(
+    out: Any,
+) -> Tuple[Any, Optional[Dict[str, Any]]]:
     channel_params = None
     features = out
     if isinstance(out, tuple) and len(out) >= 2:
@@ -144,7 +147,9 @@ def _extract_feature_and_channel_params(out: Any) -> Tuple[Any, Optional[Dict[st
         if isinstance(out[1], dict):
             channel_params = out[1]
     if not isinstance(features, (list, tuple)) or len(features) == 0:
-        raise ModelError(f"THOR forward expected list/tuple of features, got type={type(features)}")
+        raise ModelError(
+            f"THOR forward expected list/tuple of features, got type={type(features)}"
+        )
     feat_t = features[-1]
     return feat_t, channel_params
 
@@ -189,9 +194,13 @@ def _thor_group_grid_from_tokens(
     import torch.nn.functional as F
 
     if not torch.is_tensor(tokens_bnd) or tokens_bnd.ndim != 3:
-        raise ModelError(f"Expected THOR tokens [B,N,D], got {getattr(tokens_bnd, 'shape', None)}")
+        raise ModelError(
+            f"Expected THOR tokens [B,N,D], got {getattr(tokens_bnd, 'shape', None)}"
+        )
 
-    patch_sizes, used_groups = _group_patch_sizes(channel_params=channel_params, groups=groups)
+    patch_sizes, used_groups = _group_patch_sizes(
+        channel_params=channel_params, groups=groups
+    )
     if not patch_sizes:
         raise ModelError("THOR returned no usable group patch sizes in channel_params.")
 
@@ -215,7 +224,9 @@ def _thor_group_grid_from_tokens(
         idx += pp
         t = t.reshape(b, p, p, d).permute(0, 3, 1, 2)  # [B,D,H,W]
         if p != max_p:
-            t = F.interpolate(t, size=(max_p, max_p), mode="bilinear", align_corners=False)
+            t = F.interpolate(
+                t, size=(max_p, max_p), mode="bilinear", align_corners=False
+            )
         maps.append(t)
 
     merge_l = str(merge).lower().strip()
@@ -225,7 +236,9 @@ def _thor_group_grid_from_tokens(
         grid = torch.stack(maps, dim=0).sum(dim=0)
     else:
         if merge_l not in {"mean", "avg", "average"}:
-            raise ModelError(f"Unknown THOR group merge '{merge}'. Use mean/sum/concat.")
+            raise ModelError(
+                f"Unknown THOR group merge '{merge}'. Use mean/sum/concat."
+            )
         grid = torch.stack(maps, dim=0).mean(dim=0)
 
     meta = {
@@ -247,7 +260,8 @@ def _pool_thor_tokens(
     if (
         expected_patch_tokens is not None
         and tokens.ndim == 2
-        and int(tokens.shape[0]) in {int(expected_patch_tokens), int(expected_patch_tokens) + 1}
+        and int(tokens.shape[0])
+        in {int(expected_patch_tokens), int(expected_patch_tokens) + 1}
     ):
         cls_removed = int(tokens.shape[0]) == int(expected_patch_tokens) + 1
         patch_tokens = tokens[1:] if cls_removed else tokens
@@ -276,7 +290,9 @@ def _load_thor_cached(
         from terratorch.registry import BACKBONE_REGISTRY
     except ModuleNotFoundError as e:
         if str(getattr(e, "name", "")).split(".")[0] == "terratorch":
-            raise ModelError("THOR requires terratorch. Install: pip install terratorch") from e
+            raise ModelError(
+                "THOR requires terratorch. Install: pip install terratorch"
+            ) from e
         raise ModelError(
             "Failed to import terratorch registry while loading THOR. "
             f"Missing dependency: {getattr(e, 'name', None) or e}. "
@@ -391,7 +407,9 @@ def _thor_forward_single(
     import torch
 
     if x_chw.ndim != 3:
-        raise ModelError(f"Expected CHW input for THOR, got {getattr(x_chw, 'shape', None)}")
+        raise ModelError(
+            f"Expected CHW input for THOR, got {getattr(x_chw, 'shape', None)}"
+        )
 
     dev = _resolve_device(device)
     model = model.to(dev).eval()
@@ -402,9 +420,13 @@ def _thor_forward_single(
 
     feat_t, channel_params = _extract_feature_and_channel_params(out)
     if not torch.is_tensor(feat_t) or feat_t.ndim != 3:
-        raise ModelError(f"THOR feature tensor must be [B,N,D], got {getattr(feat_t, 'shape', None)}")
+        raise ModelError(
+            f"THOR feature tensor must be [B,N,D], got {getattr(feat_t, 'shape', None)}"
+        )
     if int(feat_t.shape[0]) != 1:
-        raise ModelError(f"THOR embedder expects B=1 in single inference, got B={int(feat_t.shape[0])}")
+        raise ModelError(
+            f"THOR embedder expects B=1 in single inference, got B={int(feat_t.shape[0])}"
+        )
 
     tokens = feat_t[0].detach().float().cpu().numpy().astype(np.float32)
     grid: Optional[np.ndarray] = None
@@ -460,9 +482,6 @@ class THORBaseEmbedder(EmbedderBase):
     DEFAULT_IMAGE_SIZE = 288
     DEFAULT_FETCH_WORKERS = 8
 
-    def __init__(self) -> None:
-        self._providers: Dict[str, ProviderBase] = {}
-
     def describe(self) -> Dict[str, Any]:
         return {
             "type": "on_the_fly",
@@ -487,16 +506,14 @@ class THORBaseEmbedder(EmbedderBase):
             ],
         }
 
-    def _get_provider(self, backend: str) -> ProviderBase:
-        return get_cached_provider(
-            self._providers,
-            backend=backend,
-            allow_auto=True,
-        )
-
     @staticmethod
     def _resolve_fetch_workers(n_items: int) -> int:
-        v = int(os.environ.get("RS_EMBED_THOR_FETCH_WORKERS", str(THORBaseEmbedder.DEFAULT_FETCH_WORKERS)))
+        v = int(
+            os.environ.get(
+                "RS_EMBED_THOR_FETCH_WORKERS",
+                str(THORBaseEmbedder.DEFAULT_FETCH_WORKERS),
+            )
+        )
         return max(1, min(int(n_items), v))
 
     @staticmethod
@@ -527,12 +544,23 @@ class THORBaseEmbedder(EmbedderBase):
         ss = sensor or self._default_sensor()
         t = temporal_to_range(temporal)
 
-        image_size = int(os.environ.get("RS_EMBED_THOR_IMG", str(self.DEFAULT_IMAGE_SIZE)))
-        model_key = os.environ.get("RS_EMBED_THOR_MODEL_KEY", self.DEFAULT_MODEL_KEY).strip() or self.DEFAULT_MODEL_KEY
+        image_size = int(
+            os.environ.get("RS_EMBED_THOR_IMG", str(self.DEFAULT_IMAGE_SIZE))
+        )
+        model_key = (
+            os.environ.get("RS_EMBED_THOR_MODEL_KEY", self.DEFAULT_MODEL_KEY).strip()
+            or self.DEFAULT_MODEL_KEY
+        )
         ckpt_path = os.environ.get("RS_EMBED_THOR_CKPT")
-        pretrained = os.environ.get("RS_EMBED_THOR_PRETRAINED", "1").strip() not in {"0", "false", "False"}
+        pretrained = os.environ.get("RS_EMBED_THOR_PRETRAINED", "1").strip() not in {
+            "0",
+            "false",
+            "False",
+        }
         normalize_mode = os.environ.get("RS_EMBED_THOR_NORMALIZE", "thor_stats").strip()
-        group_merge = os.environ.get("RS_EMBED_THOR_GROUP_MERGE", "mean").strip().lower()
+        group_merge = (
+            os.environ.get("RS_EMBED_THOR_GROUP_MERGE", "mean").strip().lower()
+        )
         patch_size = int(os.environ.get("RS_EMBED_THOR_PATCH_SIZE", "16"))
         ground_cover = int(round(float(getattr(ss, "scale_m", 10)) * float(image_size)))
 
@@ -544,7 +572,7 @@ class THORBaseEmbedder(EmbedderBase):
 
         if input_chw is None:
             raw_chw = _fetch_s2_sr_10_raw_chw(
-                _call_provider_getter(self._get_provider, backend),
+                self._get_provider(backend),
                 spatial,
                 t,
                 scale_m=scale_m,
@@ -554,11 +582,13 @@ class THORBaseEmbedder(EmbedderBase):
             )
         else:
             if input_chw.ndim != 3 or int(input_chw.shape[0]) != len(_S2_SR_10_BANDS):
-                raise ModelError(f"input_chw must be CHW with 10 bands for THOR, got {getattr(input_chw, 'shape', None)}")
+                raise ModelError(
+                    f"input_chw must be CHW with 10 bands for THOR, got {getattr(input_chw, 'shape', None)}"
+                )
             raw_chw = np.asarray(input_chw, dtype=np.float32)
-            raw_chw = np.clip(np.nan_to_num(raw_chw, nan=0.0, posinf=0.0, neginf=0.0), 0.0, 10000.0).astype(
-                np.float32
-            )
+            raw_chw = np.clip(
+                np.nan_to_num(raw_chw, nan=0.0, posinf=0.0, neginf=0.0), 0.0, 10000.0
+            ).astype(np.float32)
 
         from ..core.input_checks import checks_should_raise, maybe_inspect_chw
 
@@ -572,8 +602,15 @@ class THORBaseEmbedder(EmbedderBase):
             fill_value=fill_value,
             meta=check_meta,
         )
-        if report is not None and (not report.get("ok", True)) and checks_should_raise(ss):
-            raise ModelError("Provider input inspection failed: " + "; ".join(report.get("issues", [])))
+        if (
+            report is not None
+            and (not report.get("ok", True))
+            and checks_should_raise(ss)
+        ):
+            raise ModelError(
+                "Provider input inspection failed: "
+                + "; ".join(report.get("issues", []))
+            )
 
         x_chw = _normalize_s2_for_thor(raw_chw, mode=normalize_mode)
         if x_chw.shape[-1] != image_size or x_chw.shape[-2] != image_size:
@@ -630,7 +667,11 @@ class THORBaseEmbedder(EmbedderBase):
                 pooling=output.pooling,
                 expected_patch_tokens=fmeta.get("expected_patch_tokens"),
             )
-            out_meta = {**meta, "pooling": output.pooling, "cls_removed": bool(cls_removed)}
+            out_meta = {
+                **meta,
+                "pooling": output.pooling,
+                "cls_removed": bool(cls_removed),
+            }
             return Embedding(data=vec.astype(np.float32), meta=out_meta)
 
         if output.mode == "grid":
@@ -677,7 +718,7 @@ class THORBaseEmbedder(EmbedderBase):
 
         t = temporal_to_range(temporal)
         ss = sensor or self._default_sensor()
-        provider = _call_provider_getter(self._get_provider, backend_l)
+        provider = self._get_provider(backend_l)
 
         scale_m = int(getattr(ss, "scale_m", 10))
         cloudy_pct = int(getattr(ss, "cloudy_pct", 30))
@@ -715,7 +756,9 @@ class THORBaseEmbedder(EmbedderBase):
         for i, sp in enumerate(spatials):
             raw = prefetched_raw[i]
             if raw is None:
-                raise ModelError(f"Missing prefetched input at index={i} for thor_1_0_base.")
+                raise ModelError(
+                    f"Missing prefetched input at index={i} for thor_1_0_base."
+                )
             out.append(
                 self.get_embedding(
                     spatial=sp,

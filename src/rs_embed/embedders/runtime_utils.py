@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import inspect
 import os
 from typing import Any, Callable, Dict, Optional, Sequence, Tuple, TypeVar
 
@@ -14,8 +13,7 @@ from ..providers.base import ProviderBase
 _T = TypeVar("_T")
 
 
-def normalize_backend_name(backend: str) -> str:
-    return str(backend).strip().lower()
+from ..internal.api.api_helpers import normalize_backend_name
 
 
 def default_provider_backend_name() -> Optional[str]:
@@ -38,7 +36,11 @@ def resolve_provider_backend_name(
 ) -> Optional[str]:
     b = normalize_backend_name(backend)
     if allow_auto and b == "auto":
-        resolved_auto = normalize_backend_name(auto_backend) if auto_backend is not None else default_provider_backend_name()
+        resolved_auto = (
+            normalize_backend_name(auto_backend)
+            if auto_backend is not None
+            else default_provider_backend_name()
+        )
         if not resolved_auto:
             return None
         b = resolved_auto
@@ -53,11 +55,14 @@ def is_provider_backend(
     allow_auto: bool = True,
     auto_backend: Optional[str] = None,
 ) -> bool:
-    return resolve_provider_backend_name(
-        backend,
-        allow_auto=allow_auto,
-        auto_backend=auto_backend,
-    ) is not None
+    return (
+        resolve_provider_backend_name(
+            backend,
+            allow_auto=allow_auto,
+            auto_backend=auto_backend,
+        )
+        is not None
+    )
 
 
 def get_cached_provider(
@@ -161,32 +166,6 @@ def fetch_collection_patch_chw(
     )
 
 
-def fetch_gee_patch_chw(
-    provider: ProviderBase,
-    *,
-    spatial: SpatialSpec,
-    temporal: Optional[TemporalSpec],
-    collection: str,
-    bands: Tuple[str, ...],
-    scale_m: int = 10,
-    cloudy_pct: Optional[int] = 30,
-    composite: str = "median",
-    fill_value: float = 0.0,
-) -> np.ndarray:
-    """Backward-compatible alias for historical helper name."""
-    return fetch_collection_patch_chw(
-        provider,
-        spatial=spatial,
-        temporal=temporal,
-        collection=collection,
-        bands=bands,
-        scale_m=scale_m,
-        cloudy_pct=cloudy_pct,
-        composite=composite,
-        fill_value=fill_value,
-    )
-
-
 def fetch_sensor_patch_chw(
     provider: ProviderBase,
     *,
@@ -195,28 +174,23 @@ def fetch_sensor_patch_chw(
     sensor: SensorSpec,
     to_float_image: bool = False,
 ) -> np.ndarray:
-    """Fetch a CHW patch from a concrete SensorSpec."""
-    # Reuse the shared API helper so embedder-internal fetches (e.g. WildSAT,
-    # SatVision TOA with to_float_image=True) also benefit from GEE BBox
-    # sampleRectangle fallback splitting.
-    from ..internal.api.api_helpers import fetch_provider_patch_raw
+    """Fetch a CHW patch from a concrete SensorSpec.
 
-    x = fetch_provider_patch_raw(
-        provider,
-        spatial=spatial,
-        temporal=temporal,
-        sensor=sensor,
-        to_float_image=bool(to_float_image),
-    )
-    arr = np.asarray(x, dtype=np.float32)
-    if arr.ndim != 3:
-        raise ModelError(f"Expected CHW array from provider fetch, got shape={getattr(arr, 'shape', None)}")
-    if int(arr.shape[0]) != len(sensor.bands):
-        raise ModelError(
-            f"Provider fetch channel mismatch: got C={int(arr.shape[0])}, expected C={len(sensor.bands)} "
-            f"for collection={sensor.collection}"
+    Delegates to ``provider.fetch_sensor_patch_chw`` (which already validates
+    ndim, channel count, and calls nan_to_num).  Errors are re-raised as
+    ModelError so embedder-layer callers see a consistent exception type.
+    """
+    from ..core.errors import ProviderError
+
+    try:
+        return provider.fetch_sensor_patch_chw(
+            spatial=spatial,
+            temporal=temporal,
+            sensor=sensor,
+            to_float_image=to_float_image,
         )
-    return np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+    except ProviderError as exc:
+        raise ModelError(str(exc)) from exc
 
 
 def _stitch_spatial_last2_arrays(
@@ -228,68 +202,16 @@ def _stitch_spatial_last2_arrays(
     scale_m: int,
     fill_value: float,
 ) -> np.ndarray:
-    from ..internal.api import api_helpers as _ah
+    from ..internal.api.api_helpers import _stitch_bbox_split_arrays
 
-    arr_a = np.asarray(a, dtype=np.float32)
-    arr_b = np.asarray(b, dtype=np.float32)
-    if arr_a.ndim < 3 or arr_b.ndim < 3:
-        raise ModelError(
-            f"Expected arrays with spatial last2 dims for bbox stitching, got {arr_a.shape} and {arr_b.shape}"
-        )
-    if tuple(arr_a.shape[:-2]) != tuple(arr_b.shape[:-2]):
-        raise ModelError(f"Leading shape mismatch while stitching bbox tiles: {arr_a.shape} vs {arr_b.shape}")
-
-    spatial_bbox = _ah._coerce_bbox_like(parent_spatial)
-    axis = str(axis).lower()
-    split_axis = arr_a.ndim - 1 if axis == "x" else arr_a.ndim - 2
-    nonsplit_axis = arr_a.ndim - 2 if axis == "x" else arr_a.ndim - 1
-
-    if int(arr_a.shape[nonsplit_axis]) != int(arr_b.shape[nonsplit_axis]):
-        raise ModelError(f"Non-split spatial dim mismatch while stitching bbox tiles: {arr_a.shape} vs {arr_b.shape}")
-
-    if axis == "y":
-        # Normalize each child tile before north/south stitching (same rationale as CHW fallback).
-        arr_a = np.flip(arr_a, axis=arr_a.ndim - 2)
-        arr_b = np.flip(arr_b, axis=arr_b.ndim - 2)
-
-    target_h, target_w = _ah._bbox_span_pixels_estimate(spatial_bbox, scale_m=int(scale_m))
-    target_len = int(target_w if axis == "x" else target_h)
-    len_a = int(arr_a.shape[split_axis])
-    len_b = int(arr_b.shape[split_axis])
-    combined_len = int(len_a + len_b)
-    delta = int(combined_len - target_len)
-    tol = int(getattr(_ah, "_GEE_BBOX_STITCH_LEN_TOLERANCE_PX", 4))
-
-    if delta > 0:
-        if delta > tol:
-            raise ModelError(
-                "Excessive overlap while stitching bbox tiles: "
-                f"combined={combined_len}, target~={target_len}, delta={delta}"
-            )
-        trim_a = int(delta // 2)
-        trim_b = int(delta - trim_a)
-        if trim_a > 0:
-            slicer = [slice(None)] * arr_a.ndim
-            slicer[split_axis] = slice(0, max(0, len_a - trim_a))
-            arr_a = arr_a[tuple(slicer)]
-            len_a = int(arr_a.shape[split_axis])
-        if trim_b > 0:
-            slicer = [slice(None)] * arr_b.ndim
-            slicer[split_axis] = slice(min(trim_b, len_b), None)
-            arr_b = arr_b[tuple(slicer)]
-    elif delta < 0:
-        gap = int(-delta)
-        if gap > tol:
-            raise ModelError(
-                "Excessive gap while stitching bbox tiles: "
-                f"combined={combined_len}, target~={target_len}, gap={gap}"
-            )
-        pad_shape = list(arr_a.shape)
-        pad_shape[split_axis] = gap
-        gap_arr = np.full(tuple(pad_shape), float(fill_value), dtype=np.float32)
-        return np.concatenate([arr_a, gap_arr, arr_b], axis=split_axis).astype(np.float32, copy=False)
-
-    return np.concatenate([arr_a, arr_b], axis=split_axis).astype(np.float32, copy=False)
+    return _stitch_bbox_split_arrays(
+        arr_a=np.asarray(a, dtype=np.float32),
+        arr_b=np.asarray(b, dtype=np.float32),
+        parent_spatial=parent_spatial,
+        axis=axis,
+        scale_m=scale_m,
+        fill_value=fill_value,
+    )
 
 
 def _fetch_spatial_array_with_bbox_fallback(
@@ -306,16 +228,25 @@ def _fetch_spatial_array_with_bbox_fallback(
     try:
         return np.asarray(fetch_fn(spatial), dtype=np.float32)
     except Exception as e:
-        if not (_ah._looks_like_gee_sample_too_many_pixels(e) and _ah._looks_like_bbox_spatial(spatial)):
+        if not (
+            _ah._looks_like_gee_sample_too_many_pixels(e)
+            and _ah._looks_like_bbox_spatial(spatial)
+        ):
             raise
         max_depth = int(getattr(_ah, "_MAX_GEE_BBOX_SPLIT_DEPTH", 12))
         if int(split_depth) >= max_depth:
-            raise ModelError(f"GEE bbox fallback exceeded max recursive splits ({max_depth}).") from e
+            raise ModelError(
+                f"GEE bbox fallback exceeded max recursive splits ({max_depth})."
+            ) from e
 
         spatial_bbox = _ah._coerce_bbox_like(spatial)
-        h_est, w_est = _ah._bbox_span_pixels_estimate(spatial_bbox, scale_m=int(scale_m))
+        h_est, w_est = _ah._bbox_span_pixels_estimate(
+            spatial_bbox, scale_m=int(scale_m)
+        )
         prefer_axis = "x" if int(w_est) >= int(h_est) else "y"
-        a_sp, b_sp, axis = _ah._split_bbox_for_recursive_fetch(spatial_bbox, prefer_axis=prefer_axis)
+        a_sp, b_sp, axis = _ah._split_bbox_for_recursive_fetch(
+            spatial_bbox, prefer_axis=prefer_axis
+        )
         arr_a = _fetch_spatial_array_with_bbox_fallback(
             provider,
             spatial=a_sp,
@@ -371,7 +302,10 @@ def fetch_collection_patch_all_bands_chw(
     except Exception as e:
         from ..internal.api import api_helpers as _ah
 
-        if not (_ah._looks_like_gee_sample_too_many_pixels(e) and _ah._looks_like_bbox_spatial(spatial)):
+        if not (
+            _ah._looks_like_gee_sample_too_many_pixels(e)
+            and _ah._looks_like_bbox_spatial(spatial)
+        ):
             raise
 
         def _rec(sp: SpatialSpec, depth: int = 0) -> Tuple[np.ndarray, Tuple[str, ...]]:
@@ -379,18 +313,29 @@ def fetch_collection_patch_all_bands_chw(
             try:
                 return _fetch_once(sp)
             except Exception as ee:
-                if not (_ah._looks_like_gee_sample_too_many_pixels(ee) and _ah._looks_like_bbox_spatial(sp)):
+                if not (
+                    _ah._looks_like_gee_sample_too_many_pixels(ee)
+                    and _ah._looks_like_bbox_spatial(sp)
+                ):
                     raise
                 if int(depth) >= max_depth:
-                    raise ModelError(f"GEE bbox fallback exceeded max recursive splits ({max_depth}).") from ee
+                    raise ModelError(
+                        f"GEE bbox fallback exceeded max recursive splits ({max_depth})."
+                    ) from ee
                 sp_bbox = _ah._coerce_bbox_like(sp)
-                h_est, w_est = _ah._bbox_span_pixels_estimate(sp_bbox, scale_m=int(scale_m))
+                h_est, w_est = _ah._bbox_span_pixels_estimate(
+                    sp_bbox, scale_m=int(scale_m)
+                )
                 prefer_axis = "x" if int(w_est) >= int(h_est) else "y"
-                a_sp, b_sp, axis = _ah._split_bbox_for_recursive_fetch(sp_bbox, prefer_axis=prefer_axis)
+                a_sp, b_sp, axis = _ah._split_bbox_for_recursive_fetch(
+                    sp_bbox, prefer_axis=prefer_axis
+                )
                 arr_a, names_a = _rec(a_sp, depth + 1)
                 arr_b, names_b = _rec(b_sp, depth + 1)
                 if tuple(names_a) != tuple(names_b):
-                    raise ModelError("Band names mismatch while stitching all-band bbox tiles.")
+                    raise ModelError(
+                        "Band names mismatch while stitching all-band bbox tiles."
+                    )
                 stitched = _stitch_spatial_last2_arrays(
                     a=arr_a,
                     b=arr_b,
@@ -457,7 +402,9 @@ def fetch_s1_vvvh_raw_chw(
     )
     arr = np.asarray(arr, dtype=np.float32)
     if arr.ndim != 3 or int(arr.shape[0]) != 2:
-        raise ModelError(f"Expected S1 VV/VH CHW with C=2, got shape={getattr(arr, 'shape', None)}")
+        raise ModelError(
+            f"Expected S1 VV/VH CHW with C=2, got shape={getattr(arr, 'shape', None)}"
+        )
     return np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
 
 
@@ -465,7 +412,9 @@ def normalize_s1_vvvh_chw(raw_chw: np.ndarray) -> np.ndarray:
     """Convert raw S1 VV/VH to numerically stable [0,1] CHW."""
     arr = np.asarray(raw_chw, dtype=np.float32)
     if arr.ndim != 3 or int(arr.shape[0]) != 2:
-        raise ModelError(f"Expected raw S1 VV/VH CHW with C=2, got shape={getattr(arr, 'shape', None)}")
+        raise ModelError(
+            f"Expected raw S1 VV/VH CHW with C=2, got shape={getattr(arr, 'shape', None)}"
+        )
     x = np.log1p(np.maximum(arr, 0.0))
     denom = np.percentile(x, 99) if np.isfinite(x).all() else 1.0
     denom = float(denom) if float(denom) > 0 else 1.0
@@ -505,7 +454,9 @@ def fetch_s2_multiframe_raw_tchw(
     )
     arr = np.asarray(arr, dtype=np.float32)
     if arr.ndim != 4:
-        raise ModelError(f"Expected TCHW array, got shape={getattr(arr, 'shape', None)}")
+        raise ModelError(
+            f"Expected TCHW array, got shape={getattr(arr, 'shape', None)}"
+        )
     if int(arr.shape[1]) != len(tuple(bands)):
         raise ModelError(
             f"Time series channel mismatch: got C={int(arr.shape[1])}, expected C={len(tuple(bands))}"
@@ -553,25 +504,3 @@ def coerce_input_to_tchw(
 
     raw_tchw = np.nan_to_num(raw_tchw, nan=0.0, posinf=0.0, neginf=0.0)
     return np.clip(raw_tchw, 0.0, 10000.0).astype(np.float32)
-
-
-def call_provider_getter(
-    getter: Callable[..., ProviderBase],
-    backend: str,
-) -> ProviderBase:
-    """Call _get_provider with backward-compatible signature handling.
-
-    Some tests monkeypatch `_get_provider` as a zero-arg lambda. This helper lets
-    new backend-aware call sites remain compatible with those older patches.
-    """
-    try:
-        sig = inspect.signature(getter)
-        if len(sig.parameters) == 0:
-            return getter()
-    except Exception:
-        pass
-
-    try:
-        return getter(backend)
-    except TypeError:
-        return getter()

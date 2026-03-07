@@ -40,24 +40,24 @@ def sensor_key(sensor: Optional[SensorSpec]) -> Tuple:
     )
 
 
-def supports_batch_api(embedder: Any) -> bool:
-    """Return True when embedder overrides EmbedderBase.get_embeddings_batch."""
-    fn = getattr(type(embedder), "get_embeddings_batch", None)
+def _overrides_base_method(embedder: Any, method_name: str) -> bool:
+    """Return True when *embedder* overrides *method_name* from EmbedderBase."""
+    fn = getattr(type(embedder), method_name, None)
     if fn is None:
         return False
     from ...embedders.base import EmbedderBase
 
-    return fn is not EmbedderBase.get_embeddings_batch
+    return fn is not getattr(EmbedderBase, method_name, None)
+
+
+def supports_batch_api(embedder: Any) -> bool:
+    """Return True when embedder overrides EmbedderBase.get_embeddings_batch."""
+    return _overrides_base_method(embedder, "get_embeddings_batch")
 
 
 def supports_prefetched_batch_api(embedder: Any) -> bool:
     """Return True when embedder overrides batch-from-inputs fast path."""
-    fn = getattr(type(embedder), "get_embeddings_batch_from_inputs", None)
-    if fn is None:
-        return False
-    from ...embedders.base import EmbedderBase
-
-    return fn is not EmbedderBase.get_embeddings_batch_from_inputs
+    return _overrides_base_method(embedder, "get_embeddings_batch_from_inputs")
 
 
 @lru_cache(maxsize=128)
@@ -117,7 +117,6 @@ def run_with_retry(
             if attempt >= tries:
                 raise
             if backoff > 0:
-                time.sleep(backoff * (2 ** attempt))
-    if last_err is not None:
-        raise last_err
-    raise RuntimeError("unreachable retry state")
+                time.sleep(backoff * (2**attempt))
+    # Loop always returns on success or raises on last attempt; this is unreachable.
+    raise AssertionError("unreachable")

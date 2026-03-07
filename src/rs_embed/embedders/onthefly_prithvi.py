@@ -4,7 +4,6 @@ import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
 import math
-from dataclasses import asdict
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -16,9 +15,7 @@ from ..core.specs import SpatialSpec, TemporalSpec, SensorSpec, OutputSpec
 from ..providers import ProviderBase
 from .base import EmbedderBase
 from .runtime_utils import (
-    call_provider_getter as _call_provider_getter,
     fetch_collection_patch_chw as _fetch_collection_patch_chw,
-    get_cached_provider,
     is_provider_backend,
     load_cached_with_device as _load_cached_with_device,
 )
@@ -29,8 +26,8 @@ from ._vit_mae_utils import (
     tokens_to_grid_dhw,
     base_meta,
     temporal_to_range,
-    temporal_midpoint_str,
 )
+from .meta_utils import temporal_midpoint_str
 
 
 # -------------------------
@@ -73,7 +70,10 @@ def _fetch_s2_prithvi6_chw(
     x_chw = np.nan_to_num(x_chw, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
     return x_chw
 
-def _pad_chw_to_multiple(x_chw: np.ndarray, mult: int = 16, value: float = 0.0) -> np.ndarray:
+
+def _pad_chw_to_multiple(
+    x_chw: np.ndarray, mult: int = 16, value: float = 0.0
+) -> np.ndarray:
     """
     Pad CHW to make H and W divisible by mult.
     Pads on bottom and right only.
@@ -99,7 +99,9 @@ def _resize_chw(x_chw: np.ndarray, *, size: int = 224) -> np.ndarray:
     if x_chw.ndim != 3:
         raise ModelError(f"Expected CHW array, got {x_chw.shape}")
     x = torch.from_numpy(x_chw.astype(np.float32, copy=False)).unsqueeze(0)
-    y = F.interpolate(x, size=(int(size), int(size)), mode="bilinear", align_corners=False)
+    y = F.interpolate(
+        x, size=(int(size), int(size)), mode="bilinear", align_corners=False
+    )
     return y[0].detach().cpu().numpy().astype(np.float32)
 
 
@@ -148,6 +150,7 @@ def _spatial_center_lon_lat(spatial: SpatialSpec) -> Tuple[float, float]:
         return float(spatial.lon), float(spatial.lat)
     raise ModelError(f"Unsupported SpatialSpec: {type(spatial)}")
 
+
 # -------------------------
 # Prithvi model loading (TerraTorch)
 # -------------------------
@@ -163,13 +166,14 @@ def _load_prithvi_cached(
     dev: str,
 ):
     ensure_torch()
-    import torch
 
     try:
         from terratorch.registry import BACKBONE_REGISTRY
     except ModuleNotFoundError as e:
         if str(getattr(e, "name", "")).split(".")[0] == "terratorch":
-            raise ModelError("Prithvi requires terratorch. Install: pip install terratorch") from e
+            raise ModelError(
+                "Prithvi requires terratorch. Install: pip install terratorch"
+            ) from e
         raise ModelError(
             "Failed to import terratorch registry while loading Prithvi. "
             f"Missing dependency: {getattr(e, 'name', None) or e}. "
@@ -210,6 +214,7 @@ def _load_prithvi_cached(
     }
     return m, meta
 
+
 def _load_prithvi(
     model_key: str,
     *,
@@ -235,6 +240,7 @@ def _load_prithvi(
     m, meta = loaded
     return m, meta, dev
 
+
 def _prithvi_forward_tokens(
     model,
     x_chw: np.ndarray,
@@ -258,9 +264,13 @@ def _prithvi_forward_tokens(
     x = torch.from_numpy(x_chw).unsqueeze(0).to(device)  # [1,6,H,W]
 
     d = pd.to_datetime(date_str)
-    temporal_coords = torch.tensor([[[float(d.year), float(d.dayofyear - 1)]]], dtype=torch.float32, device=device)  # [1,1,2]
+    temporal_coords = torch.tensor(
+        [[[float(d.year), float(d.dayofyear - 1)]]], dtype=torch.float32, device=device
+    )  # [1,1,2]
     # Prithvi location_coords order follows (lon, lat).
-    location_coords = torch.tensor([[float(lon), float(lat)]], dtype=torch.float32, device=device)  # [1,2]
+    location_coords = torch.tensor(
+        [[float(lon), float(lat)]], dtype=torch.float32, device=device
+    )  # [1,2]
 
     with torch.no_grad():
         out = model(x, temporal_coords=temporal_coords, location_coords=location_coords)
@@ -273,7 +283,11 @@ def _prithvi_forward_tokens(
     elif hasattr(out, "last_hidden_state"):
         tokens = out.last_hidden_state
     elif isinstance(out, dict):
-        tokens = out.get("tokens") or out.get("last_hidden_state") or out.get("hidden_states")
+        tokens = (
+            out.get("tokens")
+            or out.get("last_hidden_state")
+            or out.get("hidden_states")
+        )
         if isinstance(tokens, (tuple, list)):
             tokens = tokens[-1]
     else:
@@ -286,7 +300,9 @@ def _prithvi_forward_tokens(
         # [B,N,D]
         return tokens[0].detach().float().cpu().numpy().astype(np.float32)
 
-    raise ModelError(f"Unexpected Prithvi tokens shape/type: {type(tokens)} {getattr(tokens, 'shape', None)}")
+    raise ModelError(
+        f"Unexpected Prithvi tokens shape/type: {type(tokens)} {getattr(tokens, 'shape', None)}"
+    )
 
 
 def _prithvi_forward_tokens_batch(
@@ -316,11 +332,15 @@ def _prithvi_forward_tokens_batch(
         tcoords.append([float(d.year), float(d.dayofyear - 1)])
         lon, lat = lon_lat_batch[i]
         lcoords.append([float(lon), float(lat)])
-    temporal_coords = torch.tensor(tcoords, dtype=torch.float32, device=device).unsqueeze(1)  # [B,1,2]
+    temporal_coords = torch.tensor(
+        tcoords, dtype=torch.float32, device=device
+    ).unsqueeze(1)  # [B,1,2]
     location_coords = torch.tensor(lcoords, dtype=torch.float32, device=device)  # [B,2]
 
     with torch.inference_mode():
-        out = model(xb, temporal_coords=temporal_coords, location_coords=location_coords)
+        out = model(
+            xb, temporal_coords=temporal_coords, location_coords=location_coords
+        )
 
     tokens = None
     if isinstance(out, (tuple, list)):
@@ -328,7 +348,11 @@ def _prithvi_forward_tokens_batch(
     elif hasattr(out, "last_hidden_state"):
         tokens = out.last_hidden_state
     elif isinstance(out, dict):
-        tokens = out.get("tokens") or out.get("last_hidden_state") or out.get("hidden_states")
+        tokens = (
+            out.get("tokens")
+            or out.get("last_hidden_state")
+            or out.get("hidden_states")
+        )
         if isinstance(tokens, (tuple, list)):
             tokens = tokens[-1]
     else:
@@ -337,9 +361,13 @@ def _prithvi_forward_tokens_batch(
     if tokens is None:
         raise ModelError("Prithvi forward did not return tokens.")
     if (not hasattr(tokens, "ndim")) or int(tokens.ndim) != 3:
-        raise ModelError(f"Unexpected Prithvi batch tokens shape/type: {type(tokens)} {getattr(tokens, 'shape', None)}")
+        raise ModelError(
+            f"Unexpected Prithvi batch tokens shape/type: {type(tokens)} {getattr(tokens, 'shape', None)}"
+        )
     if int(tokens.shape[0]) != bsz:
-        raise ModelError(f"Prithvi batch mismatch: got B={int(tokens.shape[0])}, expected {bsz}")
+        raise ModelError(
+            f"Prithvi batch mismatch: got B={int(tokens.shape[0])}, expected {bsz}"
+        )
 
     toks_np = tokens.detach().float().cpu().numpy().astype(np.float32)  # [B,N,D]
     return [toks_np[i] for i in range(bsz)]
@@ -393,17 +421,6 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
             ],
         }
 
-    
-    def __init__(self) -> None:
-        self._providers: Dict[str, ProviderBase] = {}
-
-    def _get_provider(self, backend: str) -> ProviderBase:
-        return get_cached_provider(
-            self._providers,
-            backend=backend,
-            allow_auto=True,
-        )
-
     def _default_sensor(self) -> SensorSpec:
         return SensorSpec(
             collection="COPERNICUS/S2_SR_HARMONIZED",
@@ -416,170 +433,220 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
 
     @staticmethod
     def _resolve_fetch_workers(n_items: int) -> int:
-        v = int(os.environ.get("RS_EMBED_PRITHVI_FETCH_WORKERS", str(PrithviEOV2S2_6B_Embedder.DEFAULT_FETCH_WORKERS)))
+        v = int(
+            os.environ.get(
+                "RS_EMBED_PRITHVI_FETCH_WORKERS",
+                str(PrithviEOV2S2_6B_Embedder.DEFAULT_FETCH_WORKERS),
+            )
+        )
         return max(1, min(int(n_items), v))
 
     @staticmethod
     def _resolve_infer_batch(dev: str) -> int:
-        default_bs = PrithviEOV2S2_6B_Embedder.DEFAULT_BATCH_CUDA if str(dev).startswith("cuda") else PrithviEOV2S2_6B_Embedder.DEFAULT_BATCH_CPU
+        default_bs = (
+            PrithviEOV2S2_6B_Embedder.DEFAULT_BATCH_CUDA
+            if str(dev).startswith("cuda")
+            else PrithviEOV2S2_6B_Embedder.DEFAULT_BATCH_CPU
+        )
         v = int(os.environ.get("RS_EMBED_PRITHVI_BATCH_SIZE", str(default_bs)))
         return max(1, v)
 
     def get_embedding(
-            self,
-            *,
-            spatial: SpatialSpec,
-            temporal: Optional[TemporalSpec],
-            sensor: Optional[SensorSpec],
-            output: OutputSpec,
-            backend: str,
-            device: str = "auto",
-            input_chw: Optional[np.ndarray] = None,
-        ) -> Embedding:
-            if not is_provider_backend(backend, allow_auto=True):
-                raise ModelError("prithvi_eo_v2_s2_6b expects a provider backend (or 'auto').")
-
-            # Defaults for Prithvi inputs
-            if sensor is None:
-                sensor = self._default_sensor()
-
-            t = temporal_to_range(temporal)  # normalize to range
-
-            # Load model
-            model_key = os.environ.get("RS_EMBED_PRITHVI_KEY", self.DEFAULT_MODEL_KEY)
-            pretrained = os.environ.get("RS_EMBED_PRITHVI_PRETRAINED", "1").strip() not in ("0", "false", "False")
-            coords_encoding = ("time", "location")
-            num_frames = 1
-
-            model, wmeta,dev = _load_prithvi(
-                model_key,
-                pretrained=pretrained,
-                bands=tuple(PRITHVI_S2_BANDS_DST),
-                num_frames=num_frames,
-                coords_encoding=coords_encoding,
-                device=device,
+        self,
+        *,
+        spatial: SpatialSpec,
+        temporal: Optional[TemporalSpec],
+        sensor: Optional[SensorSpec],
+        output: OutputSpec,
+        backend: str,
+        device: str = "auto",
+        input_chw: Optional[np.ndarray] = None,
+    ) -> Embedding:
+        if not is_provider_backend(backend, allow_auto=True):
+            raise ModelError(
+                "prithvi_eo_v2_s2_6b expects a provider backend (or 'auto')."
             )
 
-            # Fetch S2 6-band patch from provider
-            provider = _call_provider_getter(self._get_provider, backend)
+        # Defaults for Prithvi inputs
+        if sensor is None:
+            sensor = self._default_sensor()
 
-            # Fetch S2 6-band patch from provider (optionally reuse pre-fetched raw patch)
-            if input_chw is None:
-                x_chw = _fetch_s2_prithvi6_chw(
-                    provider,
-                    spatial=spatial,
-                    temporal=t,
-                    scale_m=int(sensor.scale_m),
-                    cloudy_pct=int(sensor.cloudy_pct),
-                    composite=str(sensor.composite),
-                    fill_value=float(sensor.fill_value),
-                )
-            else:
-                # input_chw expected to be raw S2 SR values (0..10000) in band order sensor.bands
-                if input_chw.ndim != 3 or input_chw.shape[0] != 6:
-                    raise ModelError(
-                        f"input_chw must be CHW with 6 bands for prithvi, got {getattr(input_chw,'shape',None)}"
-                    )
-                x_chw = input_chw.astype(np.float32) / 10000.0
-                x_chw = np.clip(x_chw, 0.0, 1.0)
-                x_chw = np.nan_to_num(x_chw, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+        t = temporal_to_range(temporal)  # normalize to range
 
-            # Optional: inspect on-the-fly provider input
-            from ..core.input_checks import (
-                maybe_inspect_chw,
-                checks_should_raise,
-                checks_save_dir,
-                save_quicklook_rgb,
-            )
-            check_meta: Dict[str, Any] = {}
-            report = maybe_inspect_chw(
-                x_chw,
-                sensor=sensor,
-                name="provider_s2_prithvi6_chw",
-                expected_channels=6,
-                value_range=(0.0, 1.0),
-                fill_value=float(sensor.fill_value),
-                meta=check_meta,
-            )
-            if report is not None and (not report.get("ok", True)) and checks_should_raise(sensor):
-                raise ModelError("Provider input inspection failed: " + "; ".join(report.get("issues", [])))
+        # Load model
+        model_key = os.environ.get("RS_EMBED_PRITHVI_KEY", self.DEFAULT_MODEL_KEY)
+        pretrained = os.environ.get("RS_EMBED_PRITHVI_PRETRAINED", "1").strip() not in (
+            "0",
+            "false",
+            "False",
+        )
+        coords_encoding = ("time", "location")
+        num_frames = 1
 
-            # Optional quicklook (RGB from RED/GREEN/BLUE)
-            sd = checks_save_dir(sensor)
-            if sd and report is not None:
-                try:
-                    import uuid
-                    fn = f"prithvi_s2_rgb_{uuid.uuid4().hex[:8]}.png"
-                    save_quicklook_rgb(x_chw, path=os.path.join(sd, fn), bands=(2, 1, 0), vmin=0.0, vmax=1.0)
-                    check_meta.setdefault("input_checks_artifacts", []).append({"name": "quicklook_rgb", "path": os.path.join(sd, fn)})
-                except Exception as _e:
-                    check_meta.setdefault("input_checks_artifacts", []).append({"name": "quicklook_rgb", "error": repr(_e)})
-            x_chw, prep_meta = _prepare_prithvi_chw(
-                x_chw,
-                fill_value=float(sensor.fill_value),
-            )
+        model, wmeta, dev = _load_prithvi(
+            model_key,
+            pretrained=pretrained,
+            bands=tuple(PRITHVI_S2_BANDS_DST),
+            num_frames=num_frames,
+            coords_encoding=coords_encoding,
+            device=device,
+        )
 
-            # coords: use temporal mid-date and ROI center (EPSG:4326).
-            lon, lat = _spatial_center_lon_lat(spatial)
+        # Fetch S2 6-band patch from provider
+        provider = self._get_provider(backend)
 
-            date_str = temporal_midpoint_str(t)
-
-            tokens = _prithvi_forward_tokens(
-                model,
-                x_chw,
-                lon=lon,
-                lat=lat,
-                date_str=date_str,
-                device=dev,
-            )  # [N,D] (maybe includes CLS)
-
-            meta = base_meta(
-                model_name=self.model_name,
-                hf_id=model_key,  # for terratorch we store model key here
-                backend=str(backend).lower(),
-                image_size=int(x_chw.shape[-1]),  # not fixed 224; depends on ROI/scale
-                sensor=sensor,
+        # Fetch S2 6-band patch from provider (optionally reuse pre-fetched raw patch)
+        if input_chw is None:
+            x_chw = _fetch_s2_prithvi6_chw(
+                provider,
+                spatial=spatial,
                 temporal=t,
-                source=sensor.collection,
-                extra={
-                    "temporal_range": (t.start, t.end),
-                    "coords_date": date_str,
-                    "coords_lonlat": (float(lon), float(lat)),
-                    "tokens_shape": tuple(tokens.shape),
-                    "model_key": model_key,
-                    "pretrained": bool(pretrained),
-                    "coords_encoding": coords_encoding,
-                    "num_frames": num_frames,
-                    "input_hw":(int(x_chw.shape[1]), int(x_chw.shape[2])),
-                    **prep_meta,
-                    **check_meta,
-                },
+                scale_m=int(sensor.scale_m),
+                cloudy_pct=int(sensor.cloudy_pct),
+                composite=str(sensor.composite),
+                fill_value=float(sensor.fill_value),
+            )
+        else:
+            # input_chw expected to be raw S2 SR values (0..10000) in band order sensor.bands
+            if input_chw.ndim != 3 or input_chw.shape[0] != 6:
+                raise ModelError(
+                    f"input_chw must be CHW with 6 bands for prithvi, got {getattr(input_chw, 'shape', None)}"
+                )
+            x_chw = input_chw.astype(np.float32) / 10000.0
+            x_chw = np.clip(x_chw, 0.0, 1.0)
+            x_chw = np.nan_to_num(x_chw, nan=0.0, posinf=0.0, neginf=0.0).astype(
+                np.float32
             )
 
-            if output.mode == "pooled":
-                vec, cls_removed = pool_from_tokens(tokens, output.pooling)
-                meta.update({"pooling": f"patch_{output.pooling}", "cls_removed": bool(cls_removed)})
-                return Embedding(data=vec, meta=meta)
+        # Optional: inspect on-the-fly provider input
+        from ..core.input_checks import (
+            maybe_inspect_chw,
+            checks_should_raise,
+            checks_save_dir,
+            save_quicklook_rgb,
+        )
 
-            if output.mode == "grid":
-                grid, (h, w), cls_removed = tokens_to_grid_dhw(tokens)
-                meta.update({"grid_hw": (h, w), "grid_kind": "patch_tokens", "cls_removed": bool(cls_removed)})
+        check_meta: Dict[str, Any] = {}
+        report = maybe_inspect_chw(
+            x_chw,
+            sensor=sensor,
+            name="provider_s2_prithvi6_chw",
+            expected_channels=6,
+            value_range=(0.0, 1.0),
+            fill_value=float(sensor.fill_value),
+            meta=check_meta,
+        )
+        if (
+            report is not None
+            and (not report.get("ok", True))
+            and checks_should_raise(sensor)
+        ):
+            raise ModelError(
+                "Provider input inspection failed: "
+                + "; ".join(report.get("issues", []))
+            )
 
-                try:
-                    import xarray as xr
-                except Exception as e:
-                    raise ModelError("grid output requires xarray. Install: pip install xarray") from e
+        # Optional quicklook (RGB from RED/GREEN/BLUE)
+        sd = checks_save_dir(sensor)
+        if sd and report is not None:
+            try:
+                import uuid
 
-                da = xr.DataArray(
-                    grid,
-                    dims=("d", "y", "x"),
-                    coords={"d": np.arange(grid.shape[0]), "y": np.arange(h), "x": np.arange(w)},
-                    name="embedding",
-                    attrs=meta,
+                fn = f"prithvi_s2_rgb_{uuid.uuid4().hex[:8]}.png"
+                save_quicklook_rgb(
+                    x_chw,
+                    path=os.path.join(sd, fn),
+                    bands=(2, 1, 0),
+                    vmin=0.0,
+                    vmax=1.0,
                 )
-                return Embedding(data=da, meta=meta)
+                check_meta.setdefault("input_checks_artifacts", []).append(
+                    {"name": "quicklook_rgb", "path": os.path.join(sd, fn)}
+                )
+            except Exception as _e:
+                check_meta.setdefault("input_checks_artifacts", []).append(
+                    {"name": "quicklook_rgb", "error": repr(_e)}
+                )
+        x_chw, prep_meta = _prepare_prithvi_chw(
+            x_chw,
+            fill_value=float(sensor.fill_value),
+        )
 
-            raise ModelError(f"Unknown output mode: {output.mode}")
+        # coords: use temporal mid-date and ROI center (EPSG:4326).
+        lon, lat = _spatial_center_lon_lat(spatial)
+
+        date_str = temporal_midpoint_str(t)
+
+        tokens = _prithvi_forward_tokens(
+            model,
+            x_chw,
+            lon=lon,
+            lat=lat,
+            date_str=date_str,
+            device=dev,
+        )  # [N,D] (maybe includes CLS)
+
+        meta = base_meta(
+            model_name=self.model_name,
+            hf_id=model_key,  # for terratorch we store model key here
+            backend=str(backend).lower(),
+            image_size=int(x_chw.shape[-1]),  # not fixed 224; depends on ROI/scale
+            sensor=sensor,
+            temporal=t,
+            source=sensor.collection,
+            extra={
+                "temporal_range": (t.start, t.end),
+                "coords_date": date_str,
+                "coords_lonlat": (float(lon), float(lat)),
+                "tokens_shape": tuple(tokens.shape),
+                "model_key": model_key,
+                "pretrained": bool(pretrained),
+                "coords_encoding": coords_encoding,
+                "num_frames": num_frames,
+                "input_hw": (int(x_chw.shape[1]), int(x_chw.shape[2])),
+                **prep_meta,
+                **check_meta,
+            },
+        )
+
+        if output.mode == "pooled":
+            vec, cls_removed = pool_from_tokens(tokens, output.pooling)
+            meta.update(
+                {"pooling": f"patch_{output.pooling}", "cls_removed": bool(cls_removed)}
+            )
+            return Embedding(data=vec, meta=meta)
+
+        if output.mode == "grid":
+            grid, (h, w), cls_removed = tokens_to_grid_dhw(tokens)
+            meta.update(
+                {
+                    "grid_hw": (h, w),
+                    "grid_kind": "patch_tokens",
+                    "cls_removed": bool(cls_removed),
+                }
+            )
+
+            try:
+                import xarray as xr
+            except Exception as e:
+                raise ModelError(
+                    "grid output requires xarray. Install: pip install xarray"
+                ) from e
+
+            da = xr.DataArray(
+                grid,
+                dims=("d", "y", "x"),
+                coords={
+                    "d": np.arange(grid.shape[0]),
+                    "y": np.arange(h),
+                    "x": np.arange(w),
+                },
+                name="embedding",
+                attrs=meta,
+            )
+            return Embedding(data=da, meta=meta)
+
+        raise ModelError(f"Unknown output mode: {output.mode}")
 
     def get_embeddings_batch(
         self,
@@ -594,13 +661,15 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
         if not spatials:
             return []
         if not is_provider_backend(backend, allow_auto=True):
-            raise ModelError("prithvi_eo_v2_s2_6b expects a provider backend (or 'auto').")
+            raise ModelError(
+                "prithvi_eo_v2_s2_6b expects a provider backend (or 'auto')."
+            )
 
         if sensor is None:
             sensor = self._default_sensor()
 
         t = temporal_to_range(temporal)
-        provider = _call_provider_getter(self._get_provider, backend)
+        provider = self._get_provider(backend)
         n = len(spatials)
         prefetched_raw: List[Optional[np.ndarray]] = [None] * n
 
@@ -633,7 +702,9 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
         raw_inputs: List[np.ndarray] = []
         for i, raw in enumerate(prefetched_raw):
             if raw is None:
-                raise ModelError(f"Missing prefetched input at index={i} for prithvi_eo_v2_s2_6b.")
+                raise ModelError(
+                    f"Missing prefetched input at index={i} for prithvi_eo_v2_s2_6b."
+                )
             raw_inputs.append(raw)
         return self.get_embeddings_batch_from_inputs(
             spatials=spatials,
@@ -657,7 +728,9 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
         device: str = "auto",
     ) -> list[Embedding]:
         if not is_provider_backend(backend, allow_auto=True):
-            raise ModelError("prithvi_eo_v2_s2_6b expects a provider backend (or 'auto').")
+            raise ModelError(
+                "prithvi_eo_v2_s2_6b expects a provider backend (or 'auto')."
+            )
         if len(spatials) != len(input_chws):
             raise ModelError(
                 f"spatials/input_chws length mismatch: {len(spatials)} != {len(input_chws)}"
@@ -670,7 +743,11 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
 
         t = temporal_to_range(temporal)
         model_key = os.environ.get("RS_EMBED_PRITHVI_KEY", self.DEFAULT_MODEL_KEY)
-        pretrained = os.environ.get("RS_EMBED_PRITHVI_PRETRAINED", "1").strip() not in ("0", "false", "False")
+        pretrained = os.environ.get("RS_EMBED_PRITHVI_PRETRAINED", "1").strip() not in (
+            "0",
+            "false",
+            "False",
+        )
         coords_encoding = ("time", "location")
         num_frames = 1
         prep_mode = os.environ.get("RS_EMBED_PRITHVI_PREP", "resize").strip().lower()
@@ -692,11 +769,13 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
         for i, input_chw in enumerate(input_chws):
             if input_chw.ndim != 3 or input_chw.shape[0] != 6:
                 raise ModelError(
-                    f"input_chw must be CHW with 6 bands for prithvi, got {getattr(input_chw,'shape',None)} at index={i}"
+                    f"input_chw must be CHW with 6 bands for prithvi, got {getattr(input_chw, 'shape', None)} at index={i}"
                 )
             x_chw = input_chw.astype(np.float32) / 10000.0
             x_chw = np.clip(x_chw, 0.0, 1.0)
-            x_chw = np.nan_to_num(x_chw, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+            x_chw = np.nan_to_num(x_chw, nan=0.0, posinf=0.0, neginf=0.0).astype(
+                np.float32
+            )
             x_chw, _ = _prepare_prithvi_chw(
                 x_chw,
                 fill_value=float(sensor.fill_value),
@@ -714,14 +793,19 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
         if output.mode == "grid":
             try:
                 import xarray as xr  # type: ignore
+
                 xr_mod = xr
             except Exception as e:
-                raise ModelError("grid output requires xarray. Install: pip install xarray") from e
+                raise ModelError(
+                    "grid output requires xarray. Install: pip install xarray"
+                ) from e
 
         for idxs in shape_groups.values():
             for s0 in range(0, len(idxs), infer_bs):
-                chunk_ids = idxs[s0:s0 + infer_bs]
-                xb = np.stack([x_prepared[i] for i in chunk_ids], axis=0).astype(np.float32)
+                chunk_ids = idxs[s0 : s0 + infer_bs]
+                xb = np.stack([x_prepared[i] for i in chunk_ids], axis=0).astype(
+                    np.float32
+                )
                 toks_list = _prithvi_forward_tokens_batch(
                     model,
                     xb,
@@ -767,18 +851,33 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
 
                     if output.mode == "pooled":
                         vec, cls_removed = pool_from_tokens(tokens, output.pooling)
-                        meta.update({"pooling": f"patch_{output.pooling}", "cls_removed": bool(cls_removed)})
+                        meta.update(
+                            {
+                                "pooling": f"patch_{output.pooling}",
+                                "cls_removed": bool(cls_removed),
+                            }
+                        )
                         out[i] = Embedding(data=vec, meta=meta)
                         continue
 
                     if output.mode == "grid":
                         grid, (h, w), cls_removed = tokens_to_grid_dhw(tokens)
-                        meta.update({"grid_hw": (h, w), "grid_kind": "patch_tokens", "cls_removed": bool(cls_removed)})
+                        meta.update(
+                            {
+                                "grid_hw": (h, w),
+                                "grid_kind": "patch_tokens",
+                                "cls_removed": bool(cls_removed),
+                            }
+                        )
                         assert xr_mod is not None
                         da = xr_mod.DataArray(
                             grid,
                             dims=("d", "y", "x"),
-                            coords={"d": np.arange(grid.shape[0]), "y": np.arange(h), "x": np.arange(w)},
+                            coords={
+                                "d": np.arange(grid.shape[0]),
+                                "y": np.arange(h),
+                                "x": np.arange(w),
+                            },
                             name="embedding",
                             attrs=meta,
                         )
@@ -788,5 +887,7 @@ class PrithviEOV2S2_6B_Embedder(EmbedderBase):
                     raise ModelError(f"Unknown output mode: {output.mode}")
 
         if any(e is None for e in out):
-            raise ModelError("prithvi_eo_v2_s2_6b batch inference produced incomplete outputs.")
+            raise ModelError(
+                "prithvi_eo_v2_s2_6b batch inference produced incomplete outputs."
+            )
         return [e for e in out if e is not None]

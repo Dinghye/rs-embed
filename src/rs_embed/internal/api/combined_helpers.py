@@ -107,7 +107,9 @@ def collect_input_refs_by_sensor(
     return input_refs_by_sensor
 
 
-def summarize_combined_models(models_entries: List[Dict[str, Any]]) -> Tuple[str, Dict[str, int]]:
+def summarize_combined_models(
+    models_entries: List[Dict[str, Any]],
+) -> Tuple[str, Dict[str, int]]:
     n_failed = sum(1 for x in models_entries if x.get("status") == "failed")
     n_partial = sum(1 for x in models_entries if x.get("status") == "partial")
     if n_failed == 0 and n_partial == 0:

@@ -1,33 +1,30 @@
 # src/rs_embed/core/registry.py
 from __future__ import annotations
 import importlib
-from typing import Dict, Type, Any, Optional
+from typing import Dict, Type, Any
 
 from rs_embed.embedders.catalog import MODEL_SPECS, canonical_model_id
 
 from .errors import ModelError
 
 _REGISTRY: Dict[str, Type[Any]] = {}
-_REGISTRY_IMPORT_ERROR: Optional[BaseException] = None
+_REGISTRY_IMPORT_ERRORS: Dict[str, BaseException] = {}
+
 
 def register(name: str):
     """Decorator to register an embedder class by name."""
+
     def deco(cls: Type[Any]):
         model_id = canonical_model_id(name)
         _REGISTRY[model_id] = cls
         setattr(cls, "model_name", model_id)
         return cls
-    return deco
 
-def _ensure_registry_loaded() -> None:
-    """Backward-compatible hook; registry loading is now per-model lazy import."""
-    return
+    return deco
 
 
 def _try_lazy_load_model(name: str) -> None:
     """Load only the module that owns `name`, then backfill registration if needed."""
-    global _REGISTRY_IMPORT_ERROR
-
     model_id = canonical_model_id(name)
     if model_id in _REGISTRY:
         return
@@ -39,23 +36,23 @@ def _try_lazy_load_model(name: str) -> None:
     try:
         mod = importlib.import_module(fqmn)
     except Exception as e:
-        _REGISTRY_IMPORT_ERROR = e
+        _REGISTRY_IMPORT_ERRORS[model_id] = e
         return
 
     try:
         cls = getattr(mod, class_name)
     except Exception as e:
-        _REGISTRY_IMPORT_ERROR = e
+        _REGISTRY_IMPORT_ERRORS[model_id] = e
         return
 
     # If decorators did not run in this process state (e.g. registry was cleared),
     # repopulate from the imported module class symbol.
     _REGISTRY[model_id] = cls
     setattr(cls, "model_name", model_id)
-    _REGISTRY_IMPORT_ERROR = None
+    _REGISTRY_IMPORT_ERRORS.pop(model_id, None)
+
 
 def get_embedder_cls(name: str) -> Type[Any]:
-    _ensure_registry_loaded()
     k = canonical_model_id(name)
     if k not in _REGISTRY:
         _try_lazy_load_model(k)
@@ -65,16 +62,23 @@ def get_embedder_cls(name: str) -> Type[Any]:
             f"If this list is empty, ensure requested embedder module is importable "
             f"(e.g. optional deps like torch/ee are installed)."
         )
-        if (not _REGISTRY) and (_REGISTRY_IMPORT_ERROR is not None):
-            msg += (
-                f" Last embedder import error: "
-                f"{type(_REGISTRY_IMPORT_ERROR).__name__}: {_REGISTRY_IMPORT_ERROR}"
-            )
-        raise ModelError(
-            msg
-        )
+        if k in _REGISTRY_IMPORT_ERRORS:
+            err = _REGISTRY_IMPORT_ERRORS[k]
+            msg += f" Import error for '{k}': {type(err).__name__}: {err}"
+        elif _REGISTRY_IMPORT_ERRORS:
+            parts = [
+                f"{mid}: {type(e).__name__}: {e}"
+                for mid, e in _REGISTRY_IMPORT_ERRORS.items()
+            ]
+            msg += f" Embedder import errors: {'; '.join(parts)}"
+        raise ModelError(msg)
     return _REGISTRY[k]
 
+
 def list_models():
-    _ensure_registry_loaded()
+    """Return sorted list of currently-loaded model IDs from the runtime registry.
+
+    Note: only models that have been lazy-imported so far will appear here.
+    Use rs_embed.api.list_models() for a stable catalog-backed list.
+    """
     return sorted(_REGISTRY.keys())

@@ -13,7 +13,12 @@ from ...core.export_helpers import (
     utc_ts,
 )
 from ...core.specs import OutputSpec, SensorSpec, SpatialSpec, TemporalSpec
-from .api_helpers import fetch_gee_patch_raw, inspect_input_raw, normalize_input_chw, normalize_model_name
+from .api_helpers import (
+    fetch_gee_patch_raw,
+    inspect_input_raw,
+    normalize_input_chw,
+    normalize_model_name,
+)
 from .checkpoint_helpers import (
     drop_model_arrays,
     drop_prefetch_checkpoint_arrays,
@@ -29,7 +34,11 @@ from .combined_flow_helpers import (
     run_combined_prefetch_tasks,
     run_pending_models,
 )
-from .combined_helpers import collect_input_refs_by_sensor, init_combined_export_state, summarize_combined_models
+from .combined_helpers import (
+    collect_input_refs_by_sensor,
+    init_combined_export_state,
+    summarize_combined_models,
+)
 from .combined_orchestration_helpers import (
     build_combined_prefetch_tasks,
     init_combined_provider,
@@ -37,7 +46,10 @@ from .combined_orchestration_helpers import (
     write_combined_checkpoint,
 )
 from .manifest_helpers import load_json_dict
-from .point_payload_helpers import PointPayloadDeps, build_one_point_payload as _build_one_point_payload_impl
+from .point_payload_helpers import (
+    PointPayloadDeps,
+    build_one_point_payload as _build_one_point_payload_impl,
+)
 from .prefetch_helpers import build_gee_prefetch_plan, select_prefetched_channels
 from .progress_helpers import create_progress
 from .runtime_helpers import (
@@ -57,6 +69,7 @@ def build_one_point_payload(
     temporal: Optional[TemporalSpec],
     models: List[str],
     backend: str,
+    resolved_backend: Optional[Dict[str, str]] = None,
     device: str,
     output: OutputSpec,
     resolved_sensor: Dict[str, Optional[SensorSpec]],
@@ -74,7 +87,9 @@ def build_one_point_payload(
     model_progress_cb: Optional[Callable[[str], None]] = None,
     normalize_model_name_fn: Callable[[str], str] = normalize_model_name,
     sensor_key_fn: Callable[[Optional[SensorSpec]], Tuple] = sensor_key,
-    get_embedder_bundle_cached_fn: Callable[[str, str, str, Tuple], Tuple[Any, Any]] = get_embedder_bundle_cached,
+    get_embedder_bundle_cached_fn: Callable[
+        [str, str, str, Tuple], Tuple[Any, Any]
+    ] = get_embedder_bundle_cached,
     run_with_retry_fn: Callable[..., Any] = run_with_retry,
     fetch_gee_patch_raw_fn: Callable[..., np.ndarray] = fetch_gee_patch_raw,
     inspect_input_raw_fn: Callable[..., Dict[str, Any]] = inspect_input_raw,
@@ -103,6 +118,7 @@ def build_one_point_payload(
         temporal=temporal,
         models=models,
         backend=backend,
+        resolved_backend=resolved_backend or {},
         device=device,
         output=output,
         resolved_sensor=resolved_sensor,
@@ -149,81 +165,6 @@ def write_one_payload(
     )
 
 
-def export_one_point(
-    *,
-    point_index: int,
-    spatial: SpatialSpec,
-    temporal: Optional[TemporalSpec],
-    models: List[str],
-    out_path: str,
-    backend: str,
-    device: str,
-    output: OutputSpec,
-    resolved_sensor: Dict[str, Optional[SensorSpec]],
-    model_type: Dict[str, str],
-    inputs_cache: Dict[Tuple[int, str], np.ndarray],
-    input_reports: Dict[Tuple[int, str], Dict[str, Any]],
-    pass_input_into_embedder: bool,
-    save_inputs: bool,
-    save_embeddings: bool,
-    save_manifest: bool,
-    fail_on_bad_input: bool,
-    fmt: str = "npz",
-    continue_on_error: bool = False,
-    max_retries: int = 0,
-    retry_backoff_s: float = 0.0,
-    normalize_model_name_fn: Callable[[str], str] = normalize_model_name,
-    sensor_key_fn: Callable[[Optional[SensorSpec]], Tuple] = sensor_key,
-    get_embedder_bundle_cached_fn: Callable[[str, str, str, Tuple], Tuple[Any, Any]] = get_embedder_bundle_cached,
-    run_with_retry_fn: Callable[..., Any] = run_with_retry,
-    fetch_gee_patch_raw_fn: Callable[..., np.ndarray] = fetch_gee_patch_raw,
-    inspect_input_raw_fn: Callable[..., Dict[str, Any]] = inspect_input_raw,
-    call_embedder_get_embedding_fn: Callable[..., Any] = call_embedder_get_embedding,
-    provider_factory: Optional[Callable[[], Any]] = None,
-    jsonable_fn: Callable[[Any], Any] = jsonable,
-) -> Dict[str, Any]:
-    arrays, manifest = build_one_point_payload(
-        point_index=point_index,
-        spatial=spatial,
-        temporal=temporal,
-        models=models,
-        backend=backend,
-        device=device,
-        output=output,
-        resolved_sensor=resolved_sensor,
-        model_type=model_type,
-        inputs_cache=inputs_cache,
-        input_reports=input_reports,
-        prefetch_errors={},
-        pass_input_into_embedder=pass_input_into_embedder,
-        save_inputs=save_inputs,
-        save_embeddings=save_embeddings,
-        fail_on_bad_input=fail_on_bad_input,
-        continue_on_error=continue_on_error,
-        max_retries=max_retries,
-        retry_backoff_s=retry_backoff_s,
-        normalize_model_name_fn=normalize_model_name_fn,
-        sensor_key_fn=sensor_key_fn,
-        get_embedder_bundle_cached_fn=get_embedder_bundle_cached_fn,
-        run_with_retry_fn=run_with_retry_fn,
-        fetch_gee_patch_raw_fn=fetch_gee_patch_raw_fn,
-        inspect_input_raw_fn=inspect_input_raw_fn,
-        call_embedder_get_embedding_fn=call_embedder_get_embedding_fn,
-        provider_factory=provider_factory,
-    )
-    return write_one_payload(
-        out_path=out_path,
-        arrays=arrays,
-        manifest=manifest,
-        save_manifest=save_manifest,
-        fmt=fmt,
-        max_retries=max_retries,
-        retry_backoff_s=retry_backoff_s,
-        run_with_retry_fn=run_with_retry_fn,
-        jsonable_fn=jsonable_fn,
-    )
-
-
 def export_combined(
     *,
     spatials: List[SpatialSpec],
@@ -231,6 +172,7 @@ def export_combined(
     models: List[str],
     out_path: str,
     backend: str,
+    resolved_backend: Optional[Dict[str, str]] = None,
     device: str,
     output: OutputSpec,
     resolved_sensor: Dict[str, Optional[SensorSpec]],
@@ -254,13 +196,19 @@ def export_combined(
     fetch_gee_patch_raw_fn: Callable[..., np.ndarray] = fetch_gee_patch_raw,
     inspect_input_raw_fn: Callable[..., Dict[str, Any]] = inspect_input_raw,
     normalize_input_chw_fn: Callable[..., np.ndarray] = normalize_input_chw,
-    select_prefetched_channels_fn: Callable[[np.ndarray, Tuple[int, ...]], np.ndarray] = select_prefetched_channels,
+    select_prefetched_channels_fn: Callable[
+        [np.ndarray, Tuple[int, ...]], np.ndarray
+    ] = select_prefetched_channels,
     create_progress_fn: Callable[..., Any] = create_progress,
-    get_embedder_bundle_cached_fn: Callable[[str, str, str, Tuple], Tuple[Any, Any]] = get_embedder_bundle_cached,
+    get_embedder_bundle_cached_fn: Callable[
+        [str, str, str, Tuple], Tuple[Any, Any]
+    ] = get_embedder_bundle_cached,
     sensor_key_fn: Callable[[Optional[SensorSpec]], Tuple] = sensor_key,
     normalize_model_name_fn: Callable[[str], str] = normalize_model_name,
     call_embedder_get_embedding_fn: Callable[..., Any] = call_embedder_get_embedding,
-    supports_prefetched_batch_api_fn: Callable[[Any], bool] = supports_prefetched_batch_api,
+    supports_prefetched_batch_api_fn: Callable[
+        [Any], bool
+    ] = supports_prefetched_batch_api,
     supports_batch_api_fn: Callable[[Any], bool] = supports_batch_api,
     embedding_to_numpy_fn: Callable[[Any], np.ndarray] = embedding_to_numpy,
     sensor_cache_key_fn: Callable[[SensorSpec], str] = sensor_cache_key,
@@ -268,11 +216,19 @@ def export_combined(
     jsonable_fn: Callable[[Any], Any] = jsonable,
     utc_ts_fn: Callable[[], str] = utc_ts,
     load_json_dict_fn: Callable[[str], Optional[Dict[str, Any]]] = load_json_dict,
-    is_incomplete_combined_manifest_fn: Callable[[Optional[Dict[str, Any]]], bool] = is_incomplete_combined_manifest,
+    is_incomplete_combined_manifest_fn: Callable[
+        [Optional[Dict[str, Any]]], bool
+    ] = is_incomplete_combined_manifest,
     load_saved_arrays_fn: Callable[..., Dict[str, np.ndarray]] = load_saved_arrays,
-    restore_prefetch_checkpoint_cache_fn: Callable[..., Dict[Tuple[int, str], np.ndarray]] = restore_prefetch_checkpoint_cache,
-    store_prefetch_checkpoint_arrays_fn: Callable[..., None] = store_prefetch_checkpoint_arrays,
-    drop_prefetch_checkpoint_arrays_fn: Callable[[Dict[str, np.ndarray]], None] = drop_prefetch_checkpoint_arrays,
+    restore_prefetch_checkpoint_cache_fn: Callable[
+        ..., Dict[Tuple[int, str], np.ndarray]
+    ] = restore_prefetch_checkpoint_cache,
+    store_prefetch_checkpoint_arrays_fn: Callable[
+        ..., None
+    ] = store_prefetch_checkpoint_arrays,
+    drop_prefetch_checkpoint_arrays_fn: Callable[
+        [Dict[str, np.ndarray]], None
+    ] = drop_prefetch_checkpoint_arrays,
     write_one_payload_fn: Callable[..., Dict[str, Any]] = write_one_payload,
 ) -> Dict[str, Any]:
     arrays, manifest, pending_models, json_path = init_combined_export_state(
@@ -314,7 +270,9 @@ def export_combined(
         models=models,
         resolved_sensor=resolved_sensor,
         model_type=model_type,
-        resolve_bands_fn=(getattr(provider, "normalize_bands", None) if provider is not None else None),
+        resolve_bands_fn=(
+            getattr(provider, "normalize_bands", None) if provider is not None else None
+        ),
     )
 
     inputs_cache = restore_prefetch_cache_from_manifest(
@@ -444,6 +402,7 @@ def export_combined(
             resolved_sensor=resolved_sensor,
             model_type=model_type,
             backend=backend,
+            resolved_backend=resolved_backend or {},
             provider_enabled=(provider is not None),
             device=device,
             save_inputs=save_inputs,
@@ -451,7 +410,9 @@ def export_combined(
             continue_on_error=continue_on_error,
             chunk_size=chunk_size,
             inference_strategy=inference_strategy,
-            infer_batch_size=(chunk_size if infer_batch_size is None else infer_batch_size),
+            infer_batch_size=(
+                chunk_size if infer_batch_size is None else infer_batch_size
+            ),
             max_retries=max_retries,
             retry_backoff_s=retry_backoff_s,
             show_progress=show_progress,
@@ -462,7 +423,9 @@ def export_combined(
             deps=model_deps,
         )
 
-        manifest["status"], manifest["summary"] = summarize_combined_models(manifest["models"])
+        manifest["status"], manifest["summary"] = summarize_combined_models(
+            manifest["models"]
+        )
 
         drop_prefetch_checkpoint_arrays_fn(arrays)
         manifest.pop("prefetch", None)

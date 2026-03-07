@@ -20,10 +20,20 @@ from rs_embed.core.specs import SensorSpec
 # _env_flag / _safe_float helpers
 # ══════════════════════════════════════════════════════════════════════
 
+
 @pytest.mark.parametrize(
     "val,expected",
-    [("1", True), ("true", True), ("yes", True), ("on", True),
-     ("0", False), ("false", False), ("no", False), ("off", False), ("", False)],
+    [
+        ("1", True),
+        ("true", True),
+        ("yes", True),
+        ("on", True),
+        ("0", False),
+        ("false", False),
+        ("no", False),
+        ("off", False),
+        ("", False),
+    ],
 )
 def test_env_flag_values(monkeypatch, val, expected):
     monkeypatch.setenv("TEST_FLAG", val)
@@ -41,6 +51,7 @@ def test_safe_float():
 # inspect_chw — type / shape guards
 # ══════════════════════════════════════════════════════════════════════
 
+
 def test_inspect_chw_non_array():
     report = inspect_chw("not-array")
     assert report["ok"] is False
@@ -56,6 +67,7 @@ def test_inspect_chw_wrong_ndim():
 # ══════════════════════════════════════════════════════════════════════
 # inspect_chw — channel mismatch
 # ══════════════════════════════════════════════════════════════════════
+
 
 def test_inspect_chw_channel_mismatch():
     x = np.random.default_rng(0).random((3, 8, 8)).astype(np.float32)
@@ -73,6 +85,7 @@ def test_inspect_chw_channel_match():
 # ══════════════════════════════════════════════════════════════════════
 # inspect_chw — NaN / Inf detection
 # ══════════════════════════════════════════════════════════════════════
+
 
 def test_inspect_chw_nan():
     x = np.ones((1, 4, 4), dtype=np.float32)
@@ -93,6 +106,7 @@ def test_inspect_chw_inf():
 # ══════════════════════════════════════════════════════════════════════
 # inspect_chw — fill value and value range
 # ══════════════════════════════════════════════════════════════════════
+
 
 def test_inspect_chw_flags_fill_and_range():
     x = np.zeros((2, 4, 4), dtype=np.float32)
@@ -124,6 +138,7 @@ def test_inspect_chw_value_range_ok():
 # inspect_chw — constant band detection
 # ══════════════════════════════════════════════════════════════════════
 
+
 def test_inspect_chw_constant_band():
     x = np.ones((2, 4, 4), dtype=np.float32)
     report = inspect_chw(x)
@@ -142,6 +157,7 @@ def test_inspect_chw_one_constant_one_varying():
 # ══════════════════════════════════════════════════════════════════════
 # inspect_chw — band stats and report fields
 # ══════════════════════════════════════════════════════════════════════
+
 
 def test_inspect_chw_band_stats():
     rng = np.random.default_rng(42)
@@ -166,6 +182,7 @@ def test_inspect_chw_has_shape_and_dtype():
 # inspect_chw — downsampling on large arrays
 # ══════════════════════════════════════════════════════════════════════
 
+
 def test_inspect_chw_downsample():
     rng = np.random.default_rng(7)
     x = rng.random((3, 200, 200)).astype(np.float32)
@@ -177,6 +194,7 @@ def test_inspect_chw_downsample():
 # ══════════════════════════════════════════════════════════════════════
 # maybe_inspect_chw
 # ══════════════════════════════════════════════════════════════════════
+
 
 def test_maybe_inspect_chw_disabled(monkeypatch):
     monkeypatch.delenv("RS_EMBED_CHECK_INPUT", raising=False)
@@ -201,7 +219,10 @@ def test_maybe_inspect_chw_enabled_meta(monkeypatch):
 def test_maybe_inspect_chw_sensor_flag():
     """Enable via SensorSpec.check_input without env var."""
     sensor = SensorSpec(
-        collection="C", bands=("B1",), check_input=True, check_raise=False,
+        collection="C",
+        bands=("B1",),
+        check_input=True,
+        check_raise=False,
     )
     meta = {}
     report = maybe_inspect_chw(
@@ -216,6 +237,7 @@ def test_maybe_inspect_chw_sensor_flag():
 # ══════════════════════════════════════════════════════════════════════
 # checks_enabled / checks_should_raise / checks_save_dir
 # ══════════════════════════════════════════════════════════════════════
+
 
 def test_checks_flags_env_override(monkeypatch):
     monkeypatch.setenv("RS_EMBED_CHECK_INPUT", "1")
@@ -256,6 +278,7 @@ def test_checks_save_dir_none(monkeypatch):
 # inspect_chw — histogram generation
 # ══════════════════════════════════════════════════════════════════════
 
+
 def test_inspect_chw_histogram_keys():
     """Inspect report should include histogram bin edges and per-band counts."""
     rng = np.random.default_rng(10)
@@ -263,8 +286,8 @@ def test_inspect_chw_histogram_keys():
     report = inspect_chw(x, hist_bins=8)
     assert "hist_bins" in report
     assert "band_hist" in report
-    assert len(report["hist_bins"]) == 9   # edges = bins + 1
-    assert len(report["band_hist"]) == 2   # one list of counts per channel
+    assert len(report["hist_bins"]) == 9  # edges = bins + 1
+    assert len(report["band_hist"]) == 2  # one list of counts per channel
 
 
 def test_inspect_chw_histogram_with_clip_range():
@@ -287,6 +310,7 @@ def test_inspect_chw_no_histogram_when_bins_zero():
 # inspect_chw — quantiles
 # ══════════════════════════════════════════════════════════════════════
 
+
 def test_inspect_chw_quantiles_present():
     rng = np.random.default_rng(13)
     x = rng.random((2, 8, 8)).astype(np.float32)
@@ -308,6 +332,7 @@ def test_inspect_chw_no_quantiles():
 # inspect_chw — zero-size spatial
 # ══════════════════════════════════════════════════════════════════════
 
+
 def test_inspect_chw_zero_spatial():
     x = np.zeros((2, 0, 4), dtype=np.float32)
     report = inspect_chw(x)
@@ -318,6 +343,7 @@ def test_inspect_chw_zero_spatial():
 # ══════════════════════════════════════════════════════════════════════
 # save_quicklook_rgb
 # ══════════════════════════════════════════════════════════════════════
+
 
 def test_save_quicklook_rgb_creates_file(tmp_path):
     rng = np.random.default_rng(20)

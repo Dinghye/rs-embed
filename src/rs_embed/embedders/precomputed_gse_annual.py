@@ -15,11 +15,10 @@ from ..ops.pooling import pool_chw_to_vec
 from .base import EmbedderBase
 from .meta_utils import build_meta, temporal_midpoint_str
 from .runtime_utils import (
-    call_provider_getter as _call_provider_getter,
     fetch_collection_patch_all_bands_chw as _fetch_collection_patch_all_bands_chw,
-    get_cached_provider,
     is_provider_backend,
 )
+
 
 @register("gse")
 class GSEAnnualEmbedder(EmbedderBase):
@@ -29,6 +28,7 @@ class GSEAnnualEmbedder(EmbedderBase):
     """
 
     DEFAULT_BATCH_WORKERS = 4
+    _allow_auto_backend = False
 
     def describe(self) -> Dict[str, Any]:
         return {
@@ -40,82 +40,76 @@ class GSEAnnualEmbedder(EmbedderBase):
             "notes": "Uses sampleRectangle in EPSG:3857; returns [C,H,W] or pooled [C].",
         }
 
-    
-    def __init__(self) -> None:
-        self._providers: Dict[str, ProviderBase] = {}
-
-    def _get_provider(self, backend: str) -> ProviderBase:
-        return get_cached_provider(
-            self._providers,
-            backend=backend,
-            allow_auto=False,
-        )
-
     @staticmethod
     def _resolve_batch_workers(n_items: int) -> int:
-        v = int(os.environ.get("RS_EMBED_GSE_BATCH_WORKERS", str(GSEAnnualEmbedder.DEFAULT_BATCH_WORKERS)))
+        v = int(
+            os.environ.get(
+                "RS_EMBED_GSE_BATCH_WORKERS",
+                str(GSEAnnualEmbedder.DEFAULT_BATCH_WORKERS),
+            )
+        )
         return max(1, min(int(n_items), v))
 
     def get_embedding(
-            self,
-            *,
-            spatial: SpatialSpec,
-            temporal: Optional[TemporalSpec],
-            sensor: Optional[SensorSpec],
-            output: OutputSpec,
-            backend: str,
-            device: str = "auto",
-        ) -> Embedding:
-            if not is_provider_backend(backend, allow_auto=False):
-                raise ModelError("gse_annual only supports a provider backend in v0.1.")
-            if temporal is None:
-                raise ModelError("gse_annual requires TemporalSpec.year(year=...).")
-            temporal.validate()
-            if temporal.mode != "year":
-                raise ModelError("gse_annual only supports TemporalSpec.year in v0.1.")
+        self,
+        *,
+        spatial: SpatialSpec,
+        temporal: Optional[TemporalSpec],
+        sensor: Optional[SensorSpec],
+        output: OutputSpec,
+        backend: str,
+        device: str = "auto",
+    ) -> Embedding:
+        if not is_provider_backend(backend, allow_auto=False):
+            raise ModelError("gse_annual only supports a provider backend in v0.1.")
+        if temporal is None:
+            raise ModelError("gse_annual requires TemporalSpec.year(year=...).")
+        temporal.validate()
+        if temporal.mode != "year":
+            raise ModelError("gse_annual only supports TemporalSpec.year in v0.1.")
 
-            provider = _call_provider_getter(self._get_provider, backend)
-            emb_chw, band_names = _fetch_collection_patch_all_bands_chw(
-                provider,
-                spatial=spatial,
-                temporal=temporal,
-                collection="GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL",
-                scale_m=int(output.scale_m),
-                fill_value=-9999.0,
-                composite="mosaic",
-            )
-            emb_chw = np.asarray(emb_chw, dtype=np.float32)
-            emb_chw[emb_chw == -9999] = np.nan
+        provider = self._get_provider(backend)
+        emb_chw, band_names = _fetch_collection_patch_all_bands_chw(
+            provider,
+            spatial=spatial,
+            temporal=temporal,
+            collection="GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL",
+            scale_m=int(output.scale_m),
+            fill_value=-9999.0,
+            composite="mosaic",
+        )
+        emb_chw = np.asarray(emb_chw, dtype=np.float32)
+        emb_chw[emb_chw == -9999] = np.nan
 
-            meta = build_meta(
-                model=self.model_name,
-                kind="precomputed",
-                backend=str(backend).lower(),
-                source="GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL",
-                sensor=None,
-                temporal=temporal,
-                image_size=None,
-                input_time=temporal_midpoint_str(temporal),
-                extra={
-                    "year": temporal.year,
-                    "scale_m": output.scale_m,
-                    "bands": band_names,
-                },
-            )
+        meta = build_meta(
+            model=self.model_name,
+            kind="precomputed",
+            backend=str(backend).lower(),
+            source="GOOGLE/SATELLITE_EMBEDDING/V1/ANNUAL",
+            sensor=None,
+            temporal=temporal,
+            image_size=None,
+            input_time=temporal_midpoint_str(temporal),
+            extra={
+                "year": temporal.year,
+                "scale_m": output.scale_m,
+                "bands": band_names,
+            },
+        )
 
-            if output.mode == "pooled":
-                vec = pool_chw_to_vec(emb_chw, method=output.pooling)
-                return Embedding(data=vec, meta={**meta, "pooling": output.pooling})
+        if output.mode == "pooled":
+            vec = pool_chw_to_vec(emb_chw, method=output.pooling)
+            return Embedding(data=vec, meta={**meta, "pooling": output.pooling})
 
-            # grid: return xarray with dims (band,y,x)
-            da = xr.DataArray(
-                emb_chw,
-                dims=("d", "y", "x"),
-                coords={"d": list(band_names)},
-                name="embedding",
-                attrs=meta,
-            )
-            return Embedding(data=da, meta=meta)
+        # grid: return xarray with dims (band,y,x)
+        da = xr.DataArray(
+            emb_chw,
+            dims=("d", "y", "x"),
+            coords={"d": list(band_names)},
+            name="embedding",
+            attrs=meta,
+        )
+        return Embedding(data=da, meta=meta)
 
     def get_embeddings_batch(
         self,

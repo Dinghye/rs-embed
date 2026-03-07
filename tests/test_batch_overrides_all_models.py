@@ -30,11 +30,13 @@ def test_remoteclip_batch_prefetch_passes_input_chw(monkeypatch):
 
     emb = RemoteCLIPS2RGBEmbedder()
     monkeypatch.setenv("RS_EMBED_REMOTECLIP_FETCH_WORKERS", "1")
-    monkeypatch.setattr(emb, "_get_provider", lambda: object())
+    monkeypatch.setattr(emb, "_get_provider", lambda _backend: object())
     monkeypatch.setattr(
         rc,
         "_fetch_s2_rgb_chw",
-        lambda provider, spatial, temporal, **kw: np.full((3, 8, 8), 0.5, dtype=np.float32),
+        lambda provider, spatial, temporal, **kw: np.full(
+            (3, 8, 8), 0.5, dtype=np.float32
+        ),
     )
 
     seen = []
@@ -62,7 +64,7 @@ def test_scalemae_batch_prefetch_and_single_model_load(monkeypatch):
 
     emb = ScaleMAERGBEmbedder()
     monkeypatch.setenv("RS_EMBED_SCALEMAE_FETCH_WORKERS", "1")
-    monkeypatch.setattr(emb, "_get_provider", lambda: object())
+    monkeypatch.setattr(emb, "_get_provider", lambda _backend: object())
 
     calls = {"load": 0}
 
@@ -77,7 +79,7 @@ def test_scalemae_batch_prefetch_and_single_model_load(monkeypatch):
         val = float(rgb_u8[0, 0, 0])
         return np.full((4, 2), val, dtype=np.float32), {"tokens_kind": "tokens_forward"}
 
-    monkeypatch.setattr(sm, "fetch_s2_rgb_u8_from_gee", _fake_fetch)
+    monkeypatch.setattr(sm, "fetch_s2_rgb_u8_from_provider", _fake_fetch)
     monkeypatch.setattr(sm, "_load_scalemae", _fake_load)
     monkeypatch.setattr(sm, "_scalemae_forward_tokens_or_vec", _fake_forward)
 
@@ -98,11 +100,13 @@ def test_prithvi_batch_prefetch_passes_raw_input(monkeypatch):
 
     emb = PrithviEOV2S2_6B_Embedder()
     monkeypatch.setenv("RS_EMBED_PRITHVI_FETCH_WORKERS", "1")
-    monkeypatch.setattr(emb, "_get_provider", lambda: object())
+    monkeypatch.setattr(emb, "_get_provider", lambda _backend: object())
     monkeypatch.setattr(
         pr,
         "_fetch_s2_prithvi6_chw",
-        lambda provider, spatial, temporal, **kw: np.full((6, 8, 8), 0.25, dtype=np.float32),
+        lambda provider, spatial, temporal, **kw: np.full(
+            (6, 8, 8), 0.25, dtype=np.float32
+        ),
     )
 
     seen = []
@@ -129,11 +133,13 @@ def test_terrafm_batch_prefetch_passes_raw_input(monkeypatch):
 
     emb = TerraFMBEmbedder()
     monkeypatch.setenv("RS_EMBED_TERRAFM_FETCH_WORKERS", "1")
-    monkeypatch.setattr(emb, "_get_provider", lambda: object())
+    monkeypatch.setattr(emb, "_get_provider", lambda _backend: object())
     monkeypatch.setattr(
         tf,
         "_fetch_s2_sr_12_chw",
-        lambda provider, spatial, temporal, **kw: np.full((12, 8, 8), 0.1, dtype=np.float32),
+        lambda provider, spatial, temporal, **kw: np.full(
+            (12, 8, 8), 0.1, dtype=np.float32
+        ),
     )
 
     seen = []
@@ -162,11 +168,13 @@ def test_terramind_batch_prefetch_passes_raw_input(monkeypatch):
 
     emb = TerraMindEmbedder()
     monkeypatch.setenv("RS_EMBED_TERRAMIND_FETCH_WORKERS", "1")
-    monkeypatch.setattr(emb, "_get_provider", lambda: object())
+    monkeypatch.setattr(emb, "_get_provider", lambda _backend: object())
     monkeypatch.setattr(
         tm,
         "_fetch_s2_sr_12_raw_chw",
-        lambda provider, spatial, temporal, **kw: np.full((12, 8, 8), 1234.0, dtype=np.float32),
+        lambda provider, spatial, temporal, **kw: np.full(
+            (12, 8, 8), 1234.0, dtype=np.float32
+        ),
     )
 
     seen = []
@@ -195,11 +203,13 @@ def test_fomo_batch_prefetch_passes_raw_input(monkeypatch):
 
     emb = FoMoEmbedder()
     monkeypatch.setenv("RS_EMBED_FOMO_FETCH_WORKERS", "1")
-    monkeypatch.setattr(emb, "_get_provider", lambda: object())
+    monkeypatch.setattr(emb, "_get_provider", lambda _backend: object())
     monkeypatch.setattr(
         fomo,
         "_fetch_s2_sr_12_raw_chw",
-        lambda provider, spatial, temporal, **kw: np.full((12, 8, 8), 3456.0, dtype=np.float32),
+        lambda provider, spatial, temporal, **kw: np.full(
+            (12, 8, 8), 3456.0, dtype=np.float32
+        ),
     )
 
     seen = []
@@ -228,11 +238,13 @@ def test_thor_batch_prefetch_passes_raw_input(monkeypatch):
 
     emb = THORBaseEmbedder()
     monkeypatch.setenv("RS_EMBED_THOR_FETCH_WORKERS", "1")
-    monkeypatch.setattr(emb, "_get_provider", lambda: object())
+    monkeypatch.setattr(emb, "_get_provider", lambda _backend: object())
     monkeypatch.setattr(
         thor,
         "_fetch_s2_sr_10_raw_chw",
-        lambda provider, spatial, temporal, **kw: np.full((10, 8, 8), 5678.0, dtype=np.float32),
+        lambda provider, spatial, temporal, **kw: np.full(
+            (10, 8, 8), 5678.0, dtype=np.float32
+        ),
     )
 
     seen = []
@@ -261,11 +273,13 @@ def test_dynamicvis_batch_prefetch_passes_raw_input(monkeypatch):
 
     emb = DynamicVisEmbedder()
     monkeypatch.setenv("RS_EMBED_DYNAMICVIS_FETCH_WORKERS", "1")
-    monkeypatch.setattr(emb, "_get_provider", lambda: object())
+    monkeypatch.setattr(emb, "_get_provider", lambda _backend: object())
     monkeypatch.setattr(
         dv,
         "_fetch_s2_rgb_chw",
-        lambda provider, spatial, temporal, **kw: np.full((3, 8, 8), 0.3, dtype=np.float32),
+        lambda provider, spatial, temporal, **kw: np.full(
+            (3, 8, 8), 0.3, dtype=np.float32
+        ),
     )
 
     seen = []
@@ -295,11 +309,13 @@ def test_anysat_batch_prefetch_passes_raw_input(monkeypatch):
     emb = AnySatEmbedder()
     monkeypatch.setenv("RS_EMBED_ANYSAT_FETCH_WORKERS", "1")
     monkeypatch.setenv("RS_EMBED_ANYSAT_FRAMES", "3")
-    monkeypatch.setattr(emb, "_get_provider", lambda: object())
+    monkeypatch.setattr(emb, "_get_provider", lambda _backend: object())
     monkeypatch.setattr(
         anysat,
         "_fetch_s2_10_raw_tchw",
-        lambda provider, spatial, temporal, **kw: np.full((3, 10, 8, 8), 4321.0, dtype=np.float32),
+        lambda provider, spatial, temporal, **kw: np.full(
+            (3, 10, 8, 8), 4321.0, dtype=np.float32
+        ),
     )
 
     seen = []
@@ -330,11 +346,13 @@ def test_agrifm_batch_prefetch_passes_raw_input(monkeypatch):
     emb = AgriFMEmbedder()
     monkeypatch.setenv("RS_EMBED_AGRIFM_FETCH_WORKERS", "1")
     monkeypatch.setenv("RS_EMBED_AGRIFM_FRAMES", "4")
-    monkeypatch.setattr(emb, "_get_provider", lambda: object())
+    monkeypatch.setattr(emb, "_get_provider", lambda _backend: object())
     monkeypatch.setattr(
         agri,
         "_fetch_s2_10_raw_tchw",
-        lambda provider, spatial, temporal, **kw: np.full((4, 10, 8, 8), 2222.0, dtype=np.float32),
+        lambda provider, spatial, temporal, **kw: np.full(
+            (4, 10, 8, 8), 2222.0, dtype=np.float32
+        ),
     )
 
     seen = []
@@ -364,11 +382,13 @@ def test_wildsat_batch_prefetch_passes_raw_input(monkeypatch):
 
     emb = WildSATEmbedder()
     monkeypatch.setenv("RS_EMBED_WILDSAT_FETCH_WORKERS", "1")
-    monkeypatch.setattr(emb, "_get_provider", lambda: object())
+    monkeypatch.setattr(emb, "_get_provider", lambda _backend: object())
     monkeypatch.setattr(
         ws,
         "_fetch_s2_rgb_chw",
-        lambda provider, spatial, temporal, **kw: np.full((3, 8, 8), 0.4, dtype=np.float32),
+        lambda provider, spatial, temporal, **kw: np.full(
+            (3, 8, 8), 0.4, dtype=np.float32
+        ),
     )
 
     seen = []
@@ -398,11 +418,13 @@ def test_galileo_batch_prefetch_passes_raw_input(monkeypatch):
     emb = GalileoEmbedder()
     monkeypatch.setenv("RS_EMBED_GALILEO_FETCH_WORKERS", "1")
     monkeypatch.setenv("RS_EMBED_GALILEO_FRAMES", "5")
-    monkeypatch.setattr(emb, "_get_provider", lambda: object())
+    monkeypatch.setattr(emb, "_get_provider", lambda _backend: object())
     monkeypatch.setattr(
         gal,
         "_fetch_s2_10_raw_tchw",
-        lambda provider, spatial, temporal, **kw: np.full((5, 10, 8, 8), 2222.0, dtype=np.float32),
+        lambda provider, spatial, temporal, **kw: np.full(
+            (5, 10, 8, 8), 2222.0, dtype=np.float32
+        ),
     )
 
     seen = []
@@ -432,7 +454,7 @@ def test_satvision_toa_batch_prefetch_passes_raw_input(monkeypatch):
 
     emb = SatVisionTOAEmbedder()
     monkeypatch.setenv("RS_EMBED_SATVISION_TOA_FETCH_WORKERS", "1")
-    monkeypatch.setattr(emb, "_get_provider", lambda: object())
+    monkeypatch.setattr(emb, "_get_provider", lambda _backend: object())
     monkeypatch.setattr(
         emb,
         "_resolve_runtime",
@@ -451,11 +473,17 @@ def test_satvision_toa_batch_prefetch_passes_raw_input(monkeypatch):
             "emissive_maxs": (375.0,) * 8,
         },
     )
-    monkeypatch.setattr(emb, "_prepare_input", lambda raw_chw, **kw: np.asarray(raw_chw, dtype=np.float32))
+    monkeypatch.setattr(
+        emb,
+        "_prepare_input",
+        lambda raw_chw, **kw: np.asarray(raw_chw, dtype=np.float32),
+    )
     monkeypatch.setattr(
         sv,
         "_fetch_toa_raw_chw_from_gee",
-        lambda provider, spatial, temporal, sensor: np.full((14, 8, 8), 2000.0 + spatial.lon, dtype=np.float32),
+        lambda provider, spatial, temporal, sensor: np.full(
+            (14, 8, 8), 2000.0 + spatial.lon, dtype=np.float32
+        ),
     )
     monkeypatch.setattr(
         sv,
@@ -493,7 +521,9 @@ def test_precomputed_batch_overrides_call_single_embedding(monkeypatch):
     monkeypatch.setattr(
         gse,
         "get_embedding",
-        lambda **kw: Embedding(data=np.array([kw["spatial"].lon], dtype=np.float32), meta={}),
+        lambda **kw: Embedding(
+            data=np.array([kw["spatial"].lon], dtype=np.float32), meta={}
+        ),
     )
     out_gse = gse.get_embeddings_batch(
         spatials=_spatials(2),
@@ -509,7 +539,9 @@ def test_precomputed_batch_overrides_call_single_embedding(monkeypatch):
     monkeypatch.setattr(
         cop,
         "get_embedding",
-        lambda **kw: Embedding(data=np.array([kw["spatial"].lon], dtype=np.float32), meta={}),
+        lambda **kw: Embedding(
+            data=np.array([kw["spatial"].lon], dtype=np.float32), meta={}
+        ),
     )
     out_cop = cop.get_embeddings_batch(
         spatials=_spatials(2),
@@ -525,7 +557,9 @@ def test_precomputed_batch_overrides_call_single_embedding(monkeypatch):
     monkeypatch.setattr(
         tes,
         "get_embedding",
-        lambda **kw: Embedding(data=np.array([kw["spatial"].lon], dtype=np.float32), meta={}),
+        lambda **kw: Embedding(
+            data=np.array([kw["spatial"].lon], dtype=np.float32), meta={}
+        ),
     )
     out_tes = tes.get_embeddings_batch(
         spatials=_spatials(2),

@@ -5,21 +5,23 @@ from rs_embed.core import registry
 
 # ── fixture to isolate registry between tests ──────────────────────
 
+
 @pytest.fixture(autouse=True)
 def clean_registry():
     """Clear registry before and after every test in this module."""
     registry._REGISTRY.clear()
-    if hasattr(registry, "_REGISTRY_IMPORT_ERROR"):
-        registry._REGISTRY_IMPORT_ERROR = None
+    if hasattr(registry, "_REGISTRY_IMPORT_ERRORS"):
+        registry._REGISTRY_IMPORT_ERRORS.clear()
     yield
     registry._REGISTRY.clear()
-    if hasattr(registry, "_REGISTRY_IMPORT_ERROR"):
-        registry._REGISTRY_IMPORT_ERROR = None
+    if hasattr(registry, "_REGISTRY_IMPORT_ERRORS"):
+        registry._REGISTRY_IMPORT_ERRORS.clear()
 
 
 # ══════════════════════════════════════════════════════════════════════
 # register + get_embedder_cls
 # ══════════════════════════════════════════════════════════════════════
+
 
 def test_register_and_get_embedder_cls():
     @registry.register("TestModel")
@@ -34,11 +36,13 @@ def test_register_and_get_embedder_cls():
 
 def test_get_embedder_cls_missing():
     from rs_embed.core.errors import ModelError
+
     with pytest.raises(ModelError, match="Unknown model"):
         registry.get_embedder_cls("missing-model")
 
 
 # ── case insensitivity ─────────────────────────────────────────────
+
 
 def test_register_case_insensitive():
     @registry.register("MiXeD_CaSe")
@@ -50,6 +54,7 @@ def test_register_case_insensitive():
 
 
 # ── multiple registrations ─────────────────────────────────────────
+
 
 def test_register_multiple():
     @registry.register("alpha")
@@ -67,6 +72,7 @@ def test_register_multiple():
 
 # ── overwrite same name ────────────────────────────────────────────
 
+
 def test_register_overwrite():
     @registry.register("dup")
     class First:
@@ -81,12 +87,14 @@ def test_register_overwrite():
 
 # ── empty registry ─────────────────────────────────────────────────
 
+
 def test_list_models_empty():
     assert registry.list_models() == []
 
 
 def test_get_embedder_cls_empty_shows_available():
     from rs_embed.core.errors import ModelError
+
     with pytest.raises(ModelError, match="Available: \\[\\]"):
         registry.get_embedder_cls("anything")
 
@@ -95,13 +103,12 @@ def test_get_embedder_cls_includes_last_import_error(monkeypatch):
     from rs_embed.core.errors import ModelError
 
     registry._REGISTRY.clear()
-    registry._REGISTRY_IMPORT_ERROR = RuntimeError("boom")
-    monkeypatch.setattr(registry, "_ensure_registry_loaded", lambda: None)
+    registry._REGISTRY_IMPORT_ERRORS["anything"] = RuntimeError("boom")
 
     with pytest.raises(ModelError) as ei:
         registry.get_embedder_cls("anything")
     msg = str(ei.value)
-    assert "Last embedder import error" in msg
+    assert "Import error for 'anything'" in msg
     assert "RuntimeError: boom" in msg
 
 

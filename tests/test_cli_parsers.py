@@ -10,6 +10,7 @@ from rs_embed.core.specs import BBox, PointBuffer
 # _parse_bands / _parse_models
 # ══════════════════════════════════════════════════════════════════════
 
+
 def test_parse_bands_basic():
     assert cli._parse_bands("B4, B3, B2") == ("B4", "B3", "B2")
 
@@ -38,6 +39,7 @@ def test_parse_models_single():
 # ══════════════════════════════════════════════════════════════════════
 # _parse_value_range
 # ══════════════════════════════════════════════════════════════════════
+
 
 def test_parse_value_range_ok():
     assert cli._parse_value_range("1,2") == (1.0, 2.0)
@@ -69,10 +71,21 @@ def test_parse_value_range_single_number():
 # _parse_spatial — bbox vs pointbuffer
 # ══════════════════════════════════════════════════════════════════════
 
+
 def test_parse_spatial_bbox():
     args = cli.build_parser().parse_args(
-        ["inspect-gee", "--collection", "c", "--bands", "B1",
-         "--bbox", "0", "0", "1", "1"]
+        [
+            "inspect-gee",
+            "--collection",
+            "c",
+            "--bands",
+            "B1",
+            "--bbox",
+            "0",
+            "0",
+            "1",
+            "1",
+        ]
     )
     spatial = cli._parse_spatial(args)
     assert isinstance(spatial, BBox)
@@ -82,8 +95,17 @@ def test_parse_spatial_bbox():
 
 def test_parse_spatial_pointbuffer():
     args = cli.build_parser().parse_args(
-        ["inspect-gee", "--collection", "c", "--bands", "B1",
-         "--pointbuffer", "1", "2", "128"]
+        [
+            "inspect-gee",
+            "--collection",
+            "c",
+            "--bands",
+            "B1",
+            "--pointbuffer",
+            "1",
+            "2",
+            "128",
+        ]
     )
     spatial = cli._parse_spatial(args)
     assert isinstance(spatial, PointBuffer)
@@ -95,9 +117,22 @@ def test_parse_spatial_pointbuffer():
 def test_bbox_and_pointbuffer_mutually_exclusive():
     with pytest.raises(SystemExit):
         cli.build_parser().parse_args(
-            ["inspect-gee", "--collection", "c", "--bands", "B1",
-             "--bbox", "0", "0", "1", "1",
-             "--pointbuffer", "1", "2", "128"]
+            [
+                "inspect-gee",
+                "--collection",
+                "c",
+                "--bands",
+                "B1",
+                "--bbox",
+                "0",
+                "0",
+                "1",
+                "1",
+                "--pointbuffer",
+                "1",
+                "2",
+                "128",
+            ]
         )
 
 
@@ -112,10 +147,23 @@ def test_spatial_required():
 # _parse_temporal — year vs range
 # ══════════════════════════════════════════════════════════════════════
 
+
 def test_parse_temporal_year():
     args = cli.build_parser().parse_args(
-        ["inspect-gee", "--collection", "c", "--bands", "B1",
-         "--bbox", "0", "0", "1", "1", "--year", "2024"]
+        [
+            "inspect-gee",
+            "--collection",
+            "c",
+            "--bands",
+            "B1",
+            "--bbox",
+            "0",
+            "0",
+            "1",
+            "1",
+            "--year",
+            "2024",
+        ]
     )
     t = cli._parse_temporal(args)
     assert t is not None
@@ -125,9 +173,21 @@ def test_parse_temporal_year():
 
 def test_parse_temporal_range():
     args = cli.build_parser().parse_args(
-        ["inspect-gee", "--collection", "c", "--bands", "B1",
-         "--bbox", "0", "0", "1", "1",
-         "--range", "2022-06-01", "2022-09-01"]
+        [
+            "inspect-gee",
+            "--collection",
+            "c",
+            "--bands",
+            "B1",
+            "--bbox",
+            "0",
+            "0",
+            "1",
+            "1",
+            "--range",
+            "2022-06-01",
+            "2022-09-01",
+        ]
     )
     t = cli._parse_temporal(args)
     assert t is not None
@@ -137,8 +197,18 @@ def test_parse_temporal_range():
 
 def test_parse_temporal_none():
     args = cli.build_parser().parse_args(
-        ["inspect-gee", "--collection", "c", "--bands", "B1",
-         "--bbox", "0", "0", "1", "1"]
+        [
+            "inspect-gee",
+            "--collection",
+            "c",
+            "--bands",
+            "B1",
+            "--bbox",
+            "0",
+            "0",
+            "1",
+            "1",
+        ]
     )
     t = cli._parse_temporal(args)
     assert t is None
@@ -148,10 +218,21 @@ def test_parse_temporal_none():
 # inspect-gee subcommand defaults
 # ══════════════════════════════════════════════════════════════════════
 
+
 def test_inspect_gee_defaults():
     args = cli.build_parser().parse_args(
-        ["inspect-gee", "--collection", "COPERNICUS/S2_SR_HARMONIZED",
-         "--bands", "B4,B3,B2", "--bbox", "0", "0", "1", "1"]
+        [
+            "inspect-gee",
+            "--collection",
+            "COPERNICUS/S2_SR_HARMONIZED",
+            "--bands",
+            "B4,B3,B2",
+            "--bbox",
+            "0",
+            "0",
+            "1",
+            "1",
+        ]
     )
     assert args.scale_m == 10
     assert args.cloudy_pct == 30
@@ -165,11 +246,21 @@ def test_inspect_gee_defaults():
 # export-npz subcommand
 # ══════════════════════════════════════════════════════════════════════
 
+
 def test_export_npz_defaults():
     args = cli.build_parser().parse_args(
-        ["export-npz", "--models", "tessera",
-         "--out", "/tmp/out.npz",
-         "--bbox", "0", "0", "1", "1"]
+        [
+            "export-npz",
+            "--models",
+            "tessera",
+            "--out",
+            "/tmp/out.npz",
+            "--bbox",
+            "0",
+            "0",
+            "1",
+            "1",
+        ]
     )
     assert args.models == ["tessera"]
     assert args.out == "/tmp/out.npz"
@@ -185,9 +276,18 @@ def test_export_npz_defaults():
 
 def test_export_npz_multiple_models():
     args = cli.build_parser().parse_args(
-        ["export-npz", "--models", "tessera,remoteclip_s2rgb",
-         "--out", "/tmp/out.npz",
-         "--bbox", "0", "0", "1", "1"]
+        [
+            "export-npz",
+            "--models",
+            "tessera,remoteclip_s2rgb",
+            "--out",
+            "/tmp/out.npz",
+            "--bbox",
+            "0",
+            "0",
+            "1",
+            "1",
+        ]
     )
     assert args.models == ["tessera", "remoteclip_s2rgb"]
 
@@ -195,6 +295,7 @@ def test_export_npz_multiple_models():
 # ══════════════════════════════════════════════════════════════════════
 # missing required args
 # ══════════════════════════════════════════════════════════════════════
+
 
 def test_no_subcommand_fails():
     with pytest.raises(SystemExit):
@@ -212,6 +313,7 @@ def test_inspect_gee_missing_collection():
 # _parse_models / _parse_bands — edge cases
 # ══════════════════════════════════════════════════════════════════════
 
+
 def test_parse_models_empty_raises():
     with pytest.raises(argparse.ArgumentTypeError):
         cli._parse_models("")
@@ -225,12 +327,25 @@ def test_parse_bands_whitespace():
 # export-npz flag parsing
 # ══════════════════════════════════════════════════════════════════════
 
+
 def test_export_npz_flag_options():
     args = cli.build_parser().parse_args(
-        ["export-npz", "--models", "tessera",
-         "--out", "/tmp/out.npz",
-         "--bbox", "0", "0", "1", "1",
-         "--no-inputs", "--no-embeddings", "--no-json", "--fail-on-bad-input"]
+        [
+            "export-npz",
+            "--models",
+            "tessera",
+            "--out",
+            "/tmp/out.npz",
+            "--bbox",
+            "0",
+            "0",
+            "1",
+            "1",
+            "--no-inputs",
+            "--no-embeddings",
+            "--no-json",
+            "--fail-on-bad-input",
+        ]
     )
     assert args.no_inputs is True
     assert args.no_embeddings is True
@@ -240,20 +355,42 @@ def test_export_npz_flag_options():
 
 def test_export_npz_grid_output():
     args = cli.build_parser().parse_args(
-        ["export-npz", "--models", "tessera",
-         "--out", "/tmp/out.npz",
-         "--bbox", "0", "0", "1", "1",
-         "--output", "grid"]
+        [
+            "export-npz",
+            "--models",
+            "tessera",
+            "--out",
+            "/tmp/out.npz",
+            "--bbox",
+            "0",
+            "0",
+            "1",
+            "1",
+            "--output",
+            "grid",
+        ]
     )
     assert args.output == "grid"
 
 
 def test_export_npz_custom_backend_device():
     args = cli.build_parser().parse_args(
-        ["export-npz", "--models", "tessera",
-         "--out", "/tmp/out.npz",
-         "--bbox", "0", "0", "1", "1",
-         "--backend", "local", "--device", "cpu"]
+        [
+            "export-npz",
+            "--models",
+            "tessera",
+            "--out",
+            "/tmp/out.npz",
+            "--bbox",
+            "0",
+            "0",
+            "1",
+            "1",
+            "--backend",
+            "local",
+            "--device",
+            "cpu",
+        ]
     )
     assert args.backend == "local"
     assert args.device == "cpu"

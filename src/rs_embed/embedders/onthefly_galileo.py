@@ -21,10 +21,8 @@ from ..providers import ProviderBase
 from ._vit_mae_utils import ensure_torch
 from .base import EmbedderBase
 from .runtime_utils import (
-    call_provider_getter as _call_provider_getter,
     coerce_input_to_tchw as _coerce_input_to_tchw,
     fetch_s2_multiframe_raw_tchw as _fetch_s2_multiframe_raw_tchw,
-    get_cached_provider,
     is_provider_backend,
     load_cached_with_device as _load_cached_with_device,
     resolve_device_auto_torch as _resolve_device,
@@ -34,6 +32,7 @@ from .meta_utils import build_meta, temporal_midpoint_str, temporal_to_range
 
 _S2_10_BANDS = ["B2", "B3", "B4", "B5", "B6", "B7", "B8", "B8A", "B11", "B12"]
 
+
 def _resize_tchw(x_tchw: np.ndarray, *, out_hw: int) -> np.ndarray:
     ensure_torch()
     import torch
@@ -42,7 +41,9 @@ def _resize_tchw(x_tchw: np.ndarray, *, out_hw: int) -> np.ndarray:
     if x_tchw.ndim != 4:
         raise ModelError(f"Expected [T,C,H,W], got {x_tchw.shape}")
     x = torch.from_numpy(x_tchw.astype(np.float32, copy=False))
-    y = F.interpolate(x, size=(int(out_hw), int(out_hw)), mode="bilinear", align_corners=False)
+    y = F.interpolate(
+        x, size=(int(out_hw), int(out_hw)), mode="bilinear", align_corners=False
+    )
     return y.detach().cpu().numpy().astype(np.float32)
 
 
@@ -174,7 +175,9 @@ def _load_galileo_single_file_module(repo_root: str):
 
     spec = importlib.util.spec_from_file_location("galileo_single_file", sf_path)
     if spec is None or spec.loader is None:
-        raise ModelError("Failed to build import spec for Galileo single_file_galileo.py")
+        raise ModelError(
+            "Failed to build import spec for Galileo single_file_galileo.py"
+        )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)  # type: ignore[attr-defined]
     return mod
@@ -220,7 +223,9 @@ def _load_galileo_cached(
 
     mod = _load_galileo_single_file_module(repo_root)
     if not hasattr(mod, "Encoder"):
-        raise ModelError("Galileo single_file_galileo.py does not expose Encoder class.")
+        raise ModelError(
+            "Galileo single_file_galileo.py does not expose Encoder class."
+        )
 
     model_folder = Path(model_root)
     load_fn = getattr(mod.Encoder, "load_from_folder", None)
@@ -300,7 +305,9 @@ def _prepare_galileo_encoder_inputs(
     import torch
 
     if raw_tchw.ndim != 4 or int(raw_tchw.shape[1]) != 10:
-        raise ModelError(f"Galileo expects TCHW with C=10 S2 bands, got {getattr(raw_tchw, 'shape', None)}")
+        raise ModelError(
+            f"Galileo expects TCHW with C=10 S2 bands, got {getattr(raw_tchw, 'shape', None)}"
+        )
     if image_size <= 0:
         raise ModelError(f"image_size must be > 0, got {image_size}")
     if patch_size <= 0:
@@ -374,7 +381,13 @@ def _prepare_galileo_encoder_inputs(
     if months_arr.size == 0:
         months_arr = np.full((t,), 6, dtype=np.int64)
     if months_arr.size < t:
-        months_arr = np.concatenate([months_arr, np.full((t - months_arr.size,), int(months_arr[-1]), dtype=np.int64)], axis=0)
+        months_arr = np.concatenate(
+            [
+                months_arr,
+                np.full((t - months_arr.size,), int(months_arr[-1]), dtype=np.int64),
+            ],
+            axis=0,
+        )
     elif months_arr.size > t:
         months_arr = months_arr[:t]
     months_arr = np.clip(months_arr, 1, 12).astype(np.int64)
@@ -445,20 +458,26 @@ def _galileo_forward(
     # pooled features from all visible tokens
     vec_t = encoder.average_tokens(s_t_x, sp_x, t_x, st_x, s_t_m, sp_m, t_m, st_m)
     if vec_t.ndim != 2 or int(vec_t.shape[0]) != 1:
-        raise ModelError(f"Unexpected Galileo pooled output shape: {tuple(vec_t.shape)}")
+        raise ModelError(
+            f"Unexpected Galileo pooled output shape: {tuple(vec_t.shape)}"
+        )
     vec = vec_t[0].detach().float().cpu().numpy().astype(np.float32)
 
     # grid features from S2-related space-time groups only
     s_t_groups = list(getattr(mod, "SPACE_TIME_BANDS_GROUPS_IDX").keys())
     s2_group_indices = [i for i, key in enumerate(s_t_groups) if "S2" in str(key)]
     if not s2_group_indices:
-        raise ModelError("Failed to locate Galileo S2 group indices in SPACE_TIME_BANDS_GROUPS_IDX")
+        raise ModelError(
+            "Failed to locate Galileo S2 group indices in SPACE_TIME_BANDS_GROUPS_IDX"
+        )
 
     # s_t_x shape: [B,H,W,T,Cg,D]
     s_t_sel = s_t_x[:, :, :, :, s2_group_indices, :]
     # average over time and channel-groups -> [B,H,W,D]
     grid_hwd = s_t_sel.mean(dim=3).mean(dim=3)[0]
-    grid = grid_hwd.detach().float().cpu().numpy().transpose(2, 0, 1).astype(np.float32)  # [D,H,W]
+    grid = (
+        grid_hwd.detach().float().cpu().numpy().transpose(2, 0, 1).astype(np.float32)
+    )  # [D,H,W]
 
     fmeta = {
         "feature_dim": int(vec.shape[0]),
@@ -477,9 +496,7 @@ class GalileoEmbedder(EmbedderBase):
     DEFAULT_IMAGE_SIZE = 64
     DEFAULT_FRAMES = 8
     DEFAULT_FETCH_WORKERS = 8
-
-    def __init__(self) -> None:
-        self._providers: Dict[str, ProviderBase] = {}
+    _allow_auto_backend = False
 
     def describe(self) -> Dict[str, Any]:
         return {
@@ -508,13 +525,6 @@ class GalileoEmbedder(EmbedderBase):
             ],
         }
 
-    def _get_provider(self, backend: str) -> ProviderBase:
-        return get_cached_provider(
-            self._providers,
-            backend=backend,
-            allow_auto=False,
-        )
-
     @staticmethod
     def _default_sensor() -> SensorSpec:
         return SensorSpec(
@@ -528,7 +538,12 @@ class GalileoEmbedder(EmbedderBase):
 
     @staticmethod
     def _resolve_fetch_workers(n_items: int) -> int:
-        v = int(os.environ.get("RS_EMBED_GALILEO_FETCH_WORKERS", str(GalileoEmbedder.DEFAULT_FETCH_WORKERS)))
+        v = int(
+            os.environ.get(
+                "RS_EMBED_GALILEO_FETCH_WORKERS",
+                str(GalileoEmbedder.DEFAULT_FETCH_WORKERS),
+            )
+        )
         return max(1, min(int(n_items), v))
 
     def get_embedding(
@@ -548,30 +563,44 @@ class GalileoEmbedder(EmbedderBase):
         ss = sensor or self._default_sensor()
         t = temporal_to_range(temporal)
 
-        model_size = os.environ.get("RS_EMBED_GALILEO_MODEL_SIZE", self.DEFAULT_MODEL_SIZE).strip()
+        model_size = os.environ.get(
+            "RS_EMBED_GALILEO_MODEL_SIZE", self.DEFAULT_MODEL_SIZE
+        ).strip()
         model_path = os.environ.get("RS_EMBED_GALILEO_MODEL_PATH")
         repo_path = os.environ.get("RS_EMBED_GALILEO_REPO_PATH")
-        repo_url = os.environ.get("RS_EMBED_GALILEO_REPO_URL", "https://github.com/nasaharvest/galileo.git").strip()
+        repo_url = os.environ.get(
+            "RS_EMBED_GALILEO_REPO_URL", "https://github.com/nasaharvest/galileo.git"
+        ).strip()
         repo_cache = os.environ.get(
             "RS_EMBED_GALILEO_REPO_CACHE",
             os.path.join("~", ".cache", "rs_embed", "galileo"),
         )
-        auto_download_repo = os.environ.get("RS_EMBED_GALILEO_AUTO_DOWNLOAD_REPO", "1").strip() not in {
+        auto_download_repo = os.environ.get(
+            "RS_EMBED_GALILEO_AUTO_DOWNLOAD_REPO", "1"
+        ).strip() not in {
             "0",
             "false",
             "False",
         }
 
-        image_size = int(os.environ.get("RS_EMBED_GALILEO_IMG", str(self.DEFAULT_IMAGE_SIZE)))
-        patch_size = int(os.environ.get("RS_EMBED_GALILEO_PATCH", str(self.DEFAULT_PATCH)))
-        n_frames = max(1, int(os.environ.get("RS_EMBED_GALILEO_FRAMES", str(self.DEFAULT_FRAMES))))
+        image_size = int(
+            os.environ.get("RS_EMBED_GALILEO_IMG", str(self.DEFAULT_IMAGE_SIZE))
+        )
+        patch_size = int(
+            os.environ.get("RS_EMBED_GALILEO_PATCH", str(self.DEFAULT_PATCH))
+        )
+        n_frames = max(
+            1, int(os.environ.get("RS_EMBED_GALILEO_FRAMES", str(self.DEFAULT_FRAMES)))
+        )
         norm_mode = os.environ.get("RS_EMBED_GALILEO_NORM", "unit_scale").strip()
         add_layernorm = os.environ.get("RS_EMBED_GALILEO_ADD_LN", "1").strip() not in {
             "0",
             "false",
             "False",
         }
-        include_ndvi = os.environ.get("RS_EMBED_GALILEO_INCLUDE_NDVI", "1").strip() not in {
+        include_ndvi = os.environ.get(
+            "RS_EMBED_GALILEO_INCLUDE_NDVI", "1"
+        ).strip() not in {
             "0",
             "false",
             "False",
@@ -579,7 +608,7 @@ class GalileoEmbedder(EmbedderBase):
         month_override = os.environ.get("RS_EMBED_GALILEO_MONTH")
 
         if input_chw is None:
-            provider = _call_provider_getter(self._get_provider, backend)
+            provider = self._get_provider(backend)
             raw_tchw = _fetch_s2_10_raw_tchw(
                 provider,
                 spatial,
@@ -715,8 +744,10 @@ class GalileoEmbedder(EmbedderBase):
 
         t = temporal_to_range(temporal)
         ss = sensor or self._default_sensor()
-        provider = _call_provider_getter(self._get_provider, backend)
-        n_frames = max(1, int(os.environ.get("RS_EMBED_GALILEO_FRAMES", str(self.DEFAULT_FRAMES))))
+        provider = self._get_provider(backend)
+        n_frames = max(
+            1, int(os.environ.get("RS_EMBED_GALILEO_FRAMES", str(self.DEFAULT_FRAMES)))
+        )
 
         n = len(spatials)
         prefetched_raw: List[Optional[np.ndarray]] = [None] * n

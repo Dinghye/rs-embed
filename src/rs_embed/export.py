@@ -3,23 +3,12 @@ from __future__ import annotations
 """High-level export entrypoints.
 
 `export_npz` is a convenience wrapper around `rs_embed.api.export_batch`.
-Legacy helper names are re-exported from `core.export_helpers` for compatibility.
 """
 
 import os
 from typing import Any, Dict, List, Optional
 
-from .core.export_helpers import (
-    embedding_to_numpy as _embedding_to_numpy,
-    jsonable as _jsonable,
-    sanitize_key as _sanitize_key,
-    sha1 as _sha1,
-    utc_ts as _utc_ts,
-)
 from .core.specs import InputPrepSpec, OutputSpec, SensorSpec, SpatialSpec, TemporalSpec
-from .internal.api.model_defaults_helpers import (
-    default_sensor_for_model as _default_sensor_for_model,
-)
 
 
 def export_npz(

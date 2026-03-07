@@ -48,7 +48,11 @@ def _flip_data_y(data: Any) -> Tuple[Any, bool, str]:
         if len(dims) >= 2:
             dim = dims[-2]
             try:
-                return data.isel({dim: slice(None, None, -1)}), True, f"xarray isel({dim}=reverse)"
+                return (
+                    data.isel({dim: slice(None, None, -1)}),
+                    True,
+                    f"xarray isel({dim}=reverse)",
+                )
             except Exception:
                 pass
 

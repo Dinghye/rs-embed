@@ -5,7 +5,7 @@ import hashlib
 import json
 import re
 from dataclasses import asdict, is_dataclass
-from typing import Any, Dict
+from typing import Any
 
 import numpy as np
 
@@ -14,7 +14,7 @@ from .specs import SensorSpec
 
 
 def utc_ts() -> str:
-    return _dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    return _dt.datetime.now(_dt.timezone.utc).replace(microsecond=0).isoformat() + "Z"
 
 
 def sanitize_key(s: str) -> str:
@@ -57,8 +57,14 @@ def jsonable(obj: Any) -> Any:
         return jsonable(asdict(obj))
     try:
         import xarray as xr
+
         if isinstance(obj, xr.DataArray):
-            return {"__xarray__": True, "dtype": str(obj.dtype), "shape": list(obj.shape), "dims": list(obj.dims)}
+            return {
+                "__xarray__": True,
+                "dtype": str(obj.dtype),
+                "shape": list(obj.shape),
+                "dims": list(obj.dims),
+            }
     except Exception:
         pass
     return repr(obj)
@@ -69,6 +75,7 @@ def embedding_to_numpy(emb: Embedding) -> np.ndarray:
         return emb.data.astype(np.float32, copy=False)
     try:
         import xarray as xr
+
         if isinstance(emb.data, xr.DataArray):
             return np.asarray(emb.data.values, dtype=np.float32)
     except Exception:

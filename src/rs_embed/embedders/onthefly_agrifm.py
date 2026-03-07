@@ -23,12 +23,9 @@ from ..providers import ProviderBase
 from ._vit_mae_utils import ensure_torch
 from .base import EmbedderBase
 from .runtime_utils import (
-    call_provider_getter as _call_provider_getter,
     fetch_s2_multiframe_raw_tchw as _fetch_s2_multiframe_raw_tchw,
-    get_cached_provider,
     is_provider_backend,
     load_cached_with_device as _load_cached_with_device,
-    resolve_device_auto_torch as _resolve_device,
 )
 from .meta_utils import build_meta, temporal_midpoint_str, temporal_to_range
 
@@ -131,7 +128,6 @@ def _download_agrifm_ckpt(
     return dst
 
 
-
 def _resize_tchw(x_tchw: np.ndarray, *, out_hw: int) -> np.ndarray:
     ensure_torch()
     import torch
@@ -140,13 +136,17 @@ def _resize_tchw(x_tchw: np.ndarray, *, out_hw: int) -> np.ndarray:
     if x_tchw.ndim != 4:
         raise ModelError(f"Expected [T,C,H,W], got {x_tchw.shape}")
     x = torch.from_numpy(x_tchw.astype(np.float32, copy=False))
-    y = F.interpolate(x, size=(int(out_hw), int(out_hw)), mode="bilinear", align_corners=False)
+    y = F.interpolate(
+        x, size=(int(out_hw), int(out_hw)), mode="bilinear", align_corners=False
+    )
     return y.detach().cpu().numpy().astype(np.float32)
 
 
 def _normalize_s2_for_agrifm(raw_tchw: np.ndarray, *, mode: str) -> np.ndarray:
     if raw_tchw.ndim != 4 or int(raw_tchw.shape[1]) != len(_S2_10_BANDS):
-        raise ModelError(f"AgriFM expects TCHW with C=10, got {getattr(raw_tchw, 'shape', None)}")
+        raise ModelError(
+            f"AgriFM expects TCHW with C=10, got {getattr(raw_tchw, 'shape', None)}"
+        )
 
     x = np.asarray(raw_tchw, dtype=np.float32)
     x = np.nan_to_num(x, nan=0.0, posinf=0.0, neginf=0.0)
@@ -173,7 +173,9 @@ def _ensure_agrifm_repo(*, repo_url: str, cache_root: str) -> str:
     os.makedirs(root, exist_ok=True)
     dst = os.path.join(root, "AgriFM")
 
-    if os.path.isdir(os.path.join(dst, "AgriFM")) and os.path.isfile(os.path.join(dst, "README.md")):
+    if os.path.isdir(os.path.join(dst, "AgriFM")) and os.path.isfile(
+        os.path.join(dst, "README.md")
+    ):
         return dst
 
     try:
@@ -257,7 +259,9 @@ def _install_agrifm_lightweight_shims() -> None:
         mod = types.ModuleType(name)
         # Some dependency loaders call importlib.util.find_spec("mmengine").
         # A module in sys.modules with __spec__=None can trigger ValueError.
-        mod.__spec__ = importlib.util.spec_from_loader(name, loader=None, is_package=is_package)
+        mod.__spec__ = importlib.util.spec_from_loader(
+            name, loader=None, is_package=is_package
+        )
         if is_package:
             # Mark as package so dotted imports like mmseg.models.decode_heads work.
             mod.__path__ = []  # type: ignore[attr-defined]
@@ -336,7 +340,14 @@ def _install_agrifm_lightweight_shims() -> None:
     if "mmengine.runner" not in sys.modules:
         mod_mmengine_runner = _new_module("mmengine.runner")
 
-        def load_checkpoint(model, filename, strict=False, revise_keys=None, map_location="cpu", **kwargs):
+        def load_checkpoint(
+            model,
+            filename,
+            strict=False,
+            revise_keys=None,
+            map_location="cpu",
+            **kwargs,
+        ):
             obj = torch.load(filename, map_location=map_location, weights_only=False)
             if isinstance(obj, dict) and isinstance(obj.get("state_dict"), dict):
                 sd = obj["state_dict"]
@@ -377,7 +388,9 @@ def _install_agrifm_lightweight_shims() -> None:
     else:
         mod_mmengine = sys.modules.get("mmengine")
         if mod_mmengine is not None and getattr(mod_mmengine, "__spec__", None) is None:
-            mod_mmengine.__spec__ = importlib.util.spec_from_loader("mmengine", loader=None)
+            mod_mmengine.__spec__ = importlib.util.spec_from_loader(
+                "mmengine", loader=None
+            )
 
 
 @lru_cache(maxsize=8)
@@ -389,16 +402,22 @@ def _import_agrifm_swin(repo_root: str):
         return importlib.import_module("AgriFM.models.video_swin_transformer")
     except Exception as first_error:
         # Fallback: import file directly with lightweight shims for mmseg/mmengine.
-        mod_path = os.path.join(repo_abs, "AgriFM", "models", "video_swin_transformer.py")
+        mod_path = os.path.join(
+            repo_abs, "AgriFM", "models", "video_swin_transformer.py"
+        )
         if not os.path.isfile(mod_path):
             raise ModelError(
                 f"Failed to locate AgriFM backbone source file: {mod_path}"
             ) from first_error
         try:
             _install_agrifm_lightweight_shims()
-            spec = importlib.util.spec_from_file_location("agrifm_video_swin_impl", mod_path)
+            spec = importlib.util.spec_from_file_location(
+                "agrifm_video_swin_impl", mod_path
+            )
             if spec is None or spec.loader is None:
-                raise RuntimeError("Failed to create import spec for AgriFM video_swin_transformer.py")
+                raise RuntimeError(
+                    "Failed to create import spec for AgriFM video_swin_transformer.py"
+                )
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)  # type: ignore[attr-defined]
             return mod
@@ -425,16 +444,24 @@ def _resolve_ckpt_path() -> str:
             "or enable RS_EMBED_AGRIFM_AUTO_DOWNLOAD=1."
         )
 
-    cache_dir = str(os.environ.get("RS_EMBED_AGRIFM_CACHE_DIR", _AGRIFM_DEFAULT_CACHE_DIR)).strip()
+    cache_dir = str(
+        os.environ.get("RS_EMBED_AGRIFM_CACHE_DIR", _AGRIFM_DEFAULT_CACHE_DIR)
+    ).strip()
     if not cache_dir:
         cache_dir = _AGRIFM_DEFAULT_CACHE_DIR
-    filename = str(os.environ.get("RS_EMBED_AGRIFM_CKPT_FILE", _AGRIFM_DEFAULT_CKPT_FILENAME)).strip()
+    filename = str(
+        os.environ.get("RS_EMBED_AGRIFM_CKPT_FILE", _AGRIFM_DEFAULT_CKPT_FILENAME)
+    ).strip()
     if not filename:
         filename = _AGRIFM_DEFAULT_CKPT_FILENAME
-    url = str(os.environ.get("RS_EMBED_AGRIFM_CKPT_URL", _AGRIFM_DEFAULT_CKPT_URL)).strip()
+    url = str(
+        os.environ.get("RS_EMBED_AGRIFM_CKPT_URL", _AGRIFM_DEFAULT_CKPT_URL)
+    ).strip()
     if not url:
         url = _AGRIFM_DEFAULT_CKPT_URL
-    min_bytes = int(os.environ.get("RS_EMBED_AGRIFM_CKPT_MIN_BYTES", str(_AGRIFM_DEFAULT_MIN_BYTES)))
+    min_bytes = int(
+        os.environ.get("RS_EMBED_AGRIFM_CKPT_MIN_BYTES", str(_AGRIFM_DEFAULT_MIN_BYTES))
+    )
 
     return _download_agrifm_ckpt(
         url=url,
@@ -456,7 +483,9 @@ def _assert_weights_loaded(model) -> Dict[str, float]:
     if p is None:
         raise ModelError("AgriFM model has no parameters; cannot verify weights.")
     if not torch.isfinite(p).all():
-        raise ModelError("AgriFM parameters contain NaN/Inf; checkpoint load likely failed.")
+        raise ModelError(
+            "AgriFM parameters contain NaN/Inf; checkpoint load likely failed."
+        )
 
     p_f = p.float()
     std = float(p_f.std().cpu())
@@ -489,7 +518,9 @@ def _load_agrifm_cached(
 
     cls = getattr(mod, "PretrainingSwinTransformer3DEncoder", None)
     if cls is None:
-        raise ModelError("AgriFM source does not expose PretrainingSwinTransformer3DEncoder.")
+        raise ModelError(
+            "AgriFM source does not expose PretrainingSwinTransformer3DEncoder."
+        )
 
     patch_cfg = dict(
         type="SwinPatchEmbed3D",
@@ -590,14 +621,20 @@ def _fetch_s2_10_raw_tchw(
     )
 
 
-def _agrifm_forward_grid(model, x_tchw: np.ndarray, *, device: str) -> Tuple[np.ndarray, Dict[str, Any]]:
+def _agrifm_forward_grid(
+    model, x_tchw: np.ndarray, *, device: str
+) -> Tuple[np.ndarray, Dict[str, Any]]:
     ensure_torch()
     import torch
 
     if x_tchw.ndim != 4 or int(x_tchw.shape[1]) != len(_S2_10_BANDS):
-        raise ModelError(f"AgriFM expects TCHW with C=10, got {getattr(x_tchw, 'shape', None)}")
+        raise ModelError(
+            f"AgriFM expects TCHW with C=10, got {getattr(x_tchw, 'shape', None)}"
+        )
 
-    xb = torch.from_numpy(x_tchw.astype(np.float32, copy=False)).unsqueeze(0).to(device)  # [1,T,C,H,W]
+    xb = (
+        torch.from_numpy(x_tchw.astype(np.float32, copy=False)).unsqueeze(0).to(device)
+    )  # [1,T,C,H,W]
     with torch.no_grad():
         out = model(xb, mode="tensor")
 
@@ -607,7 +644,9 @@ def _agrifm_forward_grid(model, x_tchw: np.ndarray, *, device: str) -> Tuple[np.
         feats = out.get("encoder_features", None)
         fl = out.get("features_list", None)
         if isinstance(fl, (tuple, list)):
-            feat_list_shapes = [tuple(int(v) for v in x.shape) for x in fl if hasattr(x, "shape")]
+            feat_list_shapes = [
+                tuple(int(v) for v in x.shape) for x in fl if hasattr(x, "shape")
+            ]
     else:
         feats = out
 
@@ -618,9 +657,13 @@ def _agrifm_forward_grid(model, x_tchw: np.ndarray, *, device: str) -> Tuple[np.
         # [B,C,T,H,W] -> temporal mean for unified spatial grid output.
         feats = feats.mean(dim=2)
     if feats.ndim != 4:
-        raise ModelError(f"Unexpected AgriFM feature shape: {getattr(feats, 'shape', None)}")
+        raise ModelError(
+            f"Unexpected AgriFM feature shape: {getattr(feats, 'shape', None)}"
+        )
     if int(feats.shape[0]) != 1:
-        raise ModelError(f"AgriFM expects batch size 1 in single inference, got {tuple(feats.shape)}")
+        raise ModelError(
+            f"AgriFM expects batch size 1 in single inference, got {tuple(feats.shape)}"
+        )
 
     grid = feats[0].detach().float().cpu().numpy().astype(np.float32)  # [D,H,W]
     meta = {
@@ -662,16 +705,6 @@ class AgriFMEmbedder(EmbedderBase):
             "required_env": [],
         }
 
-    def __init__(self) -> None:
-        self._providers: Dict[str, ProviderBase] = {}
-
-    def _get_provider(self, backend: str) -> ProviderBase:
-        return get_cached_provider(
-            self._providers,
-            backend=backend,
-            allow_auto=True,
-        )
-
     @staticmethod
     def _default_sensor() -> SensorSpec:
         return SensorSpec(
@@ -685,7 +718,12 @@ class AgriFMEmbedder(EmbedderBase):
 
     @staticmethod
     def _resolve_fetch_workers(n_items: int) -> int:
-        v = int(os.environ.get("RS_EMBED_AGRIFM_FETCH_WORKERS", str(AgriFMEmbedder.DEFAULT_FETCH_WORKERS)))
+        v = int(
+            os.environ.get(
+                "RS_EMBED_AGRIFM_FETCH_WORKERS",
+                str(AgriFMEmbedder.DEFAULT_FETCH_WORKERS),
+            )
+        )
         return max(1, min(int(n_items), v))
 
     def get_embedding(
@@ -706,19 +744,29 @@ class AgriFMEmbedder(EmbedderBase):
             sensor = self._default_sensor()
 
         t = temporal_to_range(temporal)
-        n_frames = max(1, int(os.environ.get("RS_EMBED_AGRIFM_FRAMES", str(self.DEFAULT_FRAMES))))
-        image_size = max(16, int(os.environ.get("RS_EMBED_AGRIFM_IMG", str(self.DEFAULT_IMAGE_SIZE))))
+        n_frames = max(
+            1, int(os.environ.get("RS_EMBED_AGRIFM_FRAMES", str(self.DEFAULT_FRAMES)))
+        )
+        image_size = max(
+            16, int(os.environ.get("RS_EMBED_AGRIFM_IMG", str(self.DEFAULT_IMAGE_SIZE)))
+        )
         norm_mode = os.environ.get("RS_EMBED_AGRIFM_NORM", self.DEFAULT_NORM).strip()
 
         ckpt_path = _resolve_ckpt_path()
         repo_path = os.environ.get("RS_EMBED_AGRIFM_REPO_PATH", None)
-        repo_url = os.environ.get("RS_EMBED_AGRIFM_REPO_URL", self.DEFAULT_REPO_URL).strip()
-        repo_cache_root = os.environ.get("RS_EMBED_AGRIFM_REPO_CACHE", self.DEFAULT_REPO_CACHE_ROOT).strip()
-        auto_download_repo = os.environ.get("RS_EMBED_AGRIFM_AUTO_DOWNLOAD_REPO", "1").strip() not in ("0", "false", "False")
+        repo_url = os.environ.get(
+            "RS_EMBED_AGRIFM_REPO_URL", self.DEFAULT_REPO_URL
+        ).strip()
+        repo_cache_root = os.environ.get(
+            "RS_EMBED_AGRIFM_REPO_CACHE", self.DEFAULT_REPO_CACHE_ROOT
+        ).strip()
+        auto_download_repo = os.environ.get(
+            "RS_EMBED_AGRIFM_AUTO_DOWNLOAD_REPO", "1"
+        ).strip() not in ("0", "false", "False")
 
         if input_chw is None:
             raw_tchw = _fetch_s2_10_raw_tchw(
-                _call_provider_getter(self._get_provider, backend),
+                self._get_provider(backend),
                 spatial,
                 t,
                 n_frames=n_frames,
@@ -731,11 +779,17 @@ class AgriFMEmbedder(EmbedderBase):
             raw = np.asarray(input_chw, dtype=np.float32)
             if raw.ndim == 3:
                 if int(raw.shape[0]) != len(_S2_10_BANDS):
-                    raise ModelError(f"input_chw must be CHW with 10 bands for agrifm, got {raw.shape}")
-                raw_tchw = np.repeat(raw[None, ...], repeats=n_frames, axis=0).astype(np.float32)
+                    raise ModelError(
+                        f"input_chw must be CHW with 10 bands for agrifm, got {raw.shape}"
+                    )
+                raw_tchw = np.repeat(raw[None, ...], repeats=n_frames, axis=0).astype(
+                    np.float32
+                )
             elif raw.ndim == 4:
                 if int(raw.shape[1]) != len(_S2_10_BANDS):
-                    raise ModelError(f"input_chw must be TCHW with C=10 for agrifm, got {raw.shape}")
+                    raise ModelError(
+                        f"input_chw must be TCHW with C=10 for agrifm, got {raw.shape}"
+                    )
                 raw_tchw = raw.astype(np.float32, copy=False)
                 if raw_tchw.shape[0] < n_frames:
                     raw_tchw = np.concatenate(
@@ -764,8 +818,15 @@ class AgriFMEmbedder(EmbedderBase):
             fill_value=float(sensor.fill_value),
             meta=check_meta,
         )
-        if report is not None and (not report.get("ok", True)) and checks_should_raise(sensor):
-            raise ModelError("Provider input inspection failed: " + "; ".join(report.get("issues", [])))
+        if (
+            report is not None
+            and (not report.get("ok", True))
+            and checks_should_raise(sensor)
+        ):
+            raise ModelError(
+                "Provider input inspection failed: "
+                + "; ".join(report.get("issues", []))
+            )
 
         x_tchw = _normalize_s2_for_agrifm(raw_tchw, mode=norm_mode)
         x_tchw = _resize_tchw(x_tchw, out_hw=image_size)
@@ -846,8 +907,10 @@ class AgriFMEmbedder(EmbedderBase):
             sensor = self._default_sensor()
 
         t = temporal_to_range(temporal)
-        n_frames = max(1, int(os.environ.get("RS_EMBED_AGRIFM_FRAMES", str(self.DEFAULT_FRAMES))))
-        provider = _call_provider_getter(self._get_provider, backend)
+        n_frames = max(
+            1, int(os.environ.get("RS_EMBED_AGRIFM_FRAMES", str(self.DEFAULT_FRAMES)))
+        )
+        provider = self._get_provider(backend)
         n = len(spatials)
         prefetched_raw: List[Optional[np.ndarray]] = [None] * n
 

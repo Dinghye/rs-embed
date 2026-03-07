@@ -11,6 +11,7 @@ from ..core.specs import SensorSpec, TemporalSpec
 # Temporal helpers
 # ---------------------------------------------------------------------------
 
+
 def temporal_to_range(
     temporal: Optional[TemporalSpec],
     default: Tuple[str, str] = ("2022-06-01", "2022-09-01"),
@@ -28,7 +29,7 @@ def temporal_to_range(
         return temporal
     if temporal.mode == "year":
         y = int(temporal.year)
-        return TemporalSpec.range(f"{y}-01-01", f"{y+1}-01-01")
+        return TemporalSpec.range(f"{y}-01-01", f"{y + 1}-01-01")
     raise ModelError(f"Unknown TemporalSpec mode: {temporal.mode}")
 
 
@@ -46,7 +47,7 @@ def temporal_to_dict(temporal: Optional[TemporalSpec]) -> Dict[str, Any]:
             "mode": "year",
             "year": temporal.year,
             "start": f"{temporal.year}-01-01",
-            "end": f"{int(temporal.year)+1}-01-01",
+            "end": f"{int(temporal.year) + 1}-01-01",
         }
     return {"mode": temporal.mode}
 
@@ -73,7 +74,10 @@ def temporal_midpoint_str(temporal: Optional[TemporalSpec]) -> Optional[str]:
 # Meta builder
 # ---------------------------------------------------------------------------
 
-def _sensor_to_dict(sensor: Optional[SensorSpec | Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+
+def _sensor_to_dict(
+    sensor: Optional[SensorSpec | Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
     if sensor is None:
         return None
     if is_dataclass(sensor):

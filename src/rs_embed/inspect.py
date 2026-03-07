@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any, Dict, Optional, Tuple
 
-import numpy as np
 
 from .core.errors import ProviderError
 from .core.input_checks import inspect_chw, checks_save_dir, save_quicklook_rgb
