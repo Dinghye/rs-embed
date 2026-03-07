@@ -12,14 +12,20 @@ def test_satmaepp_channel_order_defaults_to_bgr_for_fmow_rgb(monkeypatch):
 
     monkeypatch.delenv("RS_EMBED_SATMAEPP_CHANNEL_ORDER", raising=False)
     monkeypatch.delenv("RS_EMBED_SATMAEPP_BGR", raising=False)
-    assert satpp._resolve_satmaepp_channel_order("MVRL/satmaepp_ViT-L_pretrain_fmow_rgb") == "bgr"
+    assert (
+        satpp._resolve_satmaepp_channel_order("MVRL/satmaepp_ViT-L_pretrain_fmow_rgb")
+        == "bgr"
+    )
 
 
 def test_satmaepp_channel_order_respects_env_override(monkeypatch):
     import rs_embed.embedders.onthefly_satmaepp as satpp
 
     monkeypatch.setenv("RS_EMBED_SATMAEPP_CHANNEL_ORDER", "rgb")
-    assert satpp._resolve_satmaepp_channel_order("MVRL/satmaepp_ViT-L_pretrain_fmow_rgb") == "rgb"
+    assert (
+        satpp._resolve_satmaepp_channel_order("MVRL/satmaepp_ViT-L_pretrain_fmow_rgb")
+        == "rgb"
+    )
 
 
 def test_satmae_batch_loads_once_and_batches_forward(monkeypatch):
@@ -141,7 +147,9 @@ def test_satmaepp_s2_batch_loads_once_and_batches_forward(monkeypatch):
     monkeypatch.setenv("RS_EMBED_SATMAEPP_S2_FETCH_WORKERS", "1")
     monkeypatch.setenv("RS_EMBED_SATMAEPP_S2_BATCH_SIZE", "2")
 
-    def _fake_fetch(*, provider, spatial, temporal, scale_m, cloudy_pct, composite, fill_value):
+    def _fake_fetch(
+        *, provider, spatial, temporal, scale_m, cloudy_pct, composite, fill_value
+    ):
         calls["fetch"] += 1
         v = float(int(spatial.lon) + 30)
         return np.full((10, 8, 8), v, dtype=np.float32)
@@ -162,7 +170,9 @@ def test_satmaepp_s2_batch_loads_once_and_batches_forward(monkeypatch):
 
     monkeypatch.setattr(satpp_s2, "_fetch_s2_sr_10_raw_chw", _fake_fetch)
     monkeypatch.setattr(satpp_s2, "_load_satmaepp_s2", _fake_load)
-    monkeypatch.setattr(satpp_s2, "_satmaepp_s2_forward_tokens_batch", _fake_forward_batch)
+    monkeypatch.setattr(
+        satpp_s2, "_satmaepp_s2_forward_tokens_batch", _fake_forward_batch
+    )
 
     spatials = [
         PointBuffer(lon=0.0, lat=0.0, buffer_m=256),
@@ -196,14 +206,28 @@ def test_dofa_gee_uses_cached_provider_path(monkeypatch):
 
     monkeypatch.setattr(emb, "_get_provider", lambda: fake_provider)
 
-    def _fake_fetch(provider, spatial, temporal, *, collection, bands, scale_m, cloudy_pct, composite, default_value):
+    def _fake_fetch(
+        provider,
+        spatial,
+        temporal,
+        *,
+        collection,
+        bands,
+        scale_m,
+        cloudy_pct,
+        composite,
+        default_value,
+    ):
         assert provider is fake_provider
         seen["provider_ok"] = True
         x = np.ones((len(bands), 8, 8), dtype=np.float32)
         return x, {"raw_chw_shape": tuple(x.shape)}
 
     def _fake_resize(x_chw, *, size=224):
-        return x_chw.astype(np.float32, copy=False), {"orig_hw": x_chw.shape[-2:], "target_hw": x_chw.shape[-2:]}
+        return x_chw.astype(np.float32, copy=False), {
+            "orig_hw": x_chw.shape[-2:],
+            "target_hw": x_chw.shape[-2:],
+        }
 
     def _fake_load(*, variant, device):
         class _M:

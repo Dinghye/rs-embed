@@ -23,14 +23,31 @@ def test_export_batch_prefetch_dedup_across_models(tmp_path, monkeypatch):
             return {
                 "type": "onthefly",
                 "inputs": {"collection": "C", "bands": ["B1", "B2", "B3"]},
-                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+                "defaults": {
+                    "scale_m": 10,
+                    "cloudy_pct": 30,
+                    "composite": "median",
+                    "fill_value": 0.0,
+                },
             }
 
-        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+        def get_embedding(
+            self,
+            *,
+            spatial,
+            temporal,
+            sensor,
+            output,
+            backend,
+            device="auto",
+            input_chw=None,
+        ):
             DummyA.calls += 1
             assert backend == "gee"
             assert input_chw is not None
-            return Embedding(data=np.array([float(np.sum(input_chw))], dtype=np.float32), meta={})
+            return Embedding(
+                data=np.array([float(np.sum(input_chw))], dtype=np.float32), meta={}
+            )
 
     class DummyB:
         calls = 0
@@ -39,10 +56,25 @@ def test_export_batch_prefetch_dedup_across_models(tmp_path, monkeypatch):
             return {
                 "type": "onthefly",
                 "inputs": {"collection": "C", "bands": ["B1", "B2", "B3"]},
-                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+                "defaults": {
+                    "scale_m": 10,
+                    "cloudy_pct": 30,
+                    "composite": "median",
+                    "fill_value": 0.0,
+                },
             }
 
-        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+        def get_embedding(
+            self,
+            *,
+            spatial,
+            temporal,
+            sensor,
+            output,
+            backend,
+            device="auto",
+            input_chw=None,
+        ):
             DummyB.calls += 1
             assert backend == "gee"
             assert input_chw is not None
@@ -68,7 +100,9 @@ def test_export_batch_prefetch_dedup_across_models(tmp_path, monkeypatch):
 
     monkeypatch.setattr(api, "GEEProvider", DummyProvider)
     monkeypatch.setattr(api, "_fetch_gee_patch_raw", fake_fetch)
-    monkeypatch.setattr(api, "_inspect_input_raw", lambda x_chw, *, sensor, name: {"ok": True})
+    monkeypatch.setattr(
+        api, "_inspect_input_raw", lambda x_chw, *, sensor, name: {"ok": True}
+    )
     api._get_embedder_bundle_cached.cache_clear()
 
     spatials = [
@@ -76,7 +110,13 @@ def test_export_batch_prefetch_dedup_across_models(tmp_path, monkeypatch):
         PointBuffer(lon=-122.3, lat=37.7, buffer_m=50),
     ]
     temporal = TemporalSpec.range("2020-01-01", "2020-02-01")
-    sensor = SensorSpec(collection="C", bands=("B1", "B2", "B3"), scale_m=10, cloudy_pct=30, composite="median")
+    sensor = SensorSpec(
+        collection="C",
+        bands=("B1", "B2", "B3"),
+        scale_m=10,
+        cloudy_pct=30,
+        composite="median",
+    )
 
     out_dir = tmp_path / "out"
     res = api.export_batch(
@@ -115,10 +155,25 @@ def test_export_batch_prefetch_reuses_superset_and_slices_subset(tmp_path, monke
             return {
                 "type": "onthefly",
                 "inputs": {"collection": "C", "bands": ["B4", "B3", "B2"]},
-                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+                "defaults": {
+                    "scale_m": 10,
+                    "cloudy_pct": 30,
+                    "composite": "median",
+                    "fill_value": 0.0,
+                },
             }
 
-        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+        def get_embedding(
+            self,
+            *,
+            spatial,
+            temporal,
+            sensor,
+            output,
+            backend,
+            device="auto",
+            input_chw=None,
+        ):
             assert input_chw is not None
             assert tuple(input_chw.shape) == (3, 2, 2)
             DummyRGB.seen.append(tuple(float(input_chw[i, 0, 0]) for i in range(3)))
@@ -131,13 +186,30 @@ def test_export_batch_prefetch_reuses_superset_and_slices_subset(tmp_path, monke
             return {
                 "type": "onthefly",
                 "inputs": {"collection": "C", "bands": ["B2", "B3", "B4", "B8"]},
-                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+                "defaults": {
+                    "scale_m": 10,
+                    "cloudy_pct": 30,
+                    "composite": "median",
+                    "fill_value": 0.0,
+                },
             }
 
-        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+        def get_embedding(
+            self,
+            *,
+            spatial,
+            temporal,
+            sensor,
+            output,
+            backend,
+            device="auto",
+            input_chw=None,
+        ):
             assert input_chw is not None
             assert tuple(input_chw.shape) == (4, 2, 2)
-            DummyS2Superset.seen.append(tuple(float(input_chw[i, 0, 0]) for i in range(4)))
+            DummyS2Superset.seen.append(
+                tuple(float(input_chw[i, 0, 0]) for i in range(4))
+            )
             return Embedding(data=np.array([2.0], dtype=np.float32), meta={})
 
     registry.register("dummy_rgb_subset")(DummyRGB)
@@ -165,10 +237,15 @@ def test_export_batch_prefetch_reuses_superset_and_slices_subset(tmp_path, monke
 
     monkeypatch.setattr(api, "GEEProvider", DummyProvider)
     monkeypatch.setattr(api, "_fetch_gee_patch_raw", fake_fetch)
-    monkeypatch.setattr(api, "_inspect_input_raw", lambda x_chw, *, sensor, name: {"ok": True})
+    monkeypatch.setattr(
+        api, "_inspect_input_raw", lambda x_chw, *, sensor, name: {"ok": True}
+    )
     api._get_embedder_bundle_cached.cache_clear()
 
-    spatials = [PointBuffer(lon=0, lat=0, buffer_m=10), PointBuffer(lon=0.1, lat=0.1, buffer_m=10)]
+    spatials = [
+        PointBuffer(lon=0, lat=0, buffer_m=10),
+        PointBuffer(lon=0.1, lat=0.1, buffer_m=10),
+    ]
     out_dir = tmp_path / "superset_dedup"
     api.export_batch(
         spatials=spatials,
@@ -195,10 +272,25 @@ def test_export_batch_combined_npz_dedup(tmp_path, monkeypatch):
             return {
                 "type": "onthefly",
                 "inputs": {"collection": "C", "bands": ["B1", "B2", "B3"]},
-                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+                "defaults": {
+                    "scale_m": 10,
+                    "cloudy_pct": 30,
+                    "composite": "median",
+                    "fill_value": 0.0,
+                },
             }
 
-        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+        def get_embedding(
+            self,
+            *,
+            spatial,
+            temporal,
+            sensor,
+            output,
+            backend,
+            device="auto",
+            input_chw=None,
+        ):
             assert input_chw is not None
             return Embedding(data=np.array([1.0], dtype=np.float32), meta={})
 
@@ -221,12 +313,23 @@ def test_export_batch_combined_npz_dedup(tmp_path, monkeypatch):
 
     monkeypatch.setattr(api, "GEEProvider", DummyProvider)
     monkeypatch.setattr(api, "_fetch_gee_patch_raw", fake_fetch)
-    monkeypatch.setattr(api, "_inspect_input_raw", lambda x_chw, *, sensor, name: {"ok": True})
+    monkeypatch.setattr(
+        api, "_inspect_input_raw", lambda x_chw, *, sensor, name: {"ok": True}
+    )
     api._get_embedder_bundle_cached.cache_clear()
 
-    spatials = [PointBuffer(lon=0, lat=0, buffer_m=10), PointBuffer(lon=0.1, lat=0.1, buffer_m=10)]
+    spatials = [
+        PointBuffer(lon=0, lat=0, buffer_m=10),
+        PointBuffer(lon=0.1, lat=0.1, buffer_m=10),
+    ]
     temporal = TemporalSpec.range("2020-01-01", "2020-02-01")
-    sensor = SensorSpec(collection="C", bands=("B1", "B2", "B3"), scale_m=10, cloudy_pct=30, composite="median")
+    sensor = SensorSpec(
+        collection="C",
+        bands=("B1", "B2", "B3"),
+        scale_m=10,
+        cloudy_pct=30,
+        composite="median",
+    )
 
     out_path = tmp_path / "combined.npz"
     api.export_batch(
@@ -247,18 +350,37 @@ def test_export_batch_combined_npz_dedup(tmp_path, monkeypatch):
     assert fetch_calls["n"] == len(spatials)
 
 
-def test_export_batch_combined_prefetch_checkpoint_handles_variable_input_shapes(tmp_path, monkeypatch):
+def test_export_batch_combined_prefetch_checkpoint_handles_variable_input_shapes(
+    tmp_path, monkeypatch
+):
     class DummyVarShape:
         def describe(self):
             return {
                 "type": "onthefly",
                 "inputs": {"collection": "C", "bands": ["B1", "B2", "B3"]},
-                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+                "defaults": {
+                    "scale_m": 10,
+                    "cloudy_pct": 30,
+                    "composite": "median",
+                    "fill_value": 0.0,
+                },
             }
 
-        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+        def get_embedding(
+            self,
+            *,
+            spatial,
+            temporal,
+            sensor,
+            output,
+            backend,
+            device="auto",
+            input_chw=None,
+        ):
             assert input_chw is not None
-            return Embedding(data=np.array([float(input_chw.shape[1])], dtype=np.float32), meta={})
+            return Embedding(
+                data=np.array([float(input_chw.shape[1])], dtype=np.float32), meta={}
+            )
 
     registry.register("dummy_var_shape")(DummyVarShape)
 
@@ -277,10 +399,15 @@ def test_export_batch_combined_prefetch_checkpoint_handles_variable_input_shapes
 
     monkeypatch.setattr(api, "GEEProvider", DummyProvider)
     monkeypatch.setattr(api, "_fetch_gee_patch_raw", fake_fetch)
-    monkeypatch.setattr(api, "_inspect_input_raw", lambda x_chw, *, sensor, name: {"ok": True})
+    monkeypatch.setattr(
+        api, "_inspect_input_raw", lambda x_chw, *, sensor, name: {"ok": True}
+    )
     api._get_embedder_bundle_cached.cache_clear()
 
-    spatials = [PointBuffer(lon=0.0, lat=0.0, buffer_m=10), PointBuffer(lon=1.0, lat=1.0, buffer_m=10)]
+    spatials = [
+        PointBuffer(lon=0.0, lat=0.0, buffer_m=10),
+        PointBuffer(lon=1.0, lat=1.0, buffer_m=10),
+    ]
     out_path = tmp_path / "combined_var_shape.npz"
     manifest = api.export_batch(
         spatials=spatials,
@@ -300,7 +427,9 @@ def test_export_batch_combined_prefetch_checkpoint_handles_variable_input_shapes
     assert manifest.get("status") == "ok"
 
 
-def test_export_batch_combined_falls_back_to_single_when_batch_api_fails(tmp_path, monkeypatch):
+def test_export_batch_combined_falls_back_to_single_when_batch_api_fails(
+    tmp_path, monkeypatch
+):
     class DummyBatchFail:
         single_calls = 0
         batch_calls = 0
@@ -309,13 +438,30 @@ def test_export_batch_combined_falls_back_to_single_when_batch_api_fails(tmp_pat
             return {
                 "type": "onthefly",
                 "inputs": {"collection": "C", "bands": ["B1", "B2", "B3"]},
-                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+                "defaults": {
+                    "scale_m": 10,
+                    "cloudy_pct": 30,
+                    "composite": "median",
+                    "fill_value": 0.0,
+                },
             }
 
-        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+        def get_embedding(
+            self,
+            *,
+            spatial,
+            temporal,
+            sensor,
+            output,
+            backend,
+            device="auto",
+            input_chw=None,
+        ):
             DummyBatchFail.single_calls += 1
             assert input_chw is not None
-            return Embedding(data=np.array([float(spatial.lon)], dtype=np.float32), meta={})
+            return Embedding(
+                data=np.array([float(spatial.lon)], dtype=np.float32), meta={}
+            )
 
         def get_embeddings_batch_from_inputs(
             self,
@@ -347,12 +493,17 @@ def test_export_batch_combined_falls_back_to_single_when_batch_api_fails(tmp_pat
 
     monkeypatch.setattr(api, "GEEProvider", DummyProvider)
     monkeypatch.setattr(api, "_fetch_gee_patch_raw", fake_fetch)
-    monkeypatch.setattr(api, "_inspect_input_raw", lambda x_chw, *, sensor, name: {"ok": True})
+    monkeypatch.setattr(
+        api, "_inspect_input_raw", lambda x_chw, *, sensor, name: {"ok": True}
+    )
     api._get_embedder_bundle_cached.cache_clear()
 
     out_path = tmp_path / "combined_batch_fallback.npz"
     manifest = api.export_batch(
-        spatials=[PointBuffer(lon=0.0, lat=0.0, buffer_m=10), PointBuffer(lon=1.0, lat=1.0, buffer_m=10)],
+        spatials=[
+            PointBuffer(lon=0.0, lat=0.0, buffer_m=10),
+            PointBuffer(lon=1.0, lat=1.0, buffer_m=10),
+        ],
         temporal=TemporalSpec.range("2020-01-01", "2020-02-01"),
         models=["dummy_batch_fail"],
         out_path=str(out_path),
@@ -371,7 +522,9 @@ def test_export_batch_combined_falls_back_to_single_when_batch_api_fails(tmp_pat
     assert DummyBatchFail.single_calls == 2
 
 
-def test_export_batch_combined_prefetch_reuses_superset_and_slices_subset(tmp_path, monkeypatch):
+def test_export_batch_combined_prefetch_reuses_superset_and_slices_subset(
+    tmp_path, monkeypatch
+):
     class DummyRGB:
         seen = []
 
@@ -379,10 +532,25 @@ def test_export_batch_combined_prefetch_reuses_superset_and_slices_subset(tmp_pa
             return {
                 "type": "onthefly",
                 "inputs": {"collection": "C", "bands": ["B4", "B3", "B2"]},
-                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+                "defaults": {
+                    "scale_m": 10,
+                    "cloudy_pct": 30,
+                    "composite": "median",
+                    "fill_value": 0.0,
+                },
             }
 
-        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+        def get_embedding(
+            self,
+            *,
+            spatial,
+            temporal,
+            sensor,
+            output,
+            backend,
+            device="auto",
+            input_chw=None,
+        ):
             assert input_chw is not None
             DummyRGB.seen.append(tuple(float(input_chw[i, 0, 0]) for i in range(3)))
             return Embedding(data=np.array([1.0], dtype=np.float32), meta={})
@@ -394,12 +562,29 @@ def test_export_batch_combined_prefetch_reuses_superset_and_slices_subset(tmp_pa
             return {
                 "type": "onthefly",
                 "inputs": {"collection": "C", "bands": ["B2", "B3", "B4", "B8"]},
-                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+                "defaults": {
+                    "scale_m": 10,
+                    "cloudy_pct": 30,
+                    "composite": "median",
+                    "fill_value": 0.0,
+                },
             }
 
-        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+        def get_embedding(
+            self,
+            *,
+            spatial,
+            temporal,
+            sensor,
+            output,
+            backend,
+            device="auto",
+            input_chw=None,
+        ):
             assert input_chw is not None
-            DummyS2Superset.seen.append(tuple(float(input_chw[i, 0, 0]) for i in range(4)))
+            DummyS2Superset.seen.append(
+                tuple(float(input_chw[i, 0, 0]) for i in range(4))
+            )
             return Embedding(data=np.array([2.0], dtype=np.float32), meta={})
 
     registry.register("dummy_rgb_subset_combined")(DummyRGB)
@@ -426,10 +611,15 @@ def test_export_batch_combined_prefetch_reuses_superset_and_slices_subset(tmp_pa
 
     monkeypatch.setattr(api, "GEEProvider", DummyProvider)
     monkeypatch.setattr(api, "_fetch_gee_patch_raw", fake_fetch)
-    monkeypatch.setattr(api, "_inspect_input_raw", lambda x_chw, *, sensor, name: {"ok": True})
+    monkeypatch.setattr(
+        api, "_inspect_input_raw", lambda x_chw, *, sensor, name: {"ok": True}
+    )
     api._get_embedder_bundle_cached.cache_clear()
 
-    spatials = [PointBuffer(lon=0, lat=0, buffer_m=10), PointBuffer(lon=1, lat=1, buffer_m=10)]
+    spatials = [
+        PointBuffer(lon=0, lat=0, buffer_m=10),
+        PointBuffer(lon=1, lat=1, buffer_m=10),
+    ]
     out_path = tmp_path / "superset_combined.npz"
     api.export_batch(
         spatials=spatials,
@@ -458,9 +648,21 @@ def test_export_batch_per_item_prefers_batch_inference_on_gpu(tmp_path, monkeypa
         def describe(self):
             return {"type": "mock", "dim": 1}
 
-        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+        def get_embedding(
+            self,
+            *,
+            spatial,
+            temporal,
+            sensor,
+            output,
+            backend,
+            device="auto",
+            input_chw=None,
+        ):
             DummyBatchGPU.single_calls += 1
-            return Embedding(data=np.array([float(spatial.lon)], dtype=np.float32), meta={})
+            return Embedding(
+                data=np.array([float(spatial.lon)], dtype=np.float32), meta={}
+            )
 
         def get_embeddings_batch(
             self,
@@ -473,17 +675,24 @@ def test_export_batch_per_item_prefers_batch_inference_on_gpu(tmp_path, monkeypa
             device="auto",
         ):
             DummyBatchGPU.batch_calls += 1
-            return [Embedding(data=np.array([float(s.lon)], dtype=np.float32), meta={}) for s in spatials]
+            return [
+                Embedding(data=np.array([float(s.lon)], dtype=np.float32), meta={})
+                for s in spatials
+            ]
 
     registry.register("dummy_batch_gpu_dir")(DummyBatchGPU)
 
     import rs_embed.api as api
+
     api._get_embedder_bundle_cached.cache_clear()
     monkeypatch.setattr(api, "_provider_factory_for_backend", lambda _b: None)
 
     out_dir = tmp_path / "gpu_dir_batch"
     api.export_batch(
-        spatials=[PointBuffer(lon=0.0, lat=0.0, buffer_m=10), PointBuffer(lon=1.0, lat=1.0, buffer_m=10)],
+        spatials=[
+            PointBuffer(lon=0.0, lat=0.0, buffer_m=10),
+            PointBuffer(lon=1.0, lat=1.0, buffer_m=10),
+        ],
         temporal=TemporalSpec.year(2022),
         models=["dummy_batch_gpu_dir"],
         out_dir=str(out_dir),
@@ -509,7 +718,17 @@ def test_export_batch_per_item_cpu_defaults_to_single_inference(tmp_path, monkey
         def describe(self):
             return {"type": "mock", "dim": 1}
 
-        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+        def get_embedding(
+            self,
+            *,
+            spatial,
+            temporal,
+            sensor,
+            output,
+            backend,
+            device="auto",
+            input_chw=None,
+        ):
             DummyBatchGPUOff.single_calls += 1
             return Embedding(data=np.array([1.0], dtype=np.float32), meta={})
 
@@ -524,17 +743,24 @@ def test_export_batch_per_item_cpu_defaults_to_single_inference(tmp_path, monkey
             device="auto",
         ):
             DummyBatchGPUOff.batch_calls += 1
-            return [Embedding(data=np.array([1.0], dtype=np.float32), meta={}) for _ in spatials]
+            return [
+                Embedding(data=np.array([1.0], dtype=np.float32), meta={})
+                for _ in spatials
+            ]
 
     registry.register("dummy_batch_gpu_dir_single")(DummyBatchGPUOff)
 
     import rs_embed.api as api
+
     api._get_embedder_bundle_cached.cache_clear()
     monkeypatch.setattr(api, "_provider_factory_for_backend", lambda _b: None)
 
     out_dir = tmp_path / "gpu_dir_single"
     api.export_batch(
-        spatials=[PointBuffer(lon=0.0, lat=0.0, buffer_m=10), PointBuffer(lon=1.0, lat=1.0, buffer_m=10)],
+        spatials=[
+            PointBuffer(lon=0.0, lat=0.0, buffer_m=10),
+            PointBuffer(lon=1.0, lat=1.0, buffer_m=10),
+        ],
         temporal=TemporalSpec.year(2022),
         models=["dummy_batch_gpu_dir_single"],
         out_dir=str(out_dir),
@@ -552,15 +778,31 @@ def test_export_batch_per_item_cpu_defaults_to_single_inference(tmp_path, monkey
 
 def test_export_batch_netcdf_per_item(tmp_path, monkeypatch):
     """export_batch with format='netcdf' writes .nc files with correct variables."""
+
     class DummyNC:
         def describe(self):
             return {
                 "type": "onthefly",
                 "inputs": {"collection": "C", "bands": ["B1", "B2"]},
-                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+                "defaults": {
+                    "scale_m": 10,
+                    "cloudy_pct": 30,
+                    "composite": "median",
+                    "fill_value": 0.0,
+                },
             }
 
-        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+        def get_embedding(
+            self,
+            *,
+            spatial,
+            temporal,
+            sensor,
+            output,
+            backend,
+            device="auto",
+            input_chw=None,
+        ):
             return Embedding(data=np.arange(4, dtype=np.float32), meta={})
 
     registry.register("dummy_nc")(DummyNC)
@@ -568,16 +810,27 @@ def test_export_batch_netcdf_per_item(tmp_path, monkeypatch):
     import rs_embed.api as api
 
     class DummyProvider:
-        def __init__(self, *a, **kw): pass
-        def ensure_ready(self): return None
+        def __init__(self, *a, **kw):
+            pass
+
+        def ensure_ready(self):
+            return None
 
     monkeypatch.setattr(api, "GEEProvider", DummyProvider)
-    monkeypatch.setattr(api, "_fetch_gee_patch_raw",
-                        lambda prov, *, spatial, temporal, sensor: np.ones((2, 4, 4), dtype=np.float32))
-    monkeypatch.setattr(api, "_inspect_input_raw", lambda x, *, sensor, name: {"ok": True})
+    monkeypatch.setattr(
+        api,
+        "_fetch_gee_patch_raw",
+        lambda prov, *, spatial, temporal, sensor: np.ones((2, 4, 4), dtype=np.float32),
+    )
+    monkeypatch.setattr(
+        api, "_inspect_input_raw", lambda x, *, sensor, name: {"ok": True}
+    )
     api._get_embedder_bundle_cached.cache_clear()
 
-    spatials = [PointBuffer(lon=0, lat=0, buffer_m=10), PointBuffer(lon=1, lat=1, buffer_m=10)]
+    spatials = [
+        PointBuffer(lon=0, lat=0, buffer_m=10),
+        PointBuffer(lon=1, lat=1, buffer_m=10),
+    ]
     temporal = TemporalSpec.range("2021-01-01", "2021-06-01")
     sensor = SensorSpec(collection="C", bands=("B1", "B2"))
 
@@ -606,6 +859,7 @@ def test_export_batch_netcdf_per_item(tmp_path, monkeypatch):
 
     # Verify NetCDF contents
     import xarray as xr
+
     ds = xr.open_dataset(str(out_dir / "p00000.nc"))
     assert "embedding__dummy_nc" in ds.data_vars
     assert "input_chw__dummy_nc" in ds.data_vars
@@ -616,15 +870,31 @@ def test_export_batch_netcdf_per_item(tmp_path, monkeypatch):
 
 def test_export_batch_netcdf_combined(tmp_path, monkeypatch):
     """export_batch with format='netcdf' and out_path produces a combined .nc."""
+
     class DummyComb:
         def describe(self):
             return {
                 "type": "onthefly",
                 "inputs": {"collection": "C", "bands": ["B1"]},
-                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+                "defaults": {
+                    "scale_m": 10,
+                    "cloudy_pct": 30,
+                    "composite": "median",
+                    "fill_value": 0.0,
+                },
             }
 
-        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+        def get_embedding(
+            self,
+            *,
+            spatial,
+            temporal,
+            sensor,
+            output,
+            backend,
+            device="auto",
+            input_chw=None,
+        ):
             return Embedding(data=np.array([1.0, 2.0], dtype=np.float32), meta={})
 
     registry.register("dummy_comb")(DummyComb)
@@ -632,16 +902,27 @@ def test_export_batch_netcdf_combined(tmp_path, monkeypatch):
     import rs_embed.api as api
 
     class DummyProvider:
-        def __init__(self, *a, **kw): pass
-        def ensure_ready(self): return None
+        def __init__(self, *a, **kw):
+            pass
+
+        def ensure_ready(self):
+            return None
 
     monkeypatch.setattr(api, "GEEProvider", DummyProvider)
-    monkeypatch.setattr(api, "_fetch_gee_patch_raw",
-                        lambda prov, *, spatial, temporal, sensor: np.ones((1, 2, 2), dtype=np.float32))
-    monkeypatch.setattr(api, "_inspect_input_raw", lambda x, *, sensor, name: {"ok": True})
+    monkeypatch.setattr(
+        api,
+        "_fetch_gee_patch_raw",
+        lambda prov, *, spatial, temporal, sensor: np.ones((1, 2, 2), dtype=np.float32),
+    )
+    monkeypatch.setattr(
+        api, "_inspect_input_raw", lambda x, *, sensor, name: {"ok": True}
+    )
     api._get_embedder_bundle_cached.cache_clear()
 
-    spatials = [PointBuffer(lon=0, lat=0, buffer_m=10), PointBuffer(lon=1, lat=1, buffer_m=10)]
+    spatials = [
+        PointBuffer(lon=0, lat=0, buffer_m=10),
+        PointBuffer(lon=1, lat=1, buffer_m=10),
+    ]
     temporal = TemporalSpec.year(2022)
     sensor = SensorSpec(collection="C", bands=("B1",))
 
@@ -664,6 +945,7 @@ def test_export_batch_netcdf_combined(tmp_path, monkeypatch):
     assert "nc_path" in result
 
     import xarray as xr
+
     ds = xr.open_dataset(str(out_path))
     assert "embeddings__dummy_comb" in ds.data_vars
     assert ds["embeddings__dummy_comb"].shape == (2, 2)  # (point, dim)
@@ -676,10 +958,25 @@ def test_export_batch_combined_fail_on_bad_input(tmp_path, monkeypatch):
             return {
                 "type": "onthefly",
                 "inputs": {"collection": "C", "bands": ["B1"]},
-                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+                "defaults": {
+                    "scale_m": 10,
+                    "cloudy_pct": 30,
+                    "composite": "median",
+                    "fill_value": 0.0,
+                },
             }
 
-        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+        def get_embedding(
+            self,
+            *,
+            spatial,
+            temporal,
+            sensor,
+            output,
+            backend,
+            device="auto",
+            input_chw=None,
+        ):
             return Embedding(data=np.array([1.0], dtype=np.float32), meta={})
 
     registry.register("dummy_bad")(DummyBad)
@@ -697,7 +994,9 @@ def test_export_batch_combined_fail_on_bad_input(tmp_path, monkeypatch):
     monkeypatch.setattr(
         api,
         "_fetch_gee_patch_raw",
-        lambda prov, *, spatial, temporal, sensor: np.zeros((1, 2, 2), dtype=np.float32),
+        lambda prov, *, spatial, temporal, sensor: np.zeros(
+            (1, 2, 2), dtype=np.float32
+        ),
     )
     monkeypatch.setattr(
         api,
@@ -727,10 +1026,25 @@ def test_export_batch_combined_partial_inputs_include_indices(tmp_path, monkeypa
             return {
                 "type": "onthefly",
                 "inputs": {"collection": "C", "bands": ["B1"]},
-                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+                "defaults": {
+                    "scale_m": 10,
+                    "cloudy_pct": 30,
+                    "composite": "median",
+                    "fill_value": 0.0,
+                },
             }
 
-        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+        def get_embedding(
+            self,
+            *,
+            spatial,
+            temporal,
+            sensor,
+            output,
+            backend,
+            device="auto",
+            input_chw=None,
+        ):
             raise AssertionError("save_embeddings=False should skip model inference")
 
     registry.register("dummy_input_only")(DummyInputOnly)
@@ -751,12 +1065,17 @@ def test_export_batch_combined_partial_inputs_include_indices(tmp_path, monkeypa
 
     monkeypatch.setattr(api, "GEEProvider", DummyProvider)
     monkeypatch.setattr(api, "_fetch_gee_patch_raw", fake_fetch)
-    monkeypatch.setattr(api, "_inspect_input_raw", lambda x, *, sensor, name: {"ok": True})
+    monkeypatch.setattr(
+        api, "_inspect_input_raw", lambda x, *, sensor, name: {"ok": True}
+    )
     api._get_embedder_bundle_cached.cache_clear()
 
     out_path = tmp_path / "partial_inputs_indices.npz"
     out = api.export_batch(
-        spatials=[PointBuffer(lon=0, lat=0, buffer_m=10), PointBuffer(lon=1, lat=1, buffer_m=10)],
+        spatials=[
+            PointBuffer(lon=0, lat=0, buffer_m=10),
+            PointBuffer(lon=1, lat=1, buffer_m=10),
+        ],
         temporal=TemporalSpec.year(2022),
         models=["dummy_input_only"],
         out_path=str(out_path),
@@ -786,12 +1105,29 @@ def test_export_batch_prefetch_used_even_without_saving_inputs(tmp_path, monkeyp
             return {
                 "type": "onthefly",
                 "inputs": {"collection": "C", "bands": ["B1", "B2"]},
-                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+                "defaults": {
+                    "scale_m": 10,
+                    "cloudy_pct": 30,
+                    "composite": "median",
+                    "fill_value": 0.0,
+                },
             }
 
-        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+        def get_embedding(
+            self,
+            *,
+            spatial,
+            temporal,
+            sensor,
+            output,
+            backend,
+            device="auto",
+            input_chw=None,
+        ):
             assert input_chw is not None
-            return Embedding(data=np.array([float(np.sum(input_chw))], dtype=np.float32), meta={})
+            return Embedding(
+                data=np.array([float(np.sum(input_chw))], dtype=np.float32), meta={}
+            )
 
     registry.register("dummy_need_input")(DummyNeedInput)
 
@@ -812,10 +1148,15 @@ def test_export_batch_prefetch_used_even_without_saving_inputs(tmp_path, monkeyp
 
     monkeypatch.setattr(api, "GEEProvider", DummyProvider)
     monkeypatch.setattr(api, "_fetch_gee_patch_raw", fake_fetch)
-    monkeypatch.setattr(api, "_inspect_input_raw", lambda x, *, sensor, name: {"ok": True})
+    monkeypatch.setattr(
+        api, "_inspect_input_raw", lambda x, *, sensor, name: {"ok": True}
+    )
     api._get_embedder_bundle_cached.cache_clear()
 
-    spatials = [PointBuffer(lon=0, lat=0, buffer_m=10), PointBuffer(lon=1, lat=1, buffer_m=10)]
+    spatials = [
+        PointBuffer(lon=0, lat=0, buffer_m=10),
+        PointBuffer(lon=1, lat=1, buffer_m=10),
+    ]
     sensor = SensorSpec(collection="C", bands=("B1", "B2"))
     out_dir = tmp_path / "out_no_inputs"
     api.export_batch(
@@ -840,10 +1181,25 @@ def test_export_batch_continue_on_error_partial_manifest(tmp_path, monkeypatch):
             return {
                 "type": "onthefly",
                 "inputs": {"collection": "C", "bands": ["B1"]},
-                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+                "defaults": {
+                    "scale_m": 10,
+                    "cloudy_pct": 30,
+                    "composite": "median",
+                    "fill_value": 0.0,
+                },
             }
 
-        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+        def get_embedding(
+            self,
+            *,
+            spatial,
+            temporal,
+            sensor,
+            output,
+            backend,
+            device="auto",
+            input_chw=None,
+        ):
             return Embedding(data=np.array([1.0], dtype=np.float32), meta={"ok": True})
 
     class DummyBad:
@@ -851,10 +1207,25 @@ def test_export_batch_continue_on_error_partial_manifest(tmp_path, monkeypatch):
             return {
                 "type": "onthefly",
                 "inputs": {"collection": "C", "bands": ["B1"]},
-                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+                "defaults": {
+                    "scale_m": 10,
+                    "cloudy_pct": 30,
+                    "composite": "median",
+                    "fill_value": 0.0,
+                },
             }
 
-        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+        def get_embedding(
+            self,
+            *,
+            spatial,
+            temporal,
+            sensor,
+            output,
+            backend,
+            device="auto",
+            input_chw=None,
+        ):
             raise RuntimeError("boom")
 
     registry.register("dummy_good")(DummyGood)
@@ -870,8 +1241,14 @@ def test_export_batch_continue_on_error_partial_manifest(tmp_path, monkeypatch):
             return None
 
     monkeypatch.setattr(api, "GEEProvider", DummyProvider)
-    monkeypatch.setattr(api, "_fetch_gee_patch_raw", lambda prov, *, spatial, temporal, sensor: np.ones((1, 2, 2), dtype=np.float32))
-    monkeypatch.setattr(api, "_inspect_input_raw", lambda x, *, sensor, name: {"ok": True})
+    monkeypatch.setattr(
+        api,
+        "_fetch_gee_patch_raw",
+        lambda prov, *, spatial, temporal, sensor: np.ones((1, 2, 2), dtype=np.float32),
+    )
+    monkeypatch.setattr(
+        api, "_inspect_input_raw", lambda x, *, sensor, name: {"ok": True}
+    )
     api._get_embedder_bundle_cached.cache_clear()
 
     out_dir = tmp_path / "partial"
@@ -890,7 +1267,9 @@ def test_export_batch_continue_on_error_partial_manifest(tmp_path, monkeypatch):
 
     assert len(res) == 1
     assert res[0]["status"] == "partial"
-    assert any(m["model"] == "dummy_bad2" and m["status"] == "failed" for m in res[0]["models"])
+    assert any(
+        m["model"] == "dummy_bad2" and m["status"] == "failed" for m in res[0]["models"]
+    )
     assert (out_dir / "p00000.npz").exists()
 
 
@@ -902,22 +1281,48 @@ def test_export_batch_combined_prefers_model_batch_api(tmp_path):
         def describe(self):
             return {"type": "precomputed", "backend": ["local"], "output": ["pooled"]}
 
-        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+        def get_embedding(
+            self,
+            *,
+            spatial,
+            temporal,
+            sensor,
+            output,
+            backend,
+            device="auto",
+            input_chw=None,
+        ):
             DummyBatch.single_calls += 1
             raise RuntimeError("single path should not be used")
 
-        def get_embeddings_batch(self, *, spatials, temporal=None, sensor=None, output=OutputSpec.pooled(), backend="local", device="auto"):
+        def get_embeddings_batch(
+            self,
+            *,
+            spatials,
+            temporal=None,
+            sensor=None,
+            output=OutputSpec.pooled(),
+            backend="local",
+            device="auto",
+        ):
             DummyBatch.batch_calls += 1
-            return [Embedding(data=np.array([float(i)], dtype=np.float32), meta={}) for i in range(len(spatials))]
+            return [
+                Embedding(data=np.array([float(i)], dtype=np.float32), meta={})
+                for i in range(len(spatials))
+            ]
 
     registry.register("dummy_batch")(DummyBatch)
 
     import rs_embed.api as api
+
     api._get_embedder_bundle_cached.cache_clear()
 
     out_path = tmp_path / "combined_batch.npz"
     mani = api.export_batch(
-        spatials=[PointBuffer(lon=0, lat=0, buffer_m=10), PointBuffer(lon=1, lat=1, buffer_m=10)],
+        spatials=[
+            PointBuffer(lon=0, lat=0, buffer_m=10),
+            PointBuffer(lon=1, lat=1, buffer_m=10),
+        ],
         temporal=TemporalSpec.year(2022),
         models=["dummy_batch"],
         out_path=str(out_path),
@@ -939,10 +1344,25 @@ def test_export_batch_dedup_inputs_across_models_in_file(tmp_path, monkeypatch):
             return {
                 "type": "onthefly",
                 "inputs": {"collection": "C", "bands": ["B1"]},
-                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+                "defaults": {
+                    "scale_m": 10,
+                    "cloudy_pct": 30,
+                    "composite": "median",
+                    "fill_value": 0.0,
+                },
             }
 
-        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+        def get_embedding(
+            self,
+            *,
+            spatial,
+            temporal,
+            sensor,
+            output,
+            backend,
+            device="auto",
+            input_chw=None,
+        ):
             return Embedding(data=np.array([1.0], dtype=np.float32), meta={})
 
     class DummyB:
@@ -950,10 +1370,25 @@ def test_export_batch_dedup_inputs_across_models_in_file(tmp_path, monkeypatch):
             return {
                 "type": "onthefly",
                 "inputs": {"collection": "C", "bands": ["B1"]},
-                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+                "defaults": {
+                    "scale_m": 10,
+                    "cloudy_pct": 30,
+                    "composite": "median",
+                    "fill_value": 0.0,
+                },
             }
 
-        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+        def get_embedding(
+            self,
+            *,
+            spatial,
+            temporal,
+            sensor,
+            output,
+            backend,
+            device="auto",
+            input_chw=None,
+        ):
             return Embedding(data=np.array([2.0], dtype=np.float32), meta={})
 
     registry.register("dummy_dedup_a")(DummyA)
@@ -969,8 +1404,14 @@ def test_export_batch_dedup_inputs_across_models_in_file(tmp_path, monkeypatch):
             return None
 
     monkeypatch.setattr(api, "GEEProvider", DummyProvider)
-    monkeypatch.setattr(api, "_fetch_gee_patch_raw", lambda prov, *, spatial, temporal, sensor: np.ones((1, 2, 2), dtype=np.float32))
-    monkeypatch.setattr(api, "_inspect_input_raw", lambda x, *, sensor, name: {"ok": True})
+    monkeypatch.setattr(
+        api,
+        "_fetch_gee_patch_raw",
+        lambda prov, *, spatial, temporal, sensor: np.ones((1, 2, 2), dtype=np.float32),
+    )
+    monkeypatch.setattr(
+        api, "_inspect_input_raw", lambda x, *, sensor, name: {"ok": True}
+    )
     api._get_embedder_bundle_cached.cache_clear()
 
     out_dir = tmp_path / "dedup_inputs"
@@ -1003,16 +1444,30 @@ def test_export_batch_resume_out_dir_skips_existing(tmp_path):
         def describe(self):
             return {"type": "precomputed", "backend": ["local"], "output": ["pooled"]}
 
-        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+        def get_embedding(
+            self,
+            *,
+            spatial,
+            temporal,
+            sensor,
+            output,
+            backend,
+            device="auto",
+            input_chw=None,
+        ):
             DummyResumeDir.calls += 1
             return Embedding(data=np.array([1.0], dtype=np.float32), meta={})
 
     registry.register("dummy_resume_dir")(DummyResumeDir)
 
     import rs_embed.api as api
+
     api._get_embedder_bundle_cached.cache_clear()
 
-    spatials = [PointBuffer(lon=0, lat=0, buffer_m=10), PointBuffer(lon=1, lat=1, buffer_m=10)]
+    spatials = [
+        PointBuffer(lon=0, lat=0, buffer_m=10),
+        PointBuffer(lon=1, lat=1, buffer_m=10),
+    ]
     out_dir = tmp_path / "resume_dir"
 
     first = api.export_batch(
@@ -1053,17 +1508,31 @@ def test_export_batch_resume_out_path_skips_existing(tmp_path):
         def describe(self):
             return {"type": "precomputed", "backend": ["local"], "output": ["pooled"]}
 
-        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+        def get_embedding(
+            self,
+            *,
+            spatial,
+            temporal,
+            sensor,
+            output,
+            backend,
+            device="auto",
+            input_chw=None,
+        ):
             DummyResumeCombined.calls += 1
             return Embedding(data=np.array([2.0], dtype=np.float32), meta={})
 
     registry.register("dummy_resume_combined")(DummyResumeCombined)
 
     import rs_embed.api as api
+
     api._get_embedder_bundle_cached.cache_clear()
 
     out_path = tmp_path / "combined_resume.npz"
-    spatials = [PointBuffer(lon=0, lat=0, buffer_m=10), PointBuffer(lon=1, lat=1, buffer_m=10)]
+    spatials = [
+        PointBuffer(lon=0, lat=0, buffer_m=10),
+        PointBuffer(lon=1, lat=1, buffer_m=10),
+    ]
 
     api.export_batch(
         spatials=spatials,
@@ -1094,16 +1563,33 @@ def test_export_batch_resume_out_path_skips_existing(tmp_path):
     assert DummyResumeCombined.calls == len(spatials)
 
 
-def test_export_batch_combined_saves_prefetch_checkpoint_before_inference(tmp_path, monkeypatch):
+def test_export_batch_combined_saves_prefetch_checkpoint_before_inference(
+    tmp_path, monkeypatch
+):
     class DummyCrashAfterFetch:
         def describe(self):
             return {
                 "type": "onthefly",
                 "inputs": {"collection": "C", "bands": ["B1", "B2"]},
-                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+                "defaults": {
+                    "scale_m": 10,
+                    "cloudy_pct": 30,
+                    "composite": "median",
+                    "fill_value": 0.0,
+                },
             }
 
-        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+        def get_embedding(
+            self,
+            *,
+            spatial,
+            temporal,
+            sensor,
+            output,
+            backend,
+            device="auto",
+            input_chw=None,
+        ):
             raise RuntimeError("boom-after-prefetch")
 
     registry.register("dummy_crash_after_fetch")(DummyCrashAfterFetch)
@@ -1123,13 +1609,18 @@ def test_export_batch_combined_saves_prefetch_checkpoint_before_inference(tmp_pa
         "_fetch_gee_patch_raw",
         lambda prov, *, spatial, temporal, sensor: np.ones((2, 2, 2), dtype=np.float32),
     )
-    monkeypatch.setattr(api, "_inspect_input_raw", lambda x, *, sensor, name: {"ok": True})
+    monkeypatch.setattr(
+        api, "_inspect_input_raw", lambda x, *, sensor, name: {"ok": True}
+    )
     api._get_embedder_bundle_cached.cache_clear()
 
     out_path = tmp_path / "prefetch_ckpt.npz"
     with pytest.raises(RuntimeError, match="boom-after-prefetch"):
         api.export_batch(
-            spatials=[PointBuffer(lon=0, lat=0, buffer_m=10), PointBuffer(lon=1, lat=1, buffer_m=10)],
+            spatials=[
+                PointBuffer(lon=0, lat=0, buffer_m=10),
+                PointBuffer(lon=1, lat=1, buffer_m=10),
+            ],
             temporal=TemporalSpec.year(2022),
             models=["dummy_crash_after_fetch"],
             out_path=str(out_path),
@@ -1162,10 +1653,25 @@ def test_export_batch_combined_resume_continues_remaining_models(tmp_path, monke
             return {
                 "type": "onthefly",
                 "inputs": {"collection": "C", "bands": ["B1", "B2"]},
-                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+                "defaults": {
+                    "scale_m": 10,
+                    "cloudy_pct": 30,
+                    "composite": "median",
+                    "fill_value": 0.0,
+                },
             }
 
-        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+        def get_embedding(
+            self,
+            *,
+            spatial,
+            temporal,
+            sensor,
+            output,
+            backend,
+            device="auto",
+            input_chw=None,
+        ):
             DummyResumeGood.calls += 1
             return Embedding(data=np.array([1.0], dtype=np.float32), meta={})
 
@@ -1177,10 +1683,25 @@ def test_export_batch_combined_resume_continues_remaining_models(tmp_path, monke
             return {
                 "type": "onthefly",
                 "inputs": {"collection": "C", "bands": ["B1", "B2"]},
-                "defaults": {"scale_m": 10, "cloudy_pct": 30, "composite": "median", "fill_value": 0.0},
+                "defaults": {
+                    "scale_m": 10,
+                    "cloudy_pct": 30,
+                    "composite": "median",
+                    "fill_value": 0.0,
+                },
             }
 
-        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+        def get_embedding(
+            self,
+            *,
+            spatial,
+            temporal,
+            sensor,
+            output,
+            backend,
+            device="auto",
+            input_chw=None,
+        ):
             DummyResumeFlaky.calls += 1
             if DummyResumeFlaky.fail:
                 raise RuntimeError("flaky")
@@ -1206,11 +1727,16 @@ def test_export_batch_combined_resume_continues_remaining_models(tmp_path, monke
 
     monkeypatch.setattr(api, "GEEProvider", DummyProvider)
     monkeypatch.setattr(api, "_fetch_gee_patch_raw", fake_fetch)
-    monkeypatch.setattr(api, "_inspect_input_raw", lambda x, *, sensor, name: {"ok": True})
+    monkeypatch.setattr(
+        api, "_inspect_input_raw", lambda x, *, sensor, name: {"ok": True}
+    )
     api._get_embedder_bundle_cached.cache_clear()
 
     out_path = tmp_path / "resume_partial.npz"
-    spatials = [PointBuffer(lon=0, lat=0, buffer_m=10), PointBuffer(lon=1, lat=1, buffer_m=10)]
+    spatials = [
+        PointBuffer(lon=0, lat=0, buffer_m=10),
+        PointBuffer(lon=1, lat=1, buffer_m=10),
+    ]
 
     with pytest.raises(RuntimeError, match="flaky"):
         api.export_batch(
@@ -1267,19 +1793,35 @@ def test_export_batch_progress_updates_point_and_model_bars(tmp_path, monkeypatc
         def describe(self):
             return {"type": "precomputed", "backend": ["local"], "output": ["pooled"]}
 
-        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+        def get_embedding(
+            self,
+            *,
+            spatial,
+            temporal,
+            sensor,
+            output,
+            backend,
+            device="auto",
+            input_chw=None,
+        ):
             return Embedding(data=np.array([3.0], dtype=np.float32), meta={})
 
     registry.register("dummy_progress")(DummyProgressModel)
 
     import rs_embed.api as api
+
     api._get_embedder_bundle_cached.cache_clear()
 
     state = {}
 
     class _FakeProgress:
         def __init__(self, *, total: int, desc: str):
-            state[desc] = {"total": int(total), "updates": 0, "calls": [], "closed": False}
+            state[desc] = {
+                "total": int(total),
+                "updates": 0,
+                "calls": [],
+                "closed": False,
+            }
             self._desc = desc
 
         def update(self, n: int = 1):
@@ -1293,10 +1835,15 @@ def test_export_batch_progress_updates_point_and_model_bars(tmp_path, monkeypatc
     monkeypatch.setattr(
         api,
         "_create_progress",
-        lambda *, enabled, total, desc, unit="item": _FakeProgress(total=total, desc=desc),
+        lambda *, enabled, total, desc, unit="item": _FakeProgress(
+            total=total, desc=desc
+        ),
     )
 
-    spatials = [PointBuffer(lon=0, lat=0, buffer_m=10), PointBuffer(lon=1, lat=1, buffer_m=10)]
+    spatials = [
+        PointBuffer(lon=0, lat=0, buffer_m=10),
+        PointBuffer(lon=1, lat=1, buffer_m=10),
+    ]
     api.export_batch(
         spatials=spatials,
         temporal=TemporalSpec.year(2022),
@@ -1323,30 +1870,61 @@ def test_export_batch_combined_progress_updates_model_inference(tmp_path, monkey
         def describe(self):
             return {"type": "precomputed", "backend": ["local"], "output": ["pooled"]}
 
-        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+        def get_embedding(
+            self,
+            *,
+            spatial,
+            temporal,
+            sensor,
+            output,
+            backend,
+            device="auto",
+            input_chw=None,
+        ):
             return Embedding(data=np.array([1.0], dtype=np.float32), meta={})
 
-        def get_embeddings_batch(self, *, spatials, temporal, sensor, output, backend, device="auto"):
-            return [Embedding(data=np.array([1.0], dtype=np.float32), meta={}) for _ in spatials]
+        def get_embeddings_batch(
+            self, *, spatials, temporal, sensor, output, backend, device="auto"
+        ):
+            return [
+                Embedding(data=np.array([1.0], dtype=np.float32), meta={})
+                for _ in spatials
+            ]
 
     class DummySingleProgressModel:
         def describe(self):
             return {"type": "precomputed", "backend": ["local"], "output": ["pooled"]}
 
-        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+        def get_embedding(
+            self,
+            *,
+            spatial,
+            temporal,
+            sensor,
+            output,
+            backend,
+            device="auto",
+            input_chw=None,
+        ):
             return Embedding(data=np.array([2.0], dtype=np.float32), meta={})
 
     registry.register("dummy_batch_progress")(DummyBatchProgressModel)
     registry.register("dummy_single_progress")(DummySingleProgressModel)
 
     import rs_embed.api as api
+
     api._get_embedder_bundle_cached.cache_clear()
 
     state = {}
 
     class _FakeProgress:
         def __init__(self, *, total: int, desc: str):
-            state[desc] = {"total": int(total), "updates": 0, "calls": [], "closed": False}
+            state[desc] = {
+                "total": int(total),
+                "updates": 0,
+                "calls": [],
+                "closed": False,
+            }
             self._desc = desc
 
         def update(self, n: int = 1):
@@ -1360,10 +1938,15 @@ def test_export_batch_combined_progress_updates_model_inference(tmp_path, monkey
     monkeypatch.setattr(
         api,
         "_create_progress",
-        lambda *, enabled, total, desc, unit="item": _FakeProgress(total=total, desc=desc),
+        lambda *, enabled, total, desc, unit="item": _FakeProgress(
+            total=total, desc=desc
+        ),
     )
 
-    spatials = [PointBuffer(lon=0, lat=0, buffer_m=10), PointBuffer(lon=1, lat=1, buffer_m=10)]
+    spatials = [
+        PointBuffer(lon=0, lat=0, buffer_m=10),
+        PointBuffer(lon=1, lat=1, buffer_m=10),
+    ]
     api.export_batch(
         spatials=spatials,
         temporal=TemporalSpec.year(2022),
@@ -1390,7 +1973,9 @@ def test_export_batch_combined_progress_updates_model_inference(tmp_path, monkey
     assert state["infer[dummy_single_progress]"]["closed"] is True
 
 
-def test_export_batch_combined_progress_fills_on_model_init_failure(tmp_path, monkeypatch):
+def test_export_batch_combined_progress_fills_on_model_init_failure(
+    tmp_path, monkeypatch
+):
     class DummyInitFailModel:
         def __init__(self):
             raise RuntimeError("init failed")
@@ -1398,13 +1983,19 @@ def test_export_batch_combined_progress_fills_on_model_init_failure(tmp_path, mo
     registry.register("dummy_init_fail")(DummyInitFailModel)
 
     import rs_embed.api as api
+
     api._get_embedder_bundle_cached.cache_clear()
 
     state = {}
 
     class _FakeProgress:
         def __init__(self, *, total: int, desc: str):
-            state[desc] = {"total": int(total), "updates": 0, "calls": [], "closed": False}
+            state[desc] = {
+                "total": int(total),
+                "updates": 0,
+                "calls": [],
+                "closed": False,
+            }
             self._desc = desc
 
         def update(self, n: int = 1):
@@ -1418,10 +2009,15 @@ def test_export_batch_combined_progress_fills_on_model_init_failure(tmp_path, mo
     monkeypatch.setattr(
         api,
         "_create_progress",
-        lambda *, enabled, total, desc, unit="item": _FakeProgress(total=total, desc=desc),
+        lambda *, enabled, total, desc, unit="item": _FakeProgress(
+            total=total, desc=desc
+        ),
     )
 
-    spatials = [PointBuffer(lon=0, lat=0, buffer_m=10), PointBuffer(lon=1, lat=1, buffer_m=10)]
+    spatials = [
+        PointBuffer(lon=0, lat=0, buffer_m=10),
+        PointBuffer(lon=1, lat=1, buffer_m=10),
+    ]
     result = api.export_batch(
         spatials=spatials,
         temporal=TemporalSpec.year(2022),
@@ -1448,16 +2044,22 @@ def test_export_batch_combined_embedder_without_input_chw_kwarg(tmp_path):
         def describe(self):
             return {"type": "precomputed", "backend": ["local"], "output": ["pooled"]}
 
-        def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto"):
+        def get_embedding(
+            self, *, spatial, temporal, sensor, output, backend, device="auto"
+        ):
             DummyNoInputKwarg.calls += 1
             return Embedding(data=np.array([1.0], dtype=np.float32), meta={})
 
     registry.register("dummy_no_input_kwarg")(DummyNoInputKwarg)
 
     import rs_embed.api as api
+
     api._get_embedder_bundle_cached.cache_clear()
 
-    spatials = [PointBuffer(lon=0, lat=0, buffer_m=10), PointBuffer(lon=1, lat=1, buffer_m=10)]
+    spatials = [
+        PointBuffer(lon=0, lat=0, buffer_m=10),
+        PointBuffer(lon=1, lat=1, buffer_m=10),
+    ]
     out_path = tmp_path / "combined_no_input_kwarg.npz"
 
     result = api.export_batch(

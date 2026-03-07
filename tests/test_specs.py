@@ -1,12 +1,20 @@
 import pytest
 
 from rs_embed.core.errors import SpecError
-from rs_embed.core.specs import BBox, InputPrepSpec, OutputSpec, PointBuffer, SensorSpec, TemporalSpec
+from rs_embed.core.specs import (
+    BBox,
+    InputPrepSpec,
+    OutputSpec,
+    PointBuffer,
+    SensorSpec,
+    TemporalSpec,
+)
 
 
 # ══════════════════════════════════════════════════════════════════════
 # BBox
 # ══════════════════════════════════════════════════════════════════════
+
 
 def test_bbox_validate_ok():
     bbox = BBox(minlon=0.0, minlat=0.0, maxlon=1.0, maxlat=1.0)
@@ -37,14 +45,17 @@ def test_bbox_validate_non_4326_crs():
         bbox.validate()
 
 
-@pytest.mark.parametrize("obj, attr", [
-    (BBox(minlon=0.0, minlat=0.0, maxlon=1.0, maxlat=1.0), "minlon"),
-    (PointBuffer(lon=1.0, lat=2.0, buffer_m=100.0), "lon"),
-    (TemporalSpec.year(2024), "year"),
-    (OutputSpec.pooled(), "mode"),
-    (SensorSpec(collection="C", bands=("B1",)), "collection"),
-    (InputPrepSpec.resize(), "mode"),
-])
+@pytest.mark.parametrize(
+    "obj, attr",
+    [
+        (BBox(minlon=0.0, minlat=0.0, maxlon=1.0, maxlat=1.0), "minlon"),
+        (PointBuffer(lon=1.0, lat=2.0, buffer_m=100.0), "lon"),
+        (TemporalSpec.year(2024), "year"),
+        (OutputSpec.pooled(), "mode"),
+        (SensorSpec(collection="C", bands=("B1",)), "collection"),
+        (InputPrepSpec.resize(), "mode"),
+    ],
+)
 def test_specs_are_frozen(obj, attr):
     with pytest.raises(AttributeError):
         setattr(obj, attr, "x")
@@ -53,6 +64,7 @@ def test_specs_are_frozen(obj, attr):
 # ══════════════════════════════════════════════════════════════════════
 # PointBuffer
 # ══════════════════════════════════════════════════════════════════════
+
 
 def test_pointbuffer_validate_ok():
     pb = PointBuffer(lon=1.0, lat=2.0, buffer_m=100.0)
@@ -77,11 +89,10 @@ def test_pointbuffer_validate_non_4326_crs():
         pb.validate()
 
 
-
-
 # ══════════════════════════════════════════════════════════════════════
 # TemporalSpec
 # ══════════════════════════════════════════════════════════════════════
+
 
 def test_temporal_spec_year():
     ts = TemporalSpec.year(2024)
@@ -140,11 +151,10 @@ def test_temporal_spec_year_out_of_range():
         ts.validate()
 
 
-
-
 # ══════════════════════════════════════════════════════════════════════
 # OutputSpec
 # ══════════════════════════════════════════════════════════════════════
+
 
 def test_output_spec_grid():
     grid = OutputSpec.grid(scale_m=20)
@@ -168,11 +178,10 @@ def test_output_spec_grid_default_scale():
     assert grid.scale_m == 10
 
 
-
-
 # ══════════════════════════════════════════════════════════════════════
 # SensorSpec
 # ══════════════════════════════════════════════════════════════════════
+
 
 def test_sensor_spec_defaults():
     s = SensorSpec(collection="COPERNICUS/S2_SR_HARMONIZED", bands=("B4", "B3", "B2"))
@@ -207,6 +216,7 @@ def test_sensor_spec_custom():
 # ══════════════════════════════════════════════════════════════════════
 # InputPrepSpec
 # ══════════════════════════════════════════════════════════════════════
+
 
 def test_input_prep_spec_resize_defaults():
     s = InputPrepSpec.resize()

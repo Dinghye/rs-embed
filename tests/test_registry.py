@@ -5,6 +5,7 @@ from rs_embed.core import registry
 
 # ── fixture to isolate registry between tests ──────────────────────
 
+
 @pytest.fixture(autouse=True)
 def clean_registry():
     """Clear registry before and after every test in this module."""
@@ -21,6 +22,7 @@ def clean_registry():
 # register + get_embedder_cls
 # ══════════════════════════════════════════════════════════════════════
 
+
 def test_register_and_get_embedder_cls():
     @registry.register("TestModel")
     class DummyEmbedder:
@@ -34,11 +36,13 @@ def test_register_and_get_embedder_cls():
 
 def test_get_embedder_cls_missing():
     from rs_embed.core.errors import ModelError
+
     with pytest.raises(ModelError, match="Unknown model"):
         registry.get_embedder_cls("missing-model")
 
 
 # ── case insensitivity ─────────────────────────────────────────────
+
 
 def test_register_case_insensitive():
     @registry.register("MiXeD_CaSe")
@@ -50,6 +54,7 @@ def test_register_case_insensitive():
 
 
 # ── multiple registrations ─────────────────────────────────────────
+
 
 def test_register_multiple():
     @registry.register("alpha")
@@ -67,6 +72,7 @@ def test_register_multiple():
 
 # ── overwrite same name ────────────────────────────────────────────
 
+
 def test_register_overwrite():
     @registry.register("dup")
     class First:
@@ -81,12 +87,14 @@ def test_register_overwrite():
 
 # ── empty registry ─────────────────────────────────────────────────
 
+
 def test_list_models_empty():
     assert registry.list_models() == []
 
 
 def test_get_embedder_cls_empty_shows_available():
     from rs_embed.core.errors import ModelError
+
     with pytest.raises(ModelError, match="Available: \\[\\]"):
         registry.get_embedder_cls("anything")
 

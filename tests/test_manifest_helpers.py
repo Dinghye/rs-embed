@@ -77,7 +77,11 @@ def test_point_resume_manifest_loads_existing_json(tmp_path):
     out_npz = tmp_path / "p00001.npz"
     out_npz.write_bytes(b"fake")
     out_json = tmp_path / "p00001.json"
-    existing = {"status": "ok", "models": [{"model": "m1", "status": "ok"}], "point_index": 1}
+    existing = {
+        "status": "ok",
+        "models": [{"model": "m1", "status": "ok"}],
+        "point_index": 1,
+    }
     out_json.write_text(json.dumps(existing), encoding="utf-8")
 
     m = point_resume_manifest(

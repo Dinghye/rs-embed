@@ -26,7 +26,9 @@ class _FakeBBoxSplitProvider(ProviderBase):
         self.build_calls += 1
         return object()
 
-    def fetch_array_chw(self, *, image, bands, region, scale_m, fill_value, collection=None):  # noqa: ARG002
+    def fetch_array_chw(
+        self, *, image, bands, region, scale_m, fill_value, collection=None
+    ):  # noqa: ARG002
         self.fetch_calls += 1
         bbox = region
         assert isinstance(bbox, BBox)
@@ -45,10 +47,30 @@ class _FakeBBoxSplitProvider(ProviderBase):
     def _dims_and_offsets(self, bbox: BBox):
         lon_span = float(self.full_bbox.maxlon - self.full_bbox.minlon)
         lat_span = float(self.full_bbox.maxlat - self.full_bbox.minlat)
-        x0 = int(round(((float(bbox.minlon) - float(self.full_bbox.minlon)) / lon_span) * self.full_w))
-        x1 = int(round(((float(bbox.maxlon) - float(self.full_bbox.minlon)) / lon_span) * self.full_w))
-        y0 = int(round(((float(self.full_bbox.maxlat) - float(bbox.maxlat)) / lat_span) * self.full_h))
-        y1 = int(round(((float(self.full_bbox.maxlat) - float(bbox.minlat)) / lat_span) * self.full_h))
+        x0 = int(
+            round(
+                ((float(bbox.minlon) - float(self.full_bbox.minlon)) / lon_span)
+                * self.full_w
+            )
+        )
+        x1 = int(
+            round(
+                ((float(bbox.maxlon) - float(self.full_bbox.minlon)) / lon_span)
+                * self.full_w
+            )
+        )
+        y0 = int(
+            round(
+                ((float(self.full_bbox.maxlat) - float(bbox.maxlat)) / lat_span)
+                * self.full_h
+            )
+        )
+        y1 = int(
+            round(
+                ((float(self.full_bbox.maxlat) - float(bbox.minlat)) / lat_span)
+                * self.full_h
+            )
+        )
         h = max(1, y1 - y0)
         w = max(1, x1 - x0)
         return h, w, y0, x0
@@ -57,7 +79,9 @@ class _FakeBBoxSplitProvider(ProviderBase):
 class _FakeBoundaryOverlapProvider(_FakeBBoxSplitProvider):
     """Simulate GEE returning one duplicated boundary column on the left child tile."""
 
-    def fetch_array_chw(self, *, image, bands, region, scale_m, fill_value, collection=None):  # noqa: ARG002
+    def fetch_array_chw(
+        self, *, image, bands, region, scale_m, fill_value, collection=None
+    ):  # noqa: ARG002
         self.fetch_calls += 1
         bbox = region
         assert isinstance(bbox, BBox)
@@ -70,7 +94,9 @@ class _FakeBoundaryOverlapProvider(_FakeBBoxSplitProvider):
 
         # Left child tile includes one extra boundary column, creating a 1-pixel overlap
         # with the right child tile after splitting the full bbox.
-        if np.isclose(float(bbox.minlon), float(self.full_bbox.minlon)) and float(bbox.maxlon) < float(self.full_bbox.maxlon):
+        if np.isclose(float(bbox.minlon), float(self.full_bbox.minlon)) and float(
+            bbox.maxlon
+        ) < float(self.full_bbox.maxlon):
             if x0 + w < self.full_w:
                 w += 1
 
@@ -91,7 +117,9 @@ class _FakeVerticalSouthUpProvider(_FakeBBoxSplitProvider):
         self.full_w = 2
         self.max_pixels = 8  # 12 px full patch -> split; each half 6 px -> success
 
-    def fetch_array_chw(self, *, image, bands, region, scale_m, fill_value, collection=None):  # noqa: ARG002
+    def fetch_array_chw(
+        self, *, image, bands, region, scale_m, fill_value, collection=None
+    ):  # noqa: ARG002
         self.fetch_calls += 1
         bbox = region
         assert isinstance(bbox, BBox)
@@ -111,7 +139,9 @@ class _FakeVerticalSouthUpProvider(_FakeBBoxSplitProvider):
 
 def test_fetch_provider_patch_raw_recursively_splits_bbox_on_gee_pixel_limit():
     provider = _FakeBBoxSplitProvider()
-    sensor = SensorSpec(collection="FAKE/COLL", bands=("B1",), scale_m=75000, fill_value=0.0)
+    sensor = SensorSpec(
+        collection="FAKE/COLL", bands=("B1",), scale_m=75000, fill_value=0.0
+    )
 
     arr = fetch_provider_patch_raw(
         provider,
@@ -122,8 +152,7 @@ def test_fetch_provider_patch_raw_recursively_splits_bbox_on_gee_pixel_limit():
 
     assert arr.shape == (1, provider.full_h, provider.full_w)
     expected = np.array(
-        [[[0, 1, 2, 3, 4, 5],
-          [100, 101, 102, 103, 104, 105]]],
+        [[[0, 1, 2, 3, 4, 5], [100, 101, 102, 103, 104, 105]]],
         dtype=np.float32,
     )
     np.testing.assert_allclose(arr, expected)
@@ -134,7 +163,9 @@ def test_fetch_provider_patch_raw_recursively_splits_bbox_on_gee_pixel_limit():
 
 def test_fetch_provider_patch_raw_trims_boundary_overlap_when_stitching():
     provider = _FakeBoundaryOverlapProvider()
-    sensor = SensorSpec(collection="FAKE/COLL", bands=("B1",), scale_m=75000, fill_value=0.0)
+    sensor = SensorSpec(
+        collection="FAKE/COLL", bands=("B1",), scale_m=75000, fill_value=0.0
+    )
 
     arr = fetch_provider_patch_raw(
         provider,
@@ -144,8 +175,7 @@ def test_fetch_provider_patch_raw_trims_boundary_overlap_when_stitching():
     )
 
     expected = np.array(
-        [[[0, 1, 2, 3, 4, 5],
-          [100, 101, 102, 103, 104, 105]]],
+        [[[0, 1, 2, 3, 4, 5], [100, 101, 102, 103, 104, 105]]],
         dtype=np.float32,
     )
     assert arr.shape == expected.shape
@@ -154,7 +184,9 @@ def test_fetch_provider_patch_raw_trims_boundary_overlap_when_stitching():
 
 def test_fetch_provider_patch_raw_flips_each_tile_before_y_stitch():
     provider = _FakeVerticalSouthUpProvider()
-    sensor = SensorSpec(collection="FAKE/COLL", bands=("B1",), scale_m=75000, fill_value=0.0)
+    sensor = SensorSpec(
+        collection="FAKE/COLL", bands=("B1",), scale_m=75000, fill_value=0.0
+    )
 
     arr = fetch_provider_patch_raw(
         provider,
@@ -164,12 +196,7 @@ def test_fetch_provider_patch_raw_flips_each_tile_before_y_stitch():
     )
 
     expected = np.array(
-        [[[0, 1],
-          [100, 101],
-          [200, 201],
-          [300, 301],
-          [400, 401],
-          [500, 501]]],
+        [[[0, 1], [100, 101], [200, 201], [300, 301], [400, 401], [500, 501]]],
         dtype=np.float32,
     )
     assert arr.shape == expected.shape

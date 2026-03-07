@@ -3,6 +3,7 @@
 These use a mock embedder registered in the test so they don't require
 GEE, torch, or any real model weights.
 """
+
 import numpy as np
 import pytest
 
@@ -15,15 +16,28 @@ from rs_embed.embedders.base import EmbedderBase
 
 # ── mock embedder ──────────────────────────────────────────────────
 
+
 class _MockEmbedder(EmbedderBase):
     """Returns a deterministic embedding without any I/O."""
 
     def describe(self):
         return {"type": "mock", "dim": 8}
 
-    def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+    def get_embedding(
+        self,
+        *,
+        spatial,
+        temporal,
+        sensor,
+        output,
+        backend,
+        device="auto",
+        input_chw=None,
+    ):
         vec = np.arange(8, dtype=np.float32)
-        return Embedding(data=vec, meta={"model": self.model_name, "output": output.mode})
+        return Embedding(
+            data=vec, meta={"model": self.model_name, "output": output.mode}
+        )
 
 
 class _MockPrecomputedLocalEmbedder(EmbedderBase):
@@ -35,10 +49,24 @@ class _MockPrecomputedLocalEmbedder(EmbedderBase):
             "source": "mock.fixed.source",
         }
 
-    def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+    def get_embedding(
+        self,
+        *,
+        spatial,
+        temporal,
+        sensor,
+        output,
+        backend,
+        device="auto",
+        input_chw=None,
+    ):
         return Embedding(
             data=np.arange(4, dtype=np.float32),
-            meta={"model": self.model_name, "backend_used": backend, "source": "mock.fixed.source"},
+            meta={
+                "model": self.model_name,
+                "backend_used": backend,
+                "source": "mock.fixed.source",
+            },
         )
 
 
@@ -60,6 +88,7 @@ _TEMPORAL = TemporalSpec.year(2024)
 # get_embedding
 # ══════════════════════════════════════════════════════════════════════
 
+
 def test_get_embedding_returns_embedding():
     from rs_embed.api import get_embedding
 
@@ -72,7 +101,9 @@ def test_get_embedding_returns_embedding():
 def test_get_embedding_output_modes():
     from rs_embed.api import get_embedding
 
-    emb_pooled = get_embedding("mock_model", spatial=_SPATIAL, output=OutputSpec.pooled())
+    emb_pooled = get_embedding(
+        "mock_model", spatial=_SPATIAL, output=OutputSpec.pooled()
+    )
     assert emb_pooled.meta["output"] == "pooled"
 
     emb_grid = get_embedding("mock_model", spatial=_SPATIAL, output=OutputSpec.grid())
@@ -99,6 +130,7 @@ def test_get_embedding_unknown_model():
 # ══════════════════════════════════════════════════════════════════════
 # get_embeddings_batch
 # ══════════════════════════════════════════════════════════════════════
+
 
 def test_get_embeddings_batch():
     from rs_embed.api import get_embeddings_batch
@@ -128,7 +160,10 @@ def test_get_embeddings_batch_with_sensor():
     sensor = SensorSpec(collection="COLL", bands=("B1",))
     spatials = [PointBuffer(lon=0.0, lat=0.0, buffer_m=256)]
     results = get_embeddings_batch(
-        "mock_model", spatials=spatials, temporal=_TEMPORAL, sensor=sensor,
+        "mock_model",
+        spatials=spatials,
+        temporal=_TEMPORAL,
+        sensor=sensor,
     )
     assert len(results) == 1
 
@@ -150,11 +185,14 @@ def test_get_embeddings_batch_precomputed_default_backend_auto_resolves_to_auto(
 # _validate_specs
 # ══════════════════════════════════════════════════════════════════════
 
+
 def test_validate_specs_invalid_spatial_type():
     from rs_embed.api import _validate_specs
 
     with pytest.raises(ModelError, match="Invalid spatial spec type"):
-        _validate_specs(spatial="not-spatial", temporal=None, output=OutputSpec.pooled())
+        _validate_specs(
+            spatial="not-spatial", temporal=None, output=OutputSpec.pooled()
+        )
 
 
 def test_validate_specs_bad_output_mode():
@@ -201,22 +239,36 @@ def test_validate_specs_ok():
 # _assert_supported
 # ══════════════════════════════════════════════════════════════════════
 
+
 class _BackendLimitedEmbedder(EmbedderBase):
     """Embedder that only supports a specific backend."""
+
     def describe(self):
         return {
-            "type": "mock", "dim": 8,
+            "type": "mock",
+            "dim": 8,
             "backend": ["gee"],
             "output": ["pooled"],
             "temporal": {"mode": "year"},
         }
 
-    def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+    def get_embedding(
+        self,
+        *,
+        spatial,
+        temporal,
+        sensor,
+        output,
+        backend,
+        device="auto",
+        input_chw=None,
+    ):
         return Embedding(data=np.arange(8, dtype=np.float32), meta={})
 
 
 class _BrokenDescribeEmbedder(EmbedderBase):
     """Embedder whose describe() raises — _assert_supported should not crash."""
+
     def describe(self):
         raise RuntimeError("broken")
 
@@ -230,7 +282,9 @@ def test_assert_supported_wrong_backend():
     emb = _BackendLimitedEmbedder()
     emb.model_name = "limited"
     with pytest.raises(ModelError, match="does not support backend"):
-        _assert_supported(emb, backend="local", output=OutputSpec.pooled(), temporal=None)
+        _assert_supported(
+            emb, backend="local", output=OutputSpec.pooled(), temporal=None
+        )
 
 
 def test_assert_supported_wrong_output():
@@ -249,7 +303,9 @@ def test_assert_supported_wrong_temporal():
     emb.model_name = "limited"
     with pytest.raises(ModelError, match="expects TemporalSpec.mode='year'"):
         _assert_supported(
-            emb, backend="gee", output=OutputSpec.pooled(),
+            emb,
+            backend="gee",
+            output=OutputSpec.pooled(),
             temporal=TemporalSpec.range("2022-01-01", "2022-06-01"),
         )
 
@@ -259,7 +315,9 @@ def test_assert_supported_ok():
 
     emb = _BackendLimitedEmbedder()
     emb.model_name = "limited"
-    _assert_supported(emb, backend="gee", output=OutputSpec.pooled(), temporal=TemporalSpec.year(2024))
+    _assert_supported(
+        emb, backend="gee", output=OutputSpec.pooled(), temporal=TemporalSpec.year(2024)
+    )
 
 
 def test_assert_supported_broken_describe_raises_model_error():
@@ -275,8 +333,10 @@ def test_assert_supported_broken_describe_raises_model_error():
 # _sensor_key / _sensor_cache_key
 # ══════════════════════════════════════════════════════════════════════
 
+
 def test_sensor_key_none():
     from rs_embed.api import _sensor_key
+
     assert _sensor_key(None) == ("__none__",)
 
 
@@ -303,11 +363,14 @@ def test_sensor_cache_key_deterministic_and_differs():
 # export_batch — argument validation (no GEE needed)
 # ══════════════════════════════════════════════════════════════════════
 
+
 def test_export_batch_empty_spatials():
     from rs_embed.api import export_batch
 
     with pytest.raises(ModelError, match="non-empty"):
-        export_batch(spatials=[], temporal=_TEMPORAL, models=["mock_model"], out_dir="/tmp")
+        export_batch(
+            spatials=[], temporal=_TEMPORAL, models=["mock_model"], out_dir="/tmp"
+        )
 
 
 def test_export_batch_empty_models():
@@ -329,8 +392,11 @@ def test_export_batch_both_output_args():
 
     with pytest.raises(ModelError, match="only one"):
         export_batch(
-            spatials=[_SPATIAL], temporal=_TEMPORAL, models=["mock_model"],
-            out_dir="/tmp/a", out_path="/tmp/b.npz",
+            spatials=[_SPATIAL],
+            temporal=_TEMPORAL,
+            models=["mock_model"],
+            out_dir="/tmp/a",
+            out_path="/tmp/b.npz",
         )
 
 
@@ -338,7 +404,9 @@ def test_export_batch_decoupled_output_api_requires_out_and_layout():
     from rs_embed.api import export_batch
 
     with pytest.raises(ModelError, match="both out and layout"):
-        export_batch(spatials=[_SPATIAL], temporal=_TEMPORAL, models=["mock_model"], out="/tmp/x")
+        export_batch(
+            spatials=[_SPATIAL], temporal=_TEMPORAL, models=["mock_model"], out="/tmp/x"
+        )
 
 
 def test_export_batch_decoupled_output_api_disallows_mixing_with_legacy_args():
@@ -360,8 +428,11 @@ def test_export_batch_unsupported_format():
 
     with pytest.raises(ModelError, match="Unsupported export format"):
         export_batch(
-            spatials=[_SPATIAL], temporal=_TEMPORAL, models=["mock_model"],
-            out_dir="/tmp", format="parquet",
+            spatials=[_SPATIAL],
+            temporal=_TEMPORAL,
+            models=["mock_model"],
+            out_dir="/tmp",
+            format="parquet",
         )
 
 
@@ -370,9 +441,15 @@ def test_export_batch_accepts_netcdf_format(tmp_path):
     from rs_embed.api import export_batch
 
     results = export_batch(
-        spatials=[_SPATIAL], temporal=_TEMPORAL, models=["mock_model"],
-        out_dir=str(tmp_path), format="netcdf", backend="local",
-        save_inputs=False, save_embeddings=True, save_manifest=False,
+        spatials=[_SPATIAL],
+        temporal=_TEMPORAL,
+        models=["mock_model"],
+        out_dir=str(tmp_path),
+        format="netcdf",
+        backend="local",
+        save_inputs=False,
+        save_embeddings=True,
+        save_manifest=False,
     )
     assert len(results) == 1
     nc_file = tmp_path / "p00000.nc"
@@ -384,8 +461,11 @@ def test_export_batch_names_length_mismatch(tmp_path):
 
     with pytest.raises(ModelError, match="same length"):
         export_batch(
-            spatials=[_SPATIAL, _SPATIAL], temporal=_TEMPORAL, models=["mock_model"],
-            out_dir=str(tmp_path), names=["only_one"],
+            spatials=[_SPATIAL, _SPATIAL],
+            temporal=_TEMPORAL,
+            models=["mock_model"],
+            out_dir=str(tmp_path),
+            names=["only_one"],
         )
 
 
@@ -442,7 +522,9 @@ def test_public_list_models_can_include_aliases():
     assert "remoteclip_s2rgb" in models
 
 
-def test_export_batch_infer_batch_size_is_independent_from_chunk_size(monkeypatch, tmp_path):
+def test_export_batch_infer_batch_size_is_independent_from_chunk_size(
+    monkeypatch, tmp_path
+):
     from rs_embed.api import export_batch
 
     captured = {}
@@ -471,6 +553,7 @@ def test_export_batch_infer_batch_size_is_independent_from_chunk_size(monkeypatc
 # ══════════════════════════════════════════════════════════════════════
 # normalize_embedding_output — idempotency / double-normalization guard
 # ══════════════════════════════════════════════════════════════════════
+
 
 def test_normalize_embedding_output_idempotent_for_pooled():
     """Pooled embeddings are passed through unchanged; calling twice is safe."""
@@ -532,13 +615,22 @@ def test_run_embedding_request_prefetched_path_normalizes_once(monkeypatch):
             return {"type": "mock"}
 
         def get_embedding(
-            self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None
+            self,
+            *,
+            spatial,
+            temporal,
+            sensor,
+            output,
+            backend,
+            device="auto",
+            input_chw=None,
         ):
             # Simulate a model that reports south-to-north native orientation
             data = np.zeros((2, 2), dtype=np.float32)
             return Embedding(data=data, meta={"y_axis_direction": "south_to_north"})
 
     from rs_embed.core import registry
+
     registry.register("s2n_grid_mock")(_SouthNorthGridEmbedder)
 
     # Provide a fake prefetched input so the prefetched path is triggered
@@ -570,8 +662,10 @@ def test_run_embedding_request_prefetched_path_normalizes_once(monkeypatch):
 # export_batch — assert_supported capability validation
 # ══════════════════════════════════════════════════════════════════════
 
+
 class _BackendOnlyGEEExportEmbedder:
     """Embedder that only supports backend='gee'."""
+
     model_name = "gee_only_export_mock"
 
     def describe(self):
@@ -581,7 +675,17 @@ class _BackendOnlyGEEExportEmbedder:
             "output": ["pooled"],
         }
 
-    def get_embedding(self, *, spatial, temporal, sensor, output, backend, device="auto", input_chw=None):
+    def get_embedding(
+        self,
+        *,
+        spatial,
+        temporal,
+        sensor,
+        output,
+        backend,
+        device="auto",
+        input_chw=None,
+    ):
         return Embedding(data=np.zeros(4, dtype=np.float32), meta={})
 
 

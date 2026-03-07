@@ -18,7 +18,10 @@ import pytest
 
 from rs_embed.core.embedding import Embedding
 from rs_embed.core.specs import OutputSpec, PointBuffer, SensorSpec, TemporalSpec
-from rs_embed.internal.api.combined_flow_helpers import CombinedModelDeps, run_pending_models
+from rs_embed.internal.api.combined_flow_helpers import (
+    CombinedModelDeps,
+    run_pending_models,
+)
 
 
 # ── Helpers ────────────────────────────────────────────────────────
@@ -26,8 +29,10 @@ from rs_embed.internal.api.combined_flow_helpers import CombinedModelDeps, run_p
 
 class _NoOpProgress:
     """Minimal progress bar that does nothing."""
+
     def update(self, n=1):
         pass
+
     def close(self):
         pass
 
@@ -51,9 +56,9 @@ def _make_deps(
         sensor_cache_key=lambda s: s.collection if s else "__none__",
         sanitize_key=lambda s: s.replace("/", "_").replace(" ", "_"),
         run_with_retry=lambda fn, **kw: fn(),
-        call_embedder_get_embedding=lambda **kw: kw["embedder"].get_embedding(**{
-            k: v for k, v in kw.items() if k != "embedder"
-        }),
+        call_embedder_get_embedding=lambda **kw: kw["embedder"].get_embedding(
+            **{k: v for k, v in kw.items() if k != "embedder"}
+        ),
         supports_prefetched_batch_api=lambda e: supports_prefetched_batch,
         supports_batch_api=lambda e: supports_batch,
         embedding_to_numpy=lambda e: np.asarray(e.data, dtype=np.float32),
@@ -111,12 +116,15 @@ def _base_kwargs(
 
 class _SingleEmbedder:
     """Embedder that only supports per-item get_embedding."""
+
     calls = 0
 
     def describe(self):
         return {"type": "onthefly"}
 
-    def get_embedding(self, *, spatial, temporal, sensor, output, backend, device, input_chw=None):
+    def get_embedding(
+        self, *, spatial, temporal, sensor, output, backend, device, input_chw=None
+    ):
         _SingleEmbedder.calls += 1
         return Embedding(data=np.array([1.0, 2.0], dtype=np.float32), meta={})
 
@@ -128,7 +136,9 @@ def test_per_item_fallback():
     spatials = _make_spatials(3)
     deps = _make_deps(embedder)
 
-    kw = _base_kwargs(models=["m1"], spatials=spatials, deps=deps, provider_enabled=False)
+    kw = _base_kwargs(
+        models=["m1"], spatials=spatials, deps=deps, provider_enabled=False
+    )
     manifest = run_pending_models(**kw)
 
     assert _SingleEmbedder.calls == 3
@@ -144,6 +154,7 @@ def test_per_item_fallback():
 
 class _BatchEmbedder:
     """Embedder that supports get_embeddings_batch."""
+
     batch_calls = 0
     single_calls = 0
 
@@ -154,9 +165,14 @@ class _BatchEmbedder:
         _BatchEmbedder.single_calls += 1
         return Embedding(data=np.array([1.0], dtype=np.float32), meta={})
 
-    def get_embeddings_batch(self, *, spatials, temporal, sensor, output, backend, device):
+    def get_embeddings_batch(
+        self, *, spatials, temporal, sensor, output, backend, device
+    ):
         _BatchEmbedder.batch_calls += 1
-        return [Embedding(data=np.array([float(i)], dtype=np.float32), meta={}) for i in range(len(spatials))]
+        return [
+            Embedding(data=np.array([float(i)], dtype=np.float32), meta={})
+            for i in range(len(spatials))
+        ]
 
 
 def test_batch_no_input_succeeds():
@@ -167,7 +183,9 @@ def test_batch_no_input_succeeds():
     spatials = _make_spatials(4)
     deps = _make_deps(embedder, supports_batch=True)
 
-    kw = _base_kwargs(models=["m1"], spatials=spatials, deps=deps, provider_enabled=False)
+    kw = _base_kwargs(
+        models=["m1"], spatials=spatials, deps=deps, provider_enabled=False
+    )
     manifest = run_pending_models(**kw)
 
     assert _BatchEmbedder.batch_calls >= 1
@@ -183,6 +201,7 @@ def test_batch_no_input_succeeds():
 
 class _FailingBatchEmbedder:
     """Embedder whose batch API always fails, but single works."""
+
     batch_calls = 0
     single_calls = 0
 
@@ -206,7 +225,9 @@ def test_batch_fails_falls_back_to_single():
     spatials = _make_spatials(3)
     deps = _make_deps(embedder, supports_batch=True)
 
-    kw = _base_kwargs(models=["m1"], spatials=spatials, deps=deps, provider_enabled=False)
+    kw = _base_kwargs(
+        models=["m1"], spatials=spatials, deps=deps, provider_enabled=False
+    )
     manifest = run_pending_models(**kw)
 
     assert _FailingBatchEmbedder.batch_calls >= 1  # batch was attempted
@@ -222,6 +243,7 @@ def test_batch_fails_falls_back_to_single():
 
 class _PrefetchedBatchEmbedder:
     """Embedder that supports batch-from-prefetched inputs."""
+
     batch_calls = 0
     single_calls = 0
 
@@ -232,9 +254,14 @@ class _PrefetchedBatchEmbedder:
         _PrefetchedBatchEmbedder.single_calls += 1
         return Embedding(data=np.array([1.0], dtype=np.float32), meta={})
 
-    def get_embeddings_batch_from_inputs(self, *, spatials, input_chws, temporal, sensor, output, backend, device):
+    def get_embeddings_batch_from_inputs(
+        self, *, spatials, input_chws, temporal, sensor, output, backend, device
+    ):
         _PrefetchedBatchEmbedder.batch_calls += 1
-        return [Embedding(data=np.array([float(i)], dtype=np.float32), meta={}) for i in range(len(spatials))]
+        return [
+            Embedding(data=np.array([float(i)], dtype=np.float32), meta={})
+            for i in range(len(spatials))
+        ]
 
 
 def test_prefetched_batch_succeeds():
@@ -242,11 +269,15 @@ def test_prefetched_batch_succeeds():
     _PrefetchedBatchEmbedder.batch_calls = 0
     _PrefetchedBatchEmbedder.single_calls = 0
     embedder = _PrefetchedBatchEmbedder()
-    sensor = SensorSpec(collection="C", bands=("B1",), scale_m=10, cloudy_pct=30, composite="median")
+    sensor = SensorSpec(
+        collection="C", bands=("B1",), scale_m=10, cloudy_pct=30, composite="median"
+    )
     spatials = _make_spatials(3)
     deps = _make_deps(embedder, supports_prefetched_batch=True)
 
-    kw = _base_kwargs(models=["m1"], spatials=spatials, deps=deps, provider_enabled=True)
+    kw = _base_kwargs(
+        models=["m1"], spatials=spatials, deps=deps, provider_enabled=True
+    )
     kw["resolved_sensor"] = {"m1": sensor}
     manifest = run_pending_models(**kw)
 
@@ -281,11 +312,15 @@ def test_prefetched_batch_fails_falls_back_to_single():
     _FailingPrefetchedBatchEmbedder.batch_calls = 0
     _FailingPrefetchedBatchEmbedder.single_calls = 0
     embedder = _FailingPrefetchedBatchEmbedder()
-    sensor = SensorSpec(collection="C", bands=("B1",), scale_m=10, cloudy_pct=30, composite="median")
+    sensor = SensorSpec(
+        collection="C", bands=("B1",), scale_m=10, cloudy_pct=30, composite="median"
+    )
     spatials = _make_spatials(2)
     deps = _make_deps(embedder, supports_prefetched_batch=True)
 
-    kw = _base_kwargs(models=["m1"], spatials=spatials, deps=deps, provider_enabled=True)
+    kw = _base_kwargs(
+        models=["m1"], spatials=spatials, deps=deps, provider_enabled=True
+    )
     kw["resolved_sensor"] = {"m1": sensor}
     manifest = run_pending_models(**kw)
 
@@ -302,10 +337,13 @@ def test_prefetched_batch_fails_falls_back_to_single():
 
 class _PartialFailEmbedder:
     """Embedder that fails on even indices."""
+
     def describe(self):
         return {"type": "onthefly"}
 
-    def get_embedding(self, *, spatial, temporal, sensor, output, backend, device, input_chw=None):
+    def get_embedding(
+        self, *, spatial, temporal, sensor, output, backend, device, input_chw=None
+    ):
         # Use lat to determine which index this is (our spatials have distinct lats)
         if round(spatial.lat, 1) == 40.0:  # index 0
             raise RuntimeError("fail on index 0")
