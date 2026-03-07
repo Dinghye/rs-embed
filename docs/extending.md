@@ -22,6 +22,7 @@ Models are discovered through the registry in `rs_embed.core.registry`:
 - `@register("name")` registers an embedder class.
 - `get_embedder_cls("name")` resolves the class.
 - `list_models()` lists models that have already been loaded in the current process.
+- `rs_embed.list_models()` returns the stable public model catalog from `MODEL_SPECS`.
 
 Model loading is **lazy**:
 

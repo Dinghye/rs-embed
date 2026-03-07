@@ -28,10 +28,10 @@ from .internal.api.prefetch_helpers import (
     select_prefetched_channels as _select_prefetched_channels,
 )
 from .internal.api.export_flow_helpers import (
-    build_one_point_payload as _build_one_point_payload_impl,
-    export_combined as _export_combined_npz_impl,
-    export_one_point as _export_one_point_npz_impl,
-    write_one_payload as _write_one_payload_impl,
+    build_one_point_payload as _build_one_point_payload,
+    export_combined as _export_combined_npz,
+    export_one_point as _export_one_point_npz,
+    write_one_payload as _write_one_payload,
 )
 from .internal.api.runtime_helpers import (
     call_embedder_get_embedding as _call_embedder_get_embedding,
@@ -61,6 +61,7 @@ from .core.embedding import Embedding
 from .core.errors import ModelError
 from .core.registry import get_embedder_cls
 from .core.specs import InputPrepSpec, OutputSpec, SensorSpec, SpatialSpec, TemporalSpec, BBox
+from .embedders.catalog import MODEL_ALIASES, MODEL_SPECS
 from .providers import ProviderBase, get_provider, has_provider, list_providers
 
 # Backward-compatibility hook: tests/downstream may monkeypatch api.GEEProvider.
@@ -736,177 +737,19 @@ def _call_embedder_get_embedding_with_input_prep(
         input_prep=spec,
     )
 
-def _build_one_point_payload(
+@dataclass(frozen=True)
+class _ExportFlowOverrides:
+    provider_factory: Optional[Callable[[], ProviderBase]]
+    call_embedder_get_embedding_fn: Callable[..., Embedding]
+    supports_prefetched_batch_api_fn: Callable[[Any], bool]
+    supports_batch_api_fn: Callable[[Any], bool]
+
+
+def _make_export_flow_overrides(
     *,
-    point_index: int,
-    spatial: SpatialSpec,
-    temporal: Optional[TemporalSpec],
-    models: List[str],
     backend: str,
-    device: str,
-    output: OutputSpec,
-    resolved_sensor: Dict[str, Optional[SensorSpec]],
-    model_type: Dict[str, str],
-    inputs_cache: Dict[Tuple[int, str], np.ndarray],
-    input_reports: Dict[Tuple[int, str], Dict[str, Any]],
-    prefetch_errors: Dict[Tuple[int, str], str],
-    pass_input_into_embedder: bool,
-    save_inputs: bool,
-    save_embeddings: bool,
-    fail_on_bad_input: bool,
-    continue_on_error: bool,
-    max_retries: int,
-    retry_backoff_s: float,
-    model_progress_cb: Optional[Callable[[str], None]] = None,
-    input_prep: Optional[InputPrepSpec | str] = None,
-) -> Tuple[Dict[str, np.ndarray], Dict[str, Any]]:
-    provider_factory = _provider_factory_for_backend(backend)
-    def _call_embedder_get_embedding_wrapped(**kwargs: Any) -> Embedding:
-        return _call_embedder_get_embedding_with_input_prep(input_prep=input_prep, **kwargs)
-    return _build_one_point_payload_impl(
-        point_index=point_index,
-        spatial=spatial,
-        temporal=temporal,
-        models=models,
-        backend=backend,
-        device=device,
-        output=output,
-        resolved_sensor=resolved_sensor,
-        model_type=model_type,
-        inputs_cache=inputs_cache,
-        input_reports=input_reports,
-        prefetch_errors=prefetch_errors,
-        pass_input_into_embedder=pass_input_into_embedder,
-        save_inputs=save_inputs,
-        save_embeddings=save_embeddings,
-        fail_on_bad_input=fail_on_bad_input,
-        continue_on_error=continue_on_error,
-        max_retries=max_retries,
-        retry_backoff_s=retry_backoff_s,
-        model_progress_cb=model_progress_cb,
-        normalize_model_name_fn=_normalize_model_name,
-        sensor_key_fn=_sensor_key,
-        get_embedder_bundle_cached_fn=_get_embedder_bundle_cached,
-        run_with_retry_fn=_run_with_retry,
-        fetch_gee_patch_raw_fn=_fetch_gee_patch_raw,
-        inspect_input_raw_fn=_inspect_input_raw,
-        call_embedder_get_embedding_fn=_call_embedder_get_embedding_wrapped,
-        provider_factory=provider_factory,
-    )
-
-
-def _write_one_payload(
-    *,
-    out_path: str,
-    arrays: Dict[str, np.ndarray],
-    manifest: Dict[str, Any],
-    save_manifest: bool,
-    fmt: str,
-    max_retries: int,
-    retry_backoff_s: float,
-) -> Dict[str, Any]:
-    return _write_one_payload_impl(
-        out_path=out_path,
-        arrays=arrays,
-        manifest=manifest,
-        save_manifest=save_manifest,
-        fmt=fmt,
-        max_retries=max_retries,
-        retry_backoff_s=retry_backoff_s,
-        run_with_retry_fn=_run_with_retry,
-        jsonable_fn=_jsonable,
-    )
-
-
-def _export_one_point_npz(
-    *,
-    point_index: int,
-    spatial: SpatialSpec,
-    temporal: Optional[TemporalSpec],
-    models: List[str],
-    out_path: str,
-    backend: str,
-    device: str,
-    output: OutputSpec,
-    resolved_sensor: Dict[str, Optional[SensorSpec]],
-    model_type: Dict[str, str],
-    inputs_cache: Dict[Tuple[int, str], np.ndarray],
-    input_reports: Dict[Tuple[int, str], Dict[str, Any]],
-    pass_input_into_embedder: bool,
-    save_inputs: bool,
-    save_embeddings: bool,
-    save_manifest: bool,
-    fail_on_bad_input: bool,
-    fmt: str = "npz",
-    continue_on_error: bool = False,
-    max_retries: int = 0,
-    retry_backoff_s: float = 0.0,
-    input_prep: Optional[InputPrepSpec | str] = None,
-) -> Dict[str, Any]:
-    provider_factory = _provider_factory_for_backend(backend)
-    def _call_embedder_get_embedding_wrapped(**kwargs: Any) -> Embedding:
-        return _call_embedder_get_embedding_with_input_prep(input_prep=input_prep, **kwargs)
-    return _export_one_point_npz_impl(
-        point_index=point_index,
-        spatial=spatial,
-        temporal=temporal,
-        models=models,
-        out_path=out_path,
-        backend=backend,
-        device=device,
-        output=output,
-        resolved_sensor=resolved_sensor,
-        model_type=model_type,
-        inputs_cache=inputs_cache,
-        input_reports=input_reports,
-        pass_input_into_embedder=pass_input_into_embedder,
-        save_inputs=save_inputs,
-        save_embeddings=save_embeddings,
-        save_manifest=save_manifest,
-        fail_on_bad_input=fail_on_bad_input,
-        fmt=fmt,
-        continue_on_error=continue_on_error,
-        max_retries=max_retries,
-        retry_backoff_s=retry_backoff_s,
-        normalize_model_name_fn=_normalize_model_name,
-        sensor_key_fn=_sensor_key,
-        get_embedder_bundle_cached_fn=_get_embedder_bundle_cached,
-        run_with_retry_fn=_run_with_retry,
-        fetch_gee_patch_raw_fn=_fetch_gee_patch_raw,
-        inspect_input_raw_fn=_inspect_input_raw,
-        call_embedder_get_embedding_fn=_call_embedder_get_embedding_wrapped,
-        provider_factory=provider_factory,
-        jsonable_fn=_jsonable,
-    )
-
-
-def _export_combined_npz(
-    *,
-    spatials: List[SpatialSpec],
-    temporal: Optional[TemporalSpec],
-    models: List[str],
-    out_path: str,
-    backend: str,
-    device: str,
-    output: OutputSpec,
-    resolved_sensor: Dict[str, Optional[SensorSpec]],
-    model_type: Dict[str, str],
-    save_inputs: bool,
-    save_embeddings: bool,
-    save_manifest: bool,
-    fail_on_bad_input: bool,
-    chunk_size: int,
-    num_workers: int,
-    fmt: str = "npz",
-    continue_on_error: bool = False,
-    max_retries: int = 0,
-    retry_backoff_s: float = 0.0,
-    inference_strategy: str = "auto",
-    infer_batch_size: Optional[int] = None,
-    resume: bool = False,
-    show_progress: bool = False,
-    input_prep: Optional[InputPrepSpec | str] = None,
-) -> Dict[str, Any]:
+    input_prep: Optional[InputPrepSpec | str],
+) -> _ExportFlowOverrides:
     provider_factory = _provider_factory_for_backend(backend)
     resolved_input_prep = _resolve_input_prep_spec(input_prep)
     explicit_nonresize_input_prep = (input_prep is not None) and (resolved_input_prep.mode in {"tile", "auto"})
@@ -924,47 +767,11 @@ def _export_combined_npz(
             return False
         return _supports_batch_api(embedder)
 
-    return _export_combined_npz_impl(
-        spatials=spatials,
-        temporal=temporal,
-        models=models,
-        out_path=out_path,
-        backend=backend,
-        device=device,
-        output=output,
-        resolved_sensor=resolved_sensor,
-        model_type=model_type,
-        save_inputs=save_inputs,
-        save_embeddings=save_embeddings,
-        save_manifest=save_manifest,
-        fail_on_bad_input=fail_on_bad_input,
-        chunk_size=chunk_size,
-        num_workers=num_workers,
-        fmt=fmt,
-        continue_on_error=continue_on_error,
-        max_retries=max_retries,
-        retry_backoff_s=retry_backoff_s,
-        inference_strategy=inference_strategy,
-        infer_batch_size=infer_batch_size,
-        resume=resume,
-        show_progress=show_progress,
+    return _ExportFlowOverrides(
         provider_factory=provider_factory,
-        run_with_retry_fn=_run_with_retry,
-        fetch_gee_patch_raw_fn=_fetch_gee_patch_raw,
-        inspect_input_raw_fn=_inspect_input_raw,
-        normalize_input_chw_fn=_normalize_input_chw,
-        select_prefetched_channels_fn=_select_prefetched_channels,
-        create_progress_fn=_create_progress,
-        get_embedder_bundle_cached_fn=_get_embedder_bundle_cached,
-        sensor_key_fn=_sensor_key,
-        normalize_model_name_fn=_normalize_model_name,
         call_embedder_get_embedding_fn=_call_embedder_get_embedding_wrapped,
         supports_prefetched_batch_api_fn=_supports_prefetched_batch_api_wrapped,
         supports_batch_api_fn=_supports_batch_api_wrapped,
-        sensor_cache_key_fn=_sensor_cache_key,
-        load_json_dict_fn=_load_json_dict,
-        is_incomplete_combined_manifest_fn=_is_incomplete_combined_manifest,
-        write_one_payload_fn=_write_one_payload,
     )
 
 
@@ -1394,7 +1201,8 @@ def _export_batch_per_item(
             if bar is not None:
                 bar.update(1)
 
-        provider_factory = _provider_factory_for_backend(backend_n)
+        export_flow = _make_export_flow_overrides(backend=backend_n, input_prep=input_prep)
+        provider_factory = export_flow.provider_factory
         provider_enabled = provider_factory is not None
 
         need_prefetch = provider_enabled and bool(save_inputs or save_embeddings) and bool(pending_idxs)
@@ -1590,7 +1398,14 @@ def _export_batch_per_item(
                             model_progress_cb=(
                                 None if use_chunk_batch_infer else (_on_model_done if save_embeddings else None)
                             ),
-                            input_prep=input_prep,
+                            normalize_model_name_fn=_normalize_model_name,
+                            sensor_key_fn=_sensor_key,
+                            get_embedder_bundle_cached_fn=_get_embedder_bundle_cached,
+                            run_with_retry_fn=_run_with_retry,
+                            fetch_gee_patch_raw_fn=_fetch_gee_patch_raw,
+                            inspect_input_raw_fn=_inspect_input_raw,
+                            call_embedder_get_embedding_fn=export_flow.call_embedder_get_embedding_fn,
+                            provider_factory=provider_factory,
                         )
                         if use_chunk_batch_infer:
                             _inject_precomputed_embeddings_into_point_payload(
@@ -1630,6 +1445,8 @@ def _export_batch_per_item(
                             fmt=fmt,
                             max_retries=max_retries,
                             retry_backoff_s=retry_backoff_s,
+                            run_with_retry_fn=_run_with_retry,
+                            jsonable_fn=_jsonable,
                         )
                         write_futs.append((i, fut))
                     else:
@@ -1642,6 +1459,8 @@ def _export_batch_per_item(
                                 fmt=fmt,
                                 max_retries=max_retries,
                                 retry_backoff_s=retry_backoff_s,
+                                run_with_retry_fn=_run_with_retry,
+                                jsonable_fn=_jsonable,
                             )
                         except Exception as e:
                             if not continue_on_error:
@@ -1698,9 +1517,163 @@ def _export_batch_per_item(
         progress.close()
 
 
+@dataclass(frozen=True)
+class _EmbeddingRequestContext:
+    model_n: str
+    backend_n: str
+    device: str
+    sensor_eff: Optional[SensorSpec]
+    input_prep: Optional[InputPrepSpec | str]
+    input_prep_resolved: _ResolvedInputPrepSpec
+    embedder: Any
+    lock: Any
+
+
+def _validate_spatials(
+    *,
+    spatials: List[SpatialSpec],
+    temporal: Optional[TemporalSpec],
+    output: OutputSpec,
+) -> None:
+    if not isinstance(spatials, list) or len(spatials) == 0:
+        raise ModelError("spatials must be a non-empty List[SpatialSpec].")
+    for spatial in spatials:
+        _validate_specs(spatial=spatial, temporal=temporal, output=output)
+
+
+def _prepare_embedding_request_context(
+    *,
+    model: str,
+    temporal: Optional[TemporalSpec],
+    sensor: Optional[SensorSpec],
+    output: OutputSpec,
+    backend: str,
+    device: str,
+    input_prep: Optional[InputPrepSpec | str],
+) -> _EmbeddingRequestContext:
+    model_n = _normalize_model_name(model)
+    backend_n = _resolve_embedding_api_backend(model_n, _normalize_backend_name(backend))
+    device_n = _normalize_device_name(device)
+    input_prep_resolved = _resolve_input_prep_spec(input_prep)
+
+    sensor_eff = sensor
+    if input_prep_resolved.mode == "tile" and sensor_eff is None:
+        sensor_eff = _default_sensor_for_model(model_n)
+
+    sensor_k = _sensor_key(sensor_eff)
+    embedder, lock = _get_embedder_bundle_cached(model_n, backend_n, device_n, sensor_k)
+    _assert_supported(embedder, backend=backend_n, output=output, temporal=temporal)
+
+    return _EmbeddingRequestContext(
+        model_n=model_n,
+        backend_n=backend_n,
+        device=device_n,
+        sensor_eff=sensor_eff,
+        input_prep=input_prep,
+        input_prep_resolved=input_prep_resolved,
+        embedder=embedder,
+        lock=lock,
+    )
+
+
+def _maybe_fetch_api_side_inputs(
+    *,
+    spatials: List[SpatialSpec],
+    temporal: Optional[TemporalSpec],
+    ctx: _EmbeddingRequestContext,
+) -> Optional[List[np.ndarray]]:
+    use_api_side_input_prep = (ctx.input_prep is not None) and (ctx.input_prep_resolved.mode in {"tile", "auto"})
+    if not use_api_side_input_prep:
+        return None
+
+    provider_factory = _provider_factory_for_backend(ctx.backend_n)
+    if provider_factory is None:
+        if ctx.input_prep_resolved.mode == "tile":
+            raise ModelError("input_prep.mode='tile' currently requires a provider backend (e.g. gee).")
+        return None
+    if ctx.sensor_eff is None:
+        if ctx.input_prep_resolved.mode == "tile":
+            raise ModelError("input_prep.mode='tile' requires a sensor for provider-backed on-the-fly models.")
+        return None
+    if not _embedder_accepts_input_chw(type(ctx.embedder)):
+        if ctx.input_prep_resolved.mode == "tile":
+            raise ModelError(
+                f"Model {ctx.model_n} does not accept input_chw; cannot apply input_prep.mode='tile'."
+            )
+        return None
+
+    provider = provider_factory()
+    ensure_ready = getattr(provider, "ensure_ready", None)
+    if callable(ensure_ready):
+        _run_with_retry(lambda: ensure_ready(), retries=0, backoff_s=0.0)
+    return [
+        _fetch_gee_patch_raw(provider, spatial=spatial, temporal=temporal, sensor=ctx.sensor_eff)
+        for spatial in spatials
+    ]
+
+
+def _run_embedding_request(
+    *,
+    spatials: List[SpatialSpec],
+    temporal: Optional[TemporalSpec],
+    sensor: Optional[SensorSpec],
+    output: OutputSpec,
+    ctx: _EmbeddingRequestContext,
+) -> List[Embedding]:
+    prefetched_inputs = _maybe_fetch_api_side_inputs(spatials=spatials, temporal=temporal, ctx=ctx)
+    if prefetched_inputs is not None:
+        out: List[Embedding] = []
+        for spatial, raw in zip(spatials, prefetched_inputs):
+            with ctx.lock:
+                emb = _call_embedder_get_embedding_with_input_prep(
+                    embedder=ctx.embedder,
+                    spatial=spatial,
+                    temporal=temporal,
+                    sensor=ctx.sensor_eff,
+                    output=output,
+                    backend=ctx.backend_n,
+                    device=ctx.device,
+                    input_chw=raw,
+                    input_prep=ctx.input_prep,
+                )
+            out.append(_normalize_embedding_output(emb=emb, output=output))
+        return out
+
+    if len(spatials) == 1:
+        with ctx.lock:
+            emb = ctx.embedder.get_embedding(
+                spatial=spatials[0],
+                temporal=temporal,
+                sensor=sensor,
+                output=output,
+                backend=ctx.backend_n,
+                device=ctx.device,
+            )
+        return [_normalize_embedding_output(emb=emb, output=output)]
+
+    with ctx.lock:
+        embs = ctx.embedder.get_embeddings_batch(
+            spatials=spatials,
+            temporal=temporal,
+            sensor=sensor,
+            output=output,
+            backend=ctx.backend_n,
+            device=ctx.device,
+        )
+    return [_normalize_embedding_output(emb=emb, output=output) for emb in embs]
+
+
 # -----------------------------------------------------------------------------
 # Public: embeddings
 # -----------------------------------------------------------------------------
+
+def list_models(*, include_aliases: bool = False) -> List[str]:
+    """Return the stable model catalog, independent of runtime lazy-load state."""
+    model_ids = set(MODEL_SPECS.keys())
+    if include_aliases:
+        model_ids.update(MODEL_ALIASES.keys())
+    return sorted(model_ids)
+
 
 def get_embedding(
     model: str,
@@ -1709,7 +1682,7 @@ def get_embedding(
     temporal: Optional[TemporalSpec] = None,
     sensor: Optional[SensorSpec] = None,
     output: OutputSpec = OutputSpec.pooled(),
-    backend: str = "gee",
+    backend: str = "auto",
     device: str = "auto",
     input_prep: Optional[InputPrepSpec | str] = "resize",
 ) -> Embedding:
@@ -1720,100 +1693,23 @@ def get_embedding(
     This function reuses a cached embedder instance when possible to avoid
     repeatedly loading model weights / initializing providers.
     """
-    # Import embedders so registration happens before resolving model IDs
-    from . import embedders  # noqa: F401
-
-    model_n = _normalize_model_name(model)
-    backend_n = _resolve_embedding_api_backend(model_n, _normalize_backend_name(backend))
-    device = _normalize_device_name(device)
-
-    _validate_specs(spatial=spatial, temporal=temporal, output=output)
-
-    input_prep_resolved = _resolve_input_prep_spec(input_prep)
-    sensor_eff = sensor
-    if input_prep_resolved.mode == "tile" and sensor_eff is None:
-        sensor_eff = _default_sensor_for_model(model_n)
-
-    sensor_k = _sensor_key(sensor_eff)
-    embedder, lock = _get_embedder_bundle_cached(model_n, backend_n, device, sensor_k)
-
-    _assert_supported(embedder, backend=backend_n, output=output, temporal=temporal)
-
-    use_api_side_input_prep = (input_prep is not None) and (input_prep_resolved.mode in {"tile", "auto"})
-    if use_api_side_input_prep:
-        provider_factory = _provider_factory_for_backend(backend_n)
-        if provider_factory is None:
-            if input_prep_resolved.mode == "tile":
-                raise ModelError("input_prep.mode='tile' currently requires a provider backend (e.g. gee).")
-        if provider_factory is None:
-            with lock:
-                emb = embedder.get_embedding(
-                    spatial=spatial,
-                    temporal=temporal,
-                    sensor=sensor,
-                    output=output,
-                    backend=backend_n,
-                    device=device,
-                )
-            return _normalize_embedding_output(emb=emb, output=output)
-        if sensor_eff is None:
-            if input_prep_resolved.mode == "tile":
-                raise ModelError("input_prep.mode='tile' requires a sensor for provider-backed on-the-fly models.")
-        if not _embedder_accepts_input_chw(type(embedder)):
-            if input_prep_resolved.mode == "tile":
-                raise ModelError(
-                    f"Model {model_n} does not accept input_chw; cannot apply input_prep.mode='tile' in get_embedding()."
-                )
-            with lock:
-                emb = embedder.get_embedding(
-                    spatial=spatial,
-                    temporal=temporal,
-                    sensor=sensor,
-                    output=output,
-                    backend=backend_n,
-                    device=device,
-                )
-            return _normalize_embedding_output(emb=emb, output=output)
-        if sensor_eff is None:
-            with lock:
-                emb = embedder.get_embedding(
-                    spatial=spatial,
-                    temporal=temporal,
-                    sensor=sensor,
-                    output=output,
-                    backend=backend_n,
-                    device=device,
-                )
-            return _normalize_embedding_output(emb=emb, output=output)
-        provider = provider_factory()
-        ensure_ready = getattr(provider, "ensure_ready", None)
-        if callable(ensure_ready):
-            _run_with_retry(lambda: ensure_ready(), retries=0, backoff_s=0.0)
-        raw = _fetch_gee_patch_raw(provider, spatial=spatial, temporal=temporal, sensor=sensor_eff)
-        with lock:
-            emb = _call_embedder_get_embedding_with_input_prep(
-                embedder=embedder,
-                spatial=spatial,
-                temporal=temporal,
-                sensor=sensor_eff,
-                output=output,
-                backend=backend_n,
-                device=device,
-                input_chw=raw,
-                input_prep=input_prep,
-            )
-        return _normalize_embedding_output(emb=emb, output=output)
-
-    with lock:
-        emb = embedder.get_embedding(
-            spatial=spatial,
-            temporal=temporal,
-            sensor=sensor,
-            output=output,
-            backend=backend_n,
-            device=device,
-        )
-    return _normalize_embedding_output(emb=emb, output=output)
+    _validate_spatials(spatials=[spatial], temporal=temporal, output=output)
+    ctx = _prepare_embedding_request_context(
+        model=model,
+        temporal=temporal,
+        sensor=sensor,
+        output=output,
+        backend=backend,
+        device=device,
+        input_prep=input_prep,
+    )
+    return _run_embedding_request(
+        spatials=[spatial],
+        temporal=temporal,
+        sensor=sensor,
+        output=output,
+        ctx=ctx,
+    )[0]
 
 
 def get_embeddings_batch(
@@ -1823,113 +1719,28 @@ def get_embeddings_batch(
     temporal: Optional[TemporalSpec] = None,
     sensor: Optional[SensorSpec] = None,
     output: OutputSpec = OutputSpec.pooled(),
-    backend: str = "gee",
+    backend: str = "auto",
     device: str = "auto",
     input_prep: Optional[InputPrepSpec | str] = "resize",
 ) -> List[Embedding]:
     """Compute embeddings for multiple SpatialSpecs using a shared embedder instance."""
-    from . import embedders  # noqa: F401
-
-    model_n = _normalize_model_name(model)
-    backend_n = _resolve_embedding_api_backend(model_n, _normalize_backend_name(backend))
-    device = _normalize_device_name(device)
-
-    if not isinstance(spatials, list) or len(spatials) == 0:
-        raise ModelError("spatials must be a non-empty List[SpatialSpec].")
-
-    # validate once + per item
-    _validate_specs(spatial=spatials[0], temporal=temporal, output=output)
-    for s in spatials:
-        _validate_specs(spatial=s, temporal=temporal, output=output)
-
-    input_prep_resolved = _resolve_input_prep_spec(input_prep)
-    sensor_eff = sensor
-    if input_prep_resolved.mode == "tile" and sensor_eff is None:
-        sensor_eff = _default_sensor_for_model(model_n)
-
-    sensor_k = _sensor_key(sensor_eff)
-    embedder, lock = _get_embedder_bundle_cached(model_n, backend_n, device, sensor_k)
-
-    _assert_supported(embedder, backend=backend_n, output=output, temporal=temporal)
-
-    use_api_side_input_prep = (input_prep is not None) and (input_prep_resolved.mode in {"tile", "auto"})
-    if use_api_side_input_prep:
-        provider_factory = _provider_factory_for_backend(backend_n)
-        if provider_factory is None:
-            if input_prep_resolved.mode == "tile":
-                raise ModelError("input_prep.mode='tile' currently requires a provider backend (e.g. gee).")
-        if provider_factory is None:
-            with lock:
-                embs = embedder.get_embeddings_batch(
-                    spatials=spatials,
-                    temporal=temporal,
-                    sensor=sensor,
-                    output=output,
-                    backend=backend_n,
-                    device=device,
-                )
-            return [_normalize_embedding_output(emb=e, output=output) for e in embs]
-        if sensor_eff is None:
-            if input_prep_resolved.mode == "tile":
-                raise ModelError("input_prep.mode='tile' requires a sensor for provider-backed on-the-fly models.")
-        if not _embedder_accepts_input_chw(type(embedder)):
-            if input_prep_resolved.mode == "tile":
-                raise ModelError(
-                    f"Model {model_n} does not accept input_chw; cannot apply input_prep.mode='tile' in get_embeddings_batch()."
-                )
-            with lock:
-                embs = embedder.get_embeddings_batch(
-                    spatials=spatials,
-                    temporal=temporal,
-                    sensor=sensor,
-                    output=output,
-                    backend=backend_n,
-                    device=device,
-                )
-            return [_normalize_embedding_output(emb=e, output=output) for e in embs]
-        if sensor_eff is None:
-            with lock:
-                embs = embedder.get_embeddings_batch(
-                    spatials=spatials,
-                    temporal=temporal,
-                    sensor=sensor,
-                    output=output,
-                    backend=backend_n,
-                    device=device,
-                )
-            return [_normalize_embedding_output(emb=e, output=output) for e in embs]
-        provider = provider_factory()
-        ensure_ready = getattr(provider, "ensure_ready", None)
-        if callable(ensure_ready):
-            _run_with_retry(lambda: ensure_ready(), retries=0, backoff_s=0.0)
-        out_embs: List[Embedding] = []
-        for sp in spatials:
-            raw = _fetch_gee_patch_raw(provider, spatial=sp, temporal=temporal, sensor=sensor_eff)
-            with lock:
-                emb = _call_embedder_get_embedding_with_input_prep(
-                    embedder=embedder,
-                    spatial=sp,
-                    temporal=temporal,
-                    sensor=sensor_eff,
-                    output=output,
-                    backend=backend_n,
-                    device=device,
-                    input_chw=raw,
-                    input_prep=input_prep,
-                )
-            out_embs.append(_normalize_embedding_output(emb=emb, output=output))
-        return out_embs
-
-    with lock:
-        embs = embedder.get_embeddings_batch(
-            spatials=spatials,
-            temporal=temporal,
-            sensor=sensor,
-            output=output,
-            backend=backend_n,
-            device=device,
-        )
-    return [_normalize_embedding_output(emb=e, output=output) for e in embs]
+    _validate_spatials(spatials=spatials, temporal=temporal, output=output)
+    ctx = _prepare_embedding_request_context(
+        model=model,
+        temporal=temporal,
+        sensor=sensor,
+        output=output,
+        backend=backend,
+        device=device,
+        input_prep=input_prep,
+    )
+    return _run_embedding_request(
+        spatials=spatials,
+        temporal=temporal,
+        sensor=sensor,
+        output=output,
+        ctx=ctx,
+    )
 
 
 # -----------------------------------------------------------------------------
@@ -1947,7 +1758,7 @@ def export_batch(
     out_dir: Optional[str] = None,
     out_path: Optional[str] = None,
     names: Optional[List[str]] = None,
-    backend: str = "gee",
+    backend: str = "auto",
     device: str = "auto",
     output: OutputSpec = OutputSpec.pooled(),
     sensor: Optional[SensorSpec] = None,
@@ -1958,6 +1769,7 @@ def export_batch(
     save_manifest: bool = True,
     fail_on_bad_input: bool = False,
     chunk_size: int = 16,
+    infer_batch_size: Optional[int] = None,
     num_workers: int = 8,
     continue_on_error: bool = False,
     max_retries: int = 0,
@@ -1981,8 +1793,6 @@ def export_batch(
     - Inference batching is auto-selected internally: CPU defaults to per-item
       inference; GPU/accelerators prefer batched inference when supported.
     """
-    from . import embedders  # noqa: F401 (ensure registration)
-
     if not isinstance(spatials, list) or len(spatials) == 0:
         raise ModelError("spatials must be a non-empty List[SpatialSpec].")
     if not isinstance(models, list) or len(models) == 0:
@@ -1991,7 +1801,7 @@ def export_batch(
     backend_n = _normalize_backend_name(backend)
     device = _normalize_device_name(device)
     fmt = format.lower().strip()
-    infer_batch_size_n = max(1, int(chunk_size))
+    infer_batch_size_n = max(1, int(chunk_size if infer_batch_size is None else infer_batch_size))
     from .writers import SUPPORTED_FORMATS, get_extension
     if fmt not in SUPPORTED_FORMATS:
         raise ModelError(f"Unsupported export format: {format!r}. Supported: {SUPPORTED_FORMATS}.")
@@ -2035,6 +1845,7 @@ def export_batch(
     if target.mode == "combined":
         out_file = target.out_file
         assert out_file is not None
+        export_flow = _make_export_flow_overrides(backend=backend_n, input_prep=input_prep)
         if bool(resume) and os.path.exists(out_file):
             json_path = os.path.splitext(out_file)[0] + ".json"
             resume_manifest = _load_json_dict(json_path)
@@ -2073,7 +1884,23 @@ def export_batch(
             infer_batch_size=infer_batch_size_n,
             resume=resume,
             show_progress=show_progress,
-            input_prep=input_prep,
+            provider_factory=export_flow.provider_factory,
+            run_with_retry_fn=_run_with_retry,
+            fetch_gee_patch_raw_fn=_fetch_gee_patch_raw,
+            inspect_input_raw_fn=_inspect_input_raw,
+            normalize_input_chw_fn=_normalize_input_chw,
+            select_prefetched_channels_fn=_select_prefetched_channels,
+            create_progress_fn=_create_progress,
+            get_embedder_bundle_cached_fn=_get_embedder_bundle_cached,
+            sensor_key_fn=_sensor_key,
+            normalize_model_name_fn=_normalize_model_name,
+            call_embedder_get_embedding_fn=export_flow.call_embedder_get_embedding_fn,
+            supports_prefetched_batch_api_fn=export_flow.supports_prefetched_batch_api_fn,
+            supports_batch_api_fn=export_flow.supports_batch_api_fn,
+            sensor_cache_key_fn=_sensor_cache_key,
+            load_json_dict_fn=_load_json_dict,
+            is_incomplete_combined_manifest_fn=_is_incomplete_combined_manifest,
+            write_one_payload_fn=_write_one_payload,
         )
 
     # per-item mode (directory layout)

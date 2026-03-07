@@ -262,13 +262,13 @@ def test_assert_supported_ok():
     _assert_supported(emb, backend="gee", output=OutputSpec.pooled(), temporal=TemporalSpec.year(2024))
 
 
-def test_assert_supported_broken_describe_graceful():
-    """_assert_supported should silently return when describe() throws."""
+def test_assert_supported_broken_describe_raises_model_error():
     from rs_embed.api import _assert_supported
 
     emb = _BrokenDescribeEmbedder()
     emb.model_name = "broken"
-    _assert_supported(emb, backend="gee", output=OutputSpec.pooled(), temporal=None)
+    with pytest.raises(ModelError, match="describe\\(\\) failed"):
+        _assert_supported(emb, backend="gee", output=OutputSpec.pooled(), temporal=None)
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -423,3 +423,46 @@ def test_export_batch_decoupled_layout_combined(tmp_path):
         show_progress=False,
     )
     assert (tmp_path / "combined_out.npz").exists()
+
+
+def test_public_list_models_uses_catalog_not_runtime_registry():
+    from rs_embed import list_models
+
+    models = list_models()
+    assert "remoteclip" in models
+    assert "remoteclip_s2rgb" not in models
+    assert models == sorted(models)
+
+
+def test_public_list_models_can_include_aliases():
+    from rs_embed import list_models
+
+    models = list_models(include_aliases=True)
+    assert "remoteclip" in models
+    assert "remoteclip_s2rgb" in models
+
+
+def test_export_batch_infer_batch_size_is_independent_from_chunk_size(monkeypatch, tmp_path):
+    from rs_embed.api import export_batch
+
+    captured = {}
+
+    def _fake_export_combined_npz(**kwargs):
+        captured["chunk_size"] = kwargs["chunk_size"]
+        captured["infer_batch_size"] = kwargs["infer_batch_size"]
+        return {"status": "ok"}
+
+    monkeypatch.setattr("rs_embed.api._export_combined_npz", _fake_export_combined_npz)
+
+    result = export_batch(
+        spatials=[_SPATIAL],
+        temporal=_TEMPORAL,
+        models=["mock_model"],
+        out_path=str(tmp_path / "combined"),
+        chunk_size=32,
+        infer_batch_size=5,
+        show_progress=False,
+    )
+
+    assert result == {"status": "ok"}
+    assert captured == {"chunk_size": 32, "infer_batch_size": 5}

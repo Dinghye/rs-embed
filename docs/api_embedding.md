@@ -42,7 +42,7 @@ get_embedding(
     temporal: Optional[TemporalSpec] = None,
     sensor: Optional[SensorSpec] = None,
     output: OutputSpec = OutputSpec.pooled(),
-    backend: str = "gee",
+    backend: str = "auto",
     device: str = "auto",
     input_prep: InputPrepSpec | str = "resize",
 ) -> Embedding
@@ -52,12 +52,12 @@ Computes the embedding for a single ROI.
 
 **Parameters**
 
-- `model`: model ID (see the *Supported Models* page, or use `rs_embed.core.registry.list_models()`)
+- `model`: model ID (see the *Supported Models* page, or use `rs_embed.list_models()`)
 - `spatial`: `BBox` or `PointBuffer`
 - `temporal`: `TemporalSpec` or `None`
 - `sensor`: input descriptor for on-the-fly models; for most precomputed models this can be `None`
 - `output`: `OutputSpec.pooled()` or `OutputSpec.grid(...)`
-- `backend`: access backend (mainly for on-the-fly models, typically `"gee"`). For precomputed models, the data `source` is fixed by the model; use `backend="auto"` and let rs-embed resolve the concrete access path.
+- `backend`: access backend. `backend="auto"` is the public default and the recommended choice. For provider-backed on-the-fly models it resolves to a compatible provider backend; for precomputed models it lets rs-embed choose the model-compatible access path.
 - `device`: `"auto" / "cpu" / "cuda"` (if the model depends on torch)
 - `input_prep`: `"resize"` (default), `"tile"`, `"auto"`, or `InputPrepSpec(...)`
 
@@ -99,7 +99,7 @@ get_embeddings_batch(
     temporal: Optional[TemporalSpec] = None,
     sensor: Optional[SensorSpec] = None,
     output: OutputSpec = OutputSpec.pooled(),
-    backend: str = "gee",
+    backend: str = "auto",
     device: str = "auto",
     input_prep: InputPrepSpec | str = "resize",
 ) -> List[Embedding]

@@ -23,7 +23,7 @@ export_batch(
     out_dir: Optional[str] = None,
     out_path: Optional[str] = None,
     names: Optional[List[str]] = None,
-    backend: str = "gee",
+    backend: str = "auto",
     device: str = "auto",
     output: OutputSpec = OutputSpec.pooled(),
     sensor: Optional[SensorSpec] = None,
@@ -34,6 +34,7 @@ export_batch(
     save_manifest: bool = True,
     fail_on_bad_input: bool = False,
     chunk_size: int = 16,
+    infer_batch_size: Optional[int] = None,
     num_workers: int = 8,
     continue_on_error: bool = False,
     max_retries: int = 0,
@@ -70,7 +71,8 @@ For new code, prefer learning `export_batch(...)` first and use `out + layout` t
 - `save_embeddings`: whether to save embedding arrays
 - `save_manifest`: whether to save JSON manifests (each export artifact will have an accompanying `.json`)
 - `fail_on_bad_input`: whether to raise immediately if input checks fail
-- `chunk_size`: process points in chunks (controls memory/throughput). It is also used as the default inference batch size when batched inference is enabled. In `per_item` mode with GEE prefetch enabled, rs-embed uses a one-slot prefetch pipeline (double buffering), so input-cache peak memory can be roughly up to 2 chunks to overlap `prefetch(chunk k+1)` with `infer/write(chunk k)`.
+- `chunk_size`: process points in chunks (controls export memory/throughput). In `per_item` mode with GEE prefetch enabled, rs-embed uses a one-slot prefetch pipeline (double buffering), so input-cache peak memory can be roughly up to 2 chunks to overlap `prefetch(chunk k+1)` with `infer/write(chunk k)`.
+- `infer_batch_size`: batched inference size when model batch APIs are used; defaults to `chunk_size`
 - `num_workers`: concurrency for GEE patch prefetching (ThreadPool)
 - `continue_on_error`: keep exporting remaining points/models even if one item fails
 - `max_retries`: retry count for provider fetch/write operations
@@ -169,7 +171,7 @@ export_npz(
     temporal: Optional[TemporalSpec],
     models: List[str],
     out_path: str,
-    backend: str = "gee",
+    backend: str = "auto",
     device: str = "auto",
     output: OutputSpec = OutputSpec.pooled(),
     sensor: Optional[SensorSpec] = None,
@@ -178,6 +180,7 @@ export_npz(
     save_embeddings: bool = True,
     save_manifest: bool = True,
     fail_on_bad_input: bool = False,
+    infer_batch_size: Optional[int] = None,
     continue_on_error: bool = False,
     max_retries: int = 0,
     retry_backoff_s: float = 0.0,

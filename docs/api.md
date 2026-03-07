@@ -24,7 +24,7 @@ from rs_embed import (
     # Specs
     BBox, PointBuffer, TemporalSpec, SensorSpec, OutputSpec, InputPrepSpec,
     # Core APIs
-    get_embedding, get_embeddings_batch, export_batch, export_npz,
+    get_embedding, get_embeddings_batch, export_batch, export_npz, list_models,
     # Utilities
     inspect_provider_patch,
     inspect_gee_patch,
@@ -61,14 +61,15 @@ Compatibility / convenience wrappers (still supported):
 ---
 ## Model Registry (Advanced)
 
-If you need a stable model list in code, use the model catalog:
+If you need a stable model list in code, use the public catalog helper:
 
 ```python
-from rs_embed.embedders.catalog import MODEL_SPECS
-print(sorted(MODEL_SPECS.keys()))
+from rs_embed import list_models
+
+print(list_models())
 ```
 
-`list_models()` from `rs_embed.core.registry` only reports models currently loaded into the runtime registry.
+`rs_embed.core.registry.list_models()` only reports models currently loaded into the runtime registry.
 
 ---
 

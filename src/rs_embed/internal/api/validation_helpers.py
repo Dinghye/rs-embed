@@ -28,8 +28,9 @@ def validate_specs(*, spatial: SpatialSpec, temporal: Optional[TemporalSpec], ou
 def assert_supported(embedder, *, backend: str, output: OutputSpec, temporal: Optional[TemporalSpec]) -> None:
     try:
         desc = embedder.describe() or {}
-    except Exception:
-        return
+    except Exception as e:
+        name = getattr(embedder, "model_name", type(embedder).__name__)
+        raise ModelError(f"Model '{name}' describe() failed during capability validation: {e}") from e
 
     backends = desc.get("backend")
     if isinstance(backends, list):
