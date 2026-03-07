@@ -92,26 +92,6 @@ def fetch_s2_rgb_u8_from_provider(
     return resize_rgb_u8(rgb_u8, out_size)
 
 
-def fetch_s2_rgb_u8_from_gee(
-    *,
-    spatial: SpatialSpec,
-    temporal: Optional[TemporalSpec],
-    sensor: SensorSpec,
-    out_size: int,
-    provider: Optional[ProviderBase] = None,
-    backend: str = "auto",
-    default_temporal: Tuple[str, str] = ("2022-06-01", "2022-09-01"),
-) -> np.ndarray:
-    """Backward-compatible alias for historical helper name."""
-    return fetch_s2_rgb_u8_from_provider(
-        spatial=spatial,
-        temporal=temporal,
-        sensor=sensor,
-        out_size=out_size,
-        provider=provider,
-        backend=backend,
-        default_temporal=default_temporal,
-    )
 
 
 # -------------------------

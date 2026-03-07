@@ -22,7 +22,6 @@ from .runtime_utils import (
 
 from ._vit_mae_utils import (
     fetch_s2_rgb_u8_from_provider,
-    fetch_s2_rgb_u8_from_gee,  # backward-compatible symbol for tests/monkeypatch
     resize_rgb_u8,
     pool_from_tokens,
     tokens_to_grid_dhw,
@@ -319,7 +318,7 @@ class SatMAEPPEmbedder(EmbedderBase):
             t = temporal_to_range(temporal)
             # Fetch RGB patch (optionally reuse pre-fetched raw patch)
             if input_chw is None:
-                rgb_u8 = fetch_s2_rgb_u8_from_gee(
+                rgb_u8 = fetch_s2_rgb_u8_from_provider(
                     spatial=spatial,
                     temporal=t,
                     sensor=sensor,
@@ -416,7 +415,7 @@ class SatMAEPPEmbedder(EmbedderBase):
         rgb_u8_all: List[Optional[np.ndarray]] = [None] * n
 
         def _fetch_one(i: int, sp: SpatialSpec) -> Tuple[int, np.ndarray]:
-            rgb = fetch_s2_rgb_u8_from_gee(
+            rgb = fetch_s2_rgb_u8_from_provider(
                 spatial=sp,
                 temporal=t,
                 sensor=sensor,

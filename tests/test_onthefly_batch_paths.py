@@ -56,7 +56,7 @@ def test_satmae_batch_loads_once_and_batches_forward(monkeypatch):
             out.append(np.full((4, 2), val, dtype=np.float32))
         return out
 
-    monkeypatch.setattr(sat, "fetch_s2_rgb_u8_from_gee", _fake_fetch)
+    monkeypatch.setattr(sat, "fetch_s2_rgb_u8_from_provider", _fake_fetch)
     monkeypatch.setattr(sat, "_load_satmae", _fake_load)
     monkeypatch.setattr(sat, "_satmae_forward_tokens_batch", _fake_forward_batch)
 
@@ -110,7 +110,7 @@ def test_satmaepp_batch_loads_once_and_batches_forward(monkeypatch):
             out.append(np.full((4, 2), val, dtype=np.float32))
         return out
 
-    monkeypatch.setattr(satpp, "fetch_s2_rgb_u8_from_gee", _fake_fetch)
+    monkeypatch.setattr(satpp, "fetch_s2_rgb_u8_from_provider", _fake_fetch)
     monkeypatch.setattr(satpp, "_load_satmaepp", _fake_load)
     monkeypatch.setattr(satpp, "_satmaepp_forward_tokens_batch", _fake_forward_batch)
 

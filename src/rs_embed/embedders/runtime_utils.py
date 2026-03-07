@@ -159,32 +159,6 @@ def fetch_collection_patch_chw(
     )
 
 
-def fetch_gee_patch_chw(
-    provider: ProviderBase,
-    *,
-    spatial: SpatialSpec,
-    temporal: Optional[TemporalSpec],
-    collection: str,
-    bands: Tuple[str, ...],
-    scale_m: int = 10,
-    cloudy_pct: Optional[int] = 30,
-    composite: str = "median",
-    fill_value: float = 0.0,
-) -> np.ndarray:
-    """Backward-compatible alias for historical helper name."""
-    return fetch_collection_patch_chw(
-        provider,
-        spatial=spatial,
-        temporal=temporal,
-        collection=collection,
-        bands=bands,
-        scale_m=scale_m,
-        cloudy_pct=cloudy_pct,
-        composite=composite,
-        fill_value=fill_value,
-    )
-
-
 def fetch_sensor_patch_chw(
     provider: ProviderBase,
     *,

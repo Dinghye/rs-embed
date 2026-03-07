@@ -24,18 +24,3 @@ def build_provider_image(
     p = get_provider(backend_name, **kwargs)
     p.ensure_ready()
     return p.build_image(sensor=sensor, temporal=temporal, region=region)
-
-
-def build_gee_image(
-    *,
-    sensor: SensorSpec,
-    temporal: Optional[TemporalSpec],
-    region: Optional[Any] = None,
-) -> Any:
-    """Backwards-compatible wrapper for GEE backend."""
-    return build_provider_image(
-        sensor=sensor,
-        temporal=temporal,
-        backend="gee",
-        region=region,
-    )

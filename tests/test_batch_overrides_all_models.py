@@ -79,7 +79,7 @@ def test_scalemae_batch_prefetch_and_single_model_load(monkeypatch):
         val = float(rgb_u8[0, 0, 0])
         return np.full((4, 2), val, dtype=np.float32), {"tokens_kind": "tokens_forward"}
 
-    monkeypatch.setattr(sm, "fetch_s2_rgb_u8_from_gee", _fake_fetch)
+    monkeypatch.setattr(sm, "fetch_s2_rgb_u8_from_provider", _fake_fetch)
     monkeypatch.setattr(sm, "_load_scalemae", _fake_load)
     monkeypatch.setattr(sm, "_scalemae_forward_tokens_or_vec", _fake_forward)
 
