@@ -55,11 +55,20 @@ from .internal.api.progress_helpers import create_progress as _create_progress
 from .internal.api.model_defaults_helpers import (
     default_sensor_for_model as _default_sensor_for_model,
 )
-from .internal.api.output_helpers import normalize_embedding_output as _normalize_embedding_output
+from .internal.api.output_helpers import (
+    normalize_embedding_output as _normalize_embedding_output,
+)
 from .core.embedding import Embedding
 from .core.errors import ModelError
 from .core.registry import get_embedder_cls
-from .core.specs import InputPrepSpec, OutputSpec, SensorSpec, SpatialSpec, TemporalSpec, BBox
+from .core.specs import (
+    InputPrepSpec,
+    OutputSpec,
+    SensorSpec,
+    SpatialSpec,
+    TemporalSpec,
+    BBox,
+)
 from .embedders.catalog import MODEL_ALIASES, MODEL_SPECS
 from .providers import ProviderBase, get_provider, has_provider, list_providers
 
@@ -178,7 +187,9 @@ class _ResolvedInputPrepSpec:
     pad_edges: bool
 
 
-def _resolve_input_prep_spec(input_prep: Optional[InputPrepSpec | str]) -> _ResolvedInputPrepSpec:
+def _resolve_input_prep_spec(
+    input_prep: Optional[InputPrepSpec | str],
+) -> _ResolvedInputPrepSpec:
     if input_prep is None:
         spec: InputPrepSpec = InputPrepSpec.resize()
     elif isinstance(input_prep, str):
@@ -190,12 +201,16 @@ def _resolve_input_prep_spec(input_prep: Optional[InputPrepSpec | str]) -> _Reso
         elif mode_s == "tile":
             spec = InputPrepSpec.tile()
         else:
-            raise ModelError(f"input_prep string must be 'auto'/'resize'/'tile', got {input_prep!r}")
+            raise ModelError(
+                f"input_prep string must be 'auto'/'resize'/'tile', got {input_prep!r}"
+            )
     else:
         spec = input_prep
     mode = str(getattr(spec, "mode", "auto")).strip().lower()
     if mode not in {"auto", "resize", "tile"}:
-        raise ModelError(f"input_prep.mode must be one of auto/resize/tile, got {mode!r}")
+        raise ModelError(
+            f"input_prep.mode must be one of auto/resize/tile, got {mode!r}"
+        )
     tile_size = getattr(spec, "tile_size", None)
     tile_stride = getattr(spec, "tile_stride", None)
     max_tiles = int(getattr(spec, "max_tiles", 9))
@@ -236,8 +251,16 @@ def _embedder_default_image_size(embedder: Any) -> Optional[int]:
 
 
 def _estimate_tile_count(*, h: int, w: int, tile_size: int, stride: int) -> int:
-    ny = 1 if h <= tile_size else int(math.ceil((float(h) - float(tile_size)) / float(stride))) + 1
-    nx = 1 if w <= tile_size else int(math.ceil((float(w) - float(tile_size)) / float(stride))) + 1
+    ny = (
+        1
+        if h <= tile_size
+        else int(math.ceil((float(h) - float(tile_size)) / float(stride))) + 1
+    )
+    nx = (
+        1
+        if w <= tile_size
+        else int(math.ceil((float(w) - float(tile_size)) / float(stride))) + 1
+    )
     return max(1, ny) * max(1, nx)
 
 
@@ -249,7 +272,9 @@ def _input_hw(x: np.ndarray) -> Tuple[int, int]:
     return int(x.shape[-2]), int(x.shape[-1])
 
 
-def _tile_yx_starts(*, h: int, w: int, tile_size: int, stride: int) -> Tuple[List[int], List[int]]:
+def _tile_yx_starts(
+    *, h: int, w: int, tile_size: int, stride: int
+) -> Tuple[List[int], List[int]]:
     def _starts_1d(dim: int) -> List[int]:
         if dim <= tile_size:
             return [0]
@@ -280,11 +305,21 @@ def _tile_subspatial(
     x1: int,
 ) -> SpatialSpec:
     if isinstance(spatial, BBox) and full_h > 0 and full_w > 0:
-        lon0 = float(spatial.minlon) + (float(x0) / float(full_w)) * (float(spatial.maxlon) - float(spatial.minlon))
-        lon1 = float(spatial.minlon) + (float(x1) / float(full_w)) * (float(spatial.maxlon) - float(spatial.minlon))
-        lat_top = float(spatial.maxlat) - (float(y0) / float(full_h)) * (float(spatial.maxlat) - float(spatial.minlat))
-        lat_bot = float(spatial.maxlat) - (float(y1) / float(full_h)) * (float(spatial.maxlat) - float(spatial.minlat))
-        return BBox(minlon=lon0, minlat=lat_bot, maxlon=lon1, maxlat=lat_top, crs=spatial.crs)
+        lon0 = float(spatial.minlon) + (float(x0) / float(full_w)) * (
+            float(spatial.maxlon) - float(spatial.minlon)
+        )
+        lon1 = float(spatial.minlon) + (float(x1) / float(full_w)) * (
+            float(spatial.maxlon) - float(spatial.minlon)
+        )
+        lat_top = float(spatial.maxlat) - (float(y0) / float(full_h)) * (
+            float(spatial.maxlat) - float(spatial.minlat)
+        )
+        lat_bot = float(spatial.maxlat) - (float(y1) / float(full_h)) * (
+            float(spatial.maxlat) - float(spatial.minlat)
+        )
+        return BBox(
+            minlon=lon0, minlat=lat_bot, maxlon=lon1, maxlat=lat_top, crs=spatial.crs
+        )
     return spatial
 
 
@@ -307,7 +342,9 @@ def _slice_and_pad_tile(
         pad_spec = [(0, 0)] * tile.ndim
         pad_spec[-2] = (0, max(0, tile_size - valid_h))
         pad_spec[-1] = (0, max(0, tile_size - valid_w))
-        tile = np.pad(tile, pad_spec, mode="constant", constant_values=float(fill_value))
+        tile = np.pad(
+            tile, pad_spec, mode="constant", constant_values=float(fill_value)
+        )
     return tile, {
         "y0": int(y0),
         "y1": int(y1),
@@ -349,7 +386,9 @@ def _midpoint_owned_ranges(
         else:
             _, _pstart, pend = items_s[i - 1]
             if s > int(pend):
-                raise ModelError("Tiled stitch found a gap between tiles; unsupported tile layout.")
+                raise ModelError(
+                    "Tiled stitch found a gap between tiles; unsupported tile layout."
+                )
             own_s = int((int(pend) + s) // 2)
             if prev_cut is not None:
                 own_s = max(own_s, int(prev_cut))
@@ -358,7 +397,9 @@ def _midpoint_owned_ranges(
         else:
             _, nstart, _ = items_s[i + 1]
             if int(nstart) > e:
-                raise ModelError("Tiled stitch found a gap between tiles; unsupported tile layout.")
+                raise ModelError(
+                    "Tiled stitch found a gap between tiles; unsupported tile layout."
+                )
             own_e = int((e + int(nstart)) // 2)
         own_s = max(s, min(own_s, e))
         own_e = max(own_s, min(own_e, e))
@@ -404,16 +445,24 @@ def _aggregate_tiled_embeddings(
     base_meta["input_prep"] = dict(prep_meta)
 
     if output.mode == "pooled":
-        vecs = [np.asarray(_embedding_to_numpy(e), dtype=np.float32).reshape(-1) for e in embs]
+        vecs = [
+            np.asarray(_embedding_to_numpy(e), dtype=np.float32).reshape(-1)
+            for e in embs
+        ]
         dims = {tuple(v.shape) for v in vecs}
         if len(dims) != 1:
-            raise ModelError(f"Tiled pooled merge requires consistent vector shapes, got {sorted(dims)}")
+            raise ModelError(
+                f"Tiled pooled merge requires consistent vector shapes, got {sorted(dims)}"
+            )
         mat = np.stack(vecs, axis=0)
         if str(output.pooling).lower() == "max":
             out_vec = np.max(mat, axis=0).astype(np.float32, copy=False)
         else:
             ws = np.asarray(
-                [max(1, int(m["valid_h"])) * max(1, int(m["valid_w"])) for m in tile_meta],
+                [
+                    max(1, int(m["valid_h"])) * max(1, int(m["valid_w"]))
+                    for m in tile_meta
+                ],
                 dtype=np.float32,
             )
             out_vec = (mat * ws[:, None]).sum(axis=0) / max(1.0, float(ws.sum()))
@@ -424,13 +473,21 @@ def _aggregate_tiled_embeddings(
     arrays = [np.asarray(_embedding_to_numpy(e), dtype=np.float32) for e in embs]
     for a in arrays:
         if a.ndim < 2:
-            raise ModelError(f"Tiled grid merge expects arrays with ndim>=2, got shape={a.shape}")
+            raise ModelError(
+                f"Tiled grid merge expects arrays with ndim>=2, got shape={a.shape}"
+            )
     gh = int(arrays[0].shape[-2])
     gw = int(arrays[0].shape[-1])
     lead_shape = tuple(int(v) for v in arrays[0].shape[:-2])
     for a in arrays[1:]:
-        if tuple(int(v) for v in a.shape[:-2]) != lead_shape or int(a.shape[-2]) != gh or int(a.shape[-1]) != gw:
-            raise ModelError("Tiled grid merge requires consistent per-tile output shapes.")
+        if (
+            tuple(int(v) for v in a.shape[:-2]) != lead_shape
+            or int(a.shape[-2]) != gh
+            or int(a.shape[-1]) != gw
+        ):
+            raise ModelError(
+                "Tiled grid merge requires consistent per-tile output shapes."
+            )
 
     nrows = max(int(m["row"]) for m in tile_meta) + 1
     ncols = max(int(m["col"]) for m in tile_meta) + 1
@@ -516,7 +573,7 @@ def _aggregate_tiled_embeddings(
         crop_w = int(fx1 - fx0)
         y0 = row_offsets[r]
         x0 = col_offsets[c]
-        out_arr[..., y0:y0 + crop_h, x0:x0 + crop_w] = arr[..., fy0:fy1, fx0:fx1]
+        out_arr[..., y0 : y0 + crop_h, x0 : x0 + crop_w] = arr[..., fy0:fy1, fx0:fx1]
 
     base_meta["input_prep"]["merged_output"] = "grid_stitch"
     base_meta["input_prep"]["stitched_grid_shape"] = (int(out_h), int(out_w))
@@ -552,7 +609,13 @@ def _call_embedder_get_embedding_tiled(
         raise ModelError(f"Invalid tile_stride={stride}")
     num_tiles = _estimate_tile_count(h=h, w=w, tile_size=tile_size, stride=stride)
     if input_prep.mode == "auto":
-        if output.mode != "grid" or h <= tile_size or w <= tile_size or num_tiles <= 1 or num_tiles > input_prep.max_tiles:
+        if (
+            output.mode != "grid"
+            or h <= tile_size
+            or w <= tile_size
+            or num_tiles <= 1
+            or num_tiles > input_prep.max_tiles
+        ):
             return _call_embedder_get_embedding(
                 embedder=embedder,
                 spatial=spatial,
@@ -633,7 +696,9 @@ def _call_embedder_get_embedding_tiled(
                 raise ModelError(
                     f"Tiled batch inference returned {len(tile_embs)} outputs for {len(tiles)} tiles."
                 )
-            tile_embs = [_normalize_embedding_output(emb=e, output=output) for e in tile_embs]
+            tile_embs = [
+                _normalize_embedding_output(emb=e, output=output) for e in tile_embs
+            ]
         except Exception:
             tile_embs = [
                 _call_embedder_get_embedding(
@@ -736,6 +801,7 @@ def _call_embedder_get_embedding_with_input_prep(
         input_prep=spec,
     )
 
+
 @dataclass(frozen=True)
 class _ExportFlowOverrides:
     provider_factory: Optional[Callable[[], ProviderBase]]
@@ -751,10 +817,14 @@ def _make_export_flow_overrides(
 ) -> _ExportFlowOverrides:
     provider_factory = _provider_factory_for_backend(backend)
     resolved_input_prep = _resolve_input_prep_spec(input_prep)
-    explicit_nonresize_input_prep = (input_prep is not None) and (resolved_input_prep.mode in {"tile", "auto"})
+    explicit_nonresize_input_prep = (input_prep is not None) and (
+        resolved_input_prep.mode in {"tile", "auto"}
+    )
 
     def _call_embedder_get_embedding_wrapped(**kwargs: Any) -> Embedding:
-        return _call_embedder_get_embedding_with_input_prep(input_prep=input_prep, **kwargs)
+        return _call_embedder_get_embedding_with_input_prep(
+            input_prep=input_prep, **kwargs
+        )
 
     def _supports_prefetched_batch_api_wrapped(embedder: Any) -> bool:
         if explicit_nonresize_input_prep:
@@ -818,7 +888,9 @@ def _should_prefer_batch_inference(*, device: str) -> bool:
 
 def _recompute_point_manifest_summary(manifest: Dict[str, Any]) -> None:
     models = manifest.get("models") or []
-    n_failed = sum(1 for x in models if isinstance(x, dict) and x.get("status") == "failed")
+    n_failed = sum(
+        1 for x in models if isinstance(x, dict) and x.get("status") == "failed"
+    )
     if not models:
         manifest["status"] = "ok"
         manifest["summary"] = {"total_models": 0, "failed_models": 0, "ok_models": 0}
@@ -850,7 +922,9 @@ def _resolve_export_batch_target(
     # New decoupled API: `out` + `layout`.
     if (out is not None) or (layout is not None):
         if out is None or layout is None:
-            raise ModelError("Provide both out and layout when using the decoupled output API.")
+            raise ModelError(
+                "Provide both out and layout when using the decoupled output API."
+            )
         if out_dir is not None or out_path is not None:
             raise ModelError("Use either out+layout or out_dir/out_path, not both.")
         layout_n = _normalize_export_layout(layout)
@@ -870,7 +944,9 @@ def _resolve_export_batch_target(
         return _ExportBatchTarget(mode="combined", out_file=out_file)
 
     assert out_dir is not None
-    point_names = names if names is not None else [f"p{i:05d}" for i in range(n_spatials)]
+    point_names = (
+        names if names is not None else [f"p{i:05d}" for i in range(n_spatials)]
+    )
     if len(point_names) != n_spatials:
         raise ModelError("names must have the same length as spatials.")
     return _ExportBatchTarget(mode="per_item", out_dir=out_dir, names=point_names)
@@ -902,7 +978,9 @@ def _infer_chunk_embeddings_for_per_item(
     prefer_batch = _should_prefer_batch_inference(device=device)
     infer_bs = max(1, int(infer_batch_size))
     input_prep_resolved = _resolve_input_prep_spec(input_prep)
-    explicit_nonresize_input_prep = (input_prep is not None) and (input_prep_resolved.mode in {"tile", "auto"})
+    explicit_nonresize_input_prep = (input_prep is not None) and (
+        input_prep_resolved.mode in {"tile", "auto"}
+    )
 
     def _mark_done(model_name: str) -> None:
         if model_progress_cb is not None:
@@ -918,10 +996,16 @@ def _infer_chunk_embeddings_for_per_item(
             and sspec is not None
             and "precomputed" not in (model_type.get(m) or "")
         )
-        skey = _sensor_cache_key(sspec) if needs_provider_input and sspec is not None else None
+        skey = (
+            _sensor_cache_key(sspec)
+            if needs_provider_input and sspec is not None
+            else None
+        )
         sensor_k = _sensor_key(sspec)
         m_backend = resolved_backend.get(m, backend_n)
-        embedder, lock = _get_embedder_bundle_cached(_normalize_model_name(m), m_backend, device, sensor_k)
+        embedder, lock = _get_embedder_bundle_cached(
+            _normalize_model_name(m), m_backend, device, sensor_k
+        )
 
         def _record_ok(i: int, emb: Embedding) -> None:
             e_np = _embedding_to_numpy(emb)
@@ -944,8 +1028,12 @@ def _infer_chunk_embeddings_for_per_item(
                 return hit
             pref_err = prefetch_errors.get((i, skey))
             if pref_err:
-                raise RuntimeError(f"Prefetch previously failed for model={m}, index={i}, sensor={skey}: {pref_err}")
-            raise RuntimeError(f"Missing prefetched input for model={m}, index={i}, sensor={skey}")
+                raise RuntimeError(
+                    f"Prefetch previously failed for model={m}, index={i}, sensor={skey}: {pref_err}"
+                )
+            raise RuntimeError(
+                f"Missing prefetched input for model={m}, index={i}, sensor={skey}"
+            )
 
         def _infer_single(i: int) -> Embedding:
             inp = _get_input_for_idx(i)
@@ -991,13 +1079,17 @@ def _infer_chunk_embeddings_for_per_item(
                     try:
                         inp = _get_input_for_idx(i)
                         assert inp is not None
-                        ready.append((i, spatials[i], np.asarray(inp, dtype=np.float32)))
+                        ready.append(
+                            (i, spatials[i], np.asarray(inp, dtype=np.float32))
+                        )
                     except Exception as e:
                         if not continue_on_error:
                             raise
-                        _record_err(i, e if isinstance(e, Exception) else RuntimeError(str(e)))
+                        _record_err(
+                            i, e if isinstance(e, Exception) else RuntimeError(str(e))
+                        )
                 for start in range(0, len(ready), infer_bs):
-                    sub = ready[start:start + infer_bs]
+                    sub = ready[start : start + infer_bs]
                     if not sub:
                         continue
                     sub_indices = [t[0] for t in sub]
@@ -1036,7 +1128,7 @@ def _infer_chunk_embeddings_for_per_item(
             batch_attempted = True
             try:
                 for start in range(0, len(idxs), infer_bs):
-                    sub_indices = idxs[start:start + infer_bs]
+                    sub_indices = idxs[start : start + infer_bs]
                     sub_spatials = [spatials[i] for i in sub_indices]
 
                     def _infer_batch():
@@ -1091,7 +1183,9 @@ def _inject_precomputed_embeddings_into_point_payload(
 ) -> None:
     model_entries = manifest.get("models") or []
     entry_by_model = {
-        str(entry.get("model")): entry for entry in model_entries if isinstance(entry, dict)
+        str(entry.get("model")): entry
+        for entry in model_entries
+        if isinstance(entry, dict)
     }
     for m in models:
         entry = entry_by_model.get(m)
@@ -1203,11 +1297,17 @@ def _export_batch_per_item(
             if bar is not None:
                 bar.update(1)
 
-        export_flow = _make_export_flow_overrides(backend=backend_n, input_prep=input_prep)
+        export_flow = _make_export_flow_overrides(
+            backend=backend_n, input_prep=input_prep
+        )
         provider_factory = export_flow.provider_factory
         provider_enabled = provider_factory is not None
 
-        need_prefetch = provider_enabled and bool(save_inputs or save_embeddings) and bool(pending_idxs)
+        need_prefetch = (
+            provider_enabled
+            and bool(save_inputs or save_embeddings)
+            and bool(pending_idxs)
+        )
         pass_input_into_embedder = provider_enabled and bool(save_embeddings)
         provider: Optional[ProviderBase] = None
         band_resolver = None
@@ -1265,7 +1365,9 @@ def _export_batch_per_item(
             def _fetch_one(ii: int, sk: str, ss: SensorSpec):
                 assert provider is not None
                 x = _run_with_retry(
-                    lambda: _fetch_gee_patch_raw(provider, spatial=spatials[ii], temporal=temporal, sensor=ss),
+                    lambda: _fetch_gee_patch_raw(
+                        provider, spatial=spatials[ii], temporal=temporal, sensor=ss
+                    ),
                     retries=max_retries,
                     backoff_s=retry_backoff_s,
                 )
@@ -1273,7 +1375,10 @@ def _export_batch_per_item(
 
             mw = max(1, int(num_workers))
             with ThreadPoolExecutor(max_workers=mw) as ex:
-                fut_map = {ex.submit(_fetch_one, ii, sk, ss): (ii, sk) for (ii, sk, ss) in tasks}
+                fut_map = {
+                    ex.submit(_fetch_one, ii, sk, ss): (ii, sk)
+                    for (ii, sk, ss) in tasks
+                }
                 for fut in as_completed(fut_map):
                     ii, sk = fut_map[fut]
                     try:
@@ -1294,7 +1399,11 @@ def _export_batch_per_item(
                         )
                         if fail_on_bad_input:
                             sspec_member = sensor_by_key[member_skey]
-                            rep = _inspect_input_raw(x_member, sensor=sspec_member, name=f"gee_input_{member_skey}")
+                            rep = _inspect_input_raw(
+                                x_member,
+                                sensor=sspec_member,
+                                name=f"gee_input_{member_skey}",
+                            )
                             if not bool(rep.get("ok", True)):
                                 issues = (rep.get("report", {}) or {}).get("issues", [])
                                 mlist = sorted(set(sensor_models.get(member_skey, [])))
@@ -1311,7 +1420,7 @@ def _export_batch_per_item(
             return inputs_cache, input_reports, prefetch_errors
 
         chunk_groups = [
-            pending_idxs[chunk_start: chunk_start + csize]
+            pending_idxs[chunk_start : chunk_start + csize]
             for chunk_start in range(0, len(pending_idxs), csize)
         ]
         prefetch_pipeline_ex = None
@@ -1323,18 +1432,23 @@ def _export_batch_per_item(
                 # A one-slot pipeline overlaps prefetch(chunk k+1) with infer/write(chunk k)
                 # while keeping memory bounded to roughly two chunks of cached inputs.
                 prefetch_pipeline_ex = ThreadPoolExecutor(max_workers=1)
-                prefetched_chunk_fut = prefetch_pipeline_ex.submit(_prefetch_chunk_inputs, chunk_groups[0])
+                prefetched_chunk_fut = prefetch_pipeline_ex.submit(
+                    _prefetch_chunk_inputs, chunk_groups[0]
+                )
 
             for chunk_idx, idxs in enumerate(chunk_groups):
                 if prefetched_chunk_fut is not None:
-                    inputs_cache, input_reports, prefetch_errors = prefetched_chunk_fut.result()
+                    inputs_cache, input_reports, prefetch_errors = (
+                        prefetched_chunk_fut.result()
+                    )
                 else:
-                    inputs_cache, input_reports, prefetch_errors = _prefetch_chunk_inputs(idxs)
+                    inputs_cache, input_reports, prefetch_errors = (
+                        _prefetch_chunk_inputs(idxs)
+                    )
                 prefetched_chunk_fut = None
 
-                if (
-                    prefetch_pipeline_ex is not None
-                    and (chunk_idx + 1) < len(chunk_groups)
+                if prefetch_pipeline_ex is not None and (chunk_idx + 1) < len(
+                    chunk_groups
                 ):
                     prefetched_chunk_fut = prefetch_pipeline_ex.submit(
                         _prefetch_chunk_inputs, chunk_groups[chunk_idx + 1]
@@ -1374,6 +1488,7 @@ def _export_batch_per_item(
                 writer_ex = None
                 if writer_async:
                     from concurrent.futures import ThreadPoolExecutor
+
                     writer_ex = ThreadPoolExecutor(max_workers=writer_mw)
                 for i in idxs:
                     out_file = os.path.join(out_dir, f"{names[i]}{ext}")
@@ -1394,13 +1509,17 @@ def _export_batch_per_item(
                             prefetch_errors=prefetch_errors,
                             pass_input_into_embedder=pass_input_into_embedder,
                             save_inputs=save_inputs,
-                            save_embeddings=(False if use_chunk_batch_infer else save_embeddings),
+                            save_embeddings=(
+                                False if use_chunk_batch_infer else save_embeddings
+                            ),
                             fail_on_bad_input=fail_on_bad_input,
                             continue_on_error=continue_on_error,
                             max_retries=max_retries,
                             retry_backoff_s=retry_backoff_s,
                             model_progress_cb=(
-                                None if use_chunk_batch_infer else (_on_model_done if save_embeddings else None)
+                                None
+                                if use_chunk_batch_infer
+                                else (_on_model_done if save_embeddings else None)
                             ),
                             normalize_model_name_fn=_normalize_model_name,
                             sensor_key_fn=_sensor_key,
@@ -1484,6 +1603,7 @@ def _export_batch_per_item(
 
                 if writer_ex is not None:
                     from concurrent.futures import as_completed
+
                     try:
                         fut_map = {fut: i for (i, fut) in write_futs}
                         for fut in as_completed(fut_map):
@@ -1556,7 +1676,9 @@ def _prepare_embedding_request_context(
     input_prep: Optional[InputPrepSpec | str],
 ) -> _EmbeddingRequestContext:
     model_n = _normalize_model_name(model)
-    backend_n = _resolve_embedding_api_backend(model_n, _normalize_backend_name(backend))
+    backend_n = _resolve_embedding_api_backend(
+        model_n, _normalize_backend_name(backend)
+    )
     device_n = _normalize_device_name(device)
     input_prep_resolved = _resolve_input_prep_spec(input_prep)
 
@@ -1586,18 +1708,24 @@ def _maybe_fetch_api_side_inputs(
     temporal: Optional[TemporalSpec],
     ctx: _EmbeddingRequestContext,
 ) -> Optional[List[np.ndarray]]:
-    use_api_side_input_prep = (ctx.input_prep is not None) and (ctx.input_prep_resolved.mode in {"tile", "auto"})
+    use_api_side_input_prep = (ctx.input_prep is not None) and (
+        ctx.input_prep_resolved.mode in {"tile", "auto"}
+    )
     if not use_api_side_input_prep:
         return None
 
     provider_factory = _provider_factory_for_backend(ctx.backend_n)
     if provider_factory is None:
         if ctx.input_prep_resolved.mode == "tile":
-            raise ModelError("input_prep.mode='tile' currently requires a provider backend (e.g. gee).")
+            raise ModelError(
+                "input_prep.mode='tile' currently requires a provider backend (e.g. gee)."
+            )
         return None
     if ctx.sensor_eff is None:
         if ctx.input_prep_resolved.mode == "tile":
-            raise ModelError("input_prep.mode='tile' requires a sensor for provider-backed on-the-fly models.")
+            raise ModelError(
+                "input_prep.mode='tile' requires a sensor for provider-backed on-the-fly models."
+            )
         return None
     if not _embedder_accepts_input_chw(type(ctx.embedder)):
         if ctx.input_prep_resolved.mode == "tile":
@@ -1611,7 +1739,9 @@ def _maybe_fetch_api_side_inputs(
     if callable(ensure_ready):
         _run_with_retry(lambda: ensure_ready(), retries=0, backoff_s=0.0)
     return [
-        _fetch_gee_patch_raw(provider, spatial=spatial, temporal=temporal, sensor=ctx.sensor_eff)
+        _fetch_gee_patch_raw(
+            provider, spatial=spatial, temporal=temporal, sensor=ctx.sensor_eff
+        )
         for spatial in spatials
     ]
 
@@ -1624,7 +1754,9 @@ def _run_embedding_request(
     output: OutputSpec,
     ctx: _EmbeddingRequestContext,
 ) -> List[Embedding]:
-    prefetched_inputs = _maybe_fetch_api_side_inputs(spatials=spatials, temporal=temporal, ctx=ctx)
+    prefetched_inputs = _maybe_fetch_api_side_inputs(
+        spatials=spatials, temporal=temporal, ctx=ctx
+    )
     if prefetched_inputs is not None:
         out: List[Embedding] = []
         for spatial, raw in zip(spatials, prefetched_inputs):
@@ -1674,6 +1806,7 @@ def _run_embedding_request(
 # -----------------------------------------------------------------------------
 # Public: embeddings
 # -----------------------------------------------------------------------------
+
 
 def list_models(*, include_aliases: bool = False) -> List[str]:
     """Return the stable model catalog, independent of runtime lazy-load state."""
@@ -1809,10 +1942,15 @@ def export_batch(
     backend_n = _normalize_backend_name(backend)
     device = _normalize_device_name(device)
     fmt = format.lower().strip()
-    infer_batch_size_n = max(1, int(chunk_size if infer_batch_size is None else infer_batch_size))
+    infer_batch_size_n = max(
+        1, int(chunk_size if infer_batch_size is None else infer_batch_size)
+    )
     from .writers import SUPPORTED_FORMATS, get_extension
+
     if fmt not in SUPPORTED_FORMATS:
-        raise ModelError(f"Unsupported export format: {format!r}. Supported: {SUPPORTED_FORMATS}.")
+        raise ModelError(
+            f"Unsupported export format: {format!r}. Supported: {SUPPORTED_FORMATS}."
+        )
     ext = get_extension(fmt)
     target = _resolve_export_batch_target(
         n_spatials=len(spatials),
@@ -1842,7 +1980,9 @@ def export_batch(
             emb_check = cls()
             # Capability mismatch (wrong backend/output/temporal) is always a
             # fatal configuration error — raise before the export starts.
-            _assert_supported(emb_check, backend=eff_backend, output=output, temporal=temporal)
+            _assert_supported(
+                emb_check, backend=eff_backend, output=output, temporal=temporal
+            )
             desc = emb_check.describe() or {}
         except ModelError:
             raise
@@ -1862,7 +2002,9 @@ def export_batch(
     if target.mode == "combined":
         out_file = target.out_file
         assert out_file is not None
-        export_flow = _make_export_flow_overrides(backend=backend_n, input_prep=input_prep)
+        export_flow = _make_export_flow_overrides(
+            backend=backend_n, input_prep=input_prep
+        )
         if bool(resume) and os.path.exists(out_file):
             json_path = os.path.splitext(out_file)[0] + ".json"
             resume_manifest = _load_json_dict(json_path)
