@@ -344,8 +344,8 @@ class _PartialFailEmbedder:
     def get_embedding(
         self, *, spatial, temporal, sensor, output, backend, device, input_chw=None
     ):
-        # Use lat to determine which index this is (our spatials have distinct lats)
-        if round(spatial.lat, 1) == 40.0:  # index 0
+        # Use lon to determine which index this is (our spatials have distinct lons)
+        if round(spatial.lon, 1) == -88.0:  # index 0
             raise RuntimeError("fail on index 0")
         return Embedding(data=np.array([1.0], dtype=np.float32), meta={})
 
