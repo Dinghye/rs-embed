@@ -27,12 +27,7 @@ from .runtime_utils import (
 # -----------------------------
 # Provider: Fetch S2 RGB
 # -----------------------------
-def _s2_rgb_u8_from_chw(s2_chw: np.ndarray) -> np.ndarray:
-    """s2_chw: [3,H,W] float in [0,1] -> uint8 [H,W,3]"""
-    if s2_chw.ndim != 3 or s2_chw.shape[0] != 3:
-        raise ModelError(f"Expected S2 RGB CHW with 3 bands, got shape={s2_chw.shape}")
-    x = np.clip(s2_chw, 0.0, 1.0)
-    return (x.transpose(1, 2, 0) * 255.0).astype(np.uint8)
+from ._vit_mae_utils import _s2_rgb_u8_from_chw
 
 
 def _fetch_s2_rgb_chw(
