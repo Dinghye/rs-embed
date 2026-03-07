@@ -30,7 +30,6 @@ from .internal.api.prefetch_helpers import (
 from .internal.api.export_flow_helpers import (
     build_one_point_payload as _build_one_point_payload,
     export_combined as _export_combined_npz,
-    export_one_point as _export_one_point_npz,
     write_one_payload as _write_one_payload,
 )
 from .internal.api.runtime_helpers import (
@@ -1625,6 +1624,10 @@ def _run_embedding_request(
         out: List[Embedding] = []
         for spatial, raw in zip(spatials, prefetched_inputs):
             with ctx.lock:
+                # _call_embedder_get_embedding_with_input_prep already applies
+                # normalize_embedding_output internally (via _call_embedder_get_embedding).
+                # Do NOT normalize again here — double-normalization corrupts
+                # grid_orientation_applied metadata for south-to-north models.
                 emb = _call_embedder_get_embedding_with_input_prep(
                     embedder=ctx.embedder,
                     spatial=spatial,
@@ -1636,7 +1639,7 @@ def _run_embedding_request(
                     input_chw=raw,
                     input_prep=ctx.input_prep,
                 )
-            out.append(_normalize_embedding_output(emb=emb, output=output))
+            out.append(emb)
         return out
 
     if len(spatials) == 1:
@@ -1816,22 +1819,29 @@ def export_batch(
         names=names,
     )
 
-    # validate specs early
-    _validate_specs(spatial=spatials[0], temporal=temporal, output=output)
-    for s in spatials:
-        _validate_specs(spatial=s, temporal=temporal, output=output)
+    # validate specs early — use helper to avoid double-validating spatials[0]
+    _validate_spatials(spatials=spatials, temporal=temporal, output=output)
 
     per_model_sensors = per_model_sensors or {}
 
-    # resolve sensors + type per model (best effort)
+    # resolve sensors + type per model; validate capabilities upfront
     resolved_sensor: Dict[str, Optional[SensorSpec]] = {}
     model_type: Dict[str, str] = {}
     for m in models:
         m_n = _normalize_model_name(m)
+        eff_backend = _resolve_embedding_api_backend(m_n, backend_n)
         cls = get_embedder_cls(m_n)
         try:
-            desc = cls().describe() or {}
+            emb_check = cls()
+            # Capability mismatch (wrong backend/output/temporal) is always a
+            # fatal configuration error — raise before the export starts.
+            _assert_supported(emb_check, backend=eff_backend, output=output, temporal=temporal)
+            desc = emb_check.describe() or {}
+        except ModelError:
+            raise
         except Exception:
+            # __init__ or describe() failure: let the export flow handle it
+            # per-model, respecting continue_on_error.
             desc = {}
         model_type[m] = str(desc.get("type", "")).lower()
         if m in per_model_sensors:

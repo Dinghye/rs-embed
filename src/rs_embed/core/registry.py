@@ -76,5 +76,9 @@ def get_embedder_cls(name: str) -> Type[Any]:
     return _REGISTRY[k]
 
 def list_models():
-    _ensure_registry_loaded()
+    """Return sorted list of currently-loaded model IDs from the runtime registry.
+
+    Note: only models that have been lazy-imported so far will appear here.
+    Use rs_embed.api.list_models() for a stable catalog-backed list.
+    """
     return sorted(_REGISTRY.keys())
