@@ -153,8 +153,8 @@ class CopernicusEmbedder(EmbedderBase):
             raise ModelError("copernicus_embed is precomputed; use backend='auto'.")
 
         try:
-            pass
-        except Exception as e:
+            import torchgeo  # noqa: F401
+        except ImportError as e:
             raise ModelError(
                 "CopernicusEmbed requires torchgeo. Install: pip install torchgeo"
             ) from e
