@@ -1,8 +1,11 @@
 import numpy as np
 
-import rs_embed.api as api
 from rs_embed.core.embedding import Embedding
 from rs_embed.core.specs import BBox, InputPrepSpec, OutputSpec
+from rs_embed.tools.tiling import (
+    _call_embedder_get_embedding_with_input_prep,
+    _tile_yx_starts,
+)
 
 
 class _FakeTileEmbedder:
@@ -78,7 +81,7 @@ def test_tiled_grid_stitch_restores_shape_and_values():
     emb = _FakeTileEmbedder()
     x = np.arange(36, dtype=np.float32).reshape(1, 6, 6)
 
-    out = api._call_embedder_get_embedding_with_input_prep(
+    out = _call_embedder_get_embedding_with_input_prep(
         embedder=emb,
         spatial=_bbox(),
         temporal=None,
@@ -105,7 +108,7 @@ def test_tiled_pooled_mean_uses_area_weighted_merge():
     emb = _FakeTileEmbedder()
     x = np.arange(36, dtype=np.float32).reshape(1, 6, 6)
 
-    out = api._call_embedder_get_embedding_with_input_prep(
+    out = _call_embedder_get_embedding_with_input_prep(
         embedder=emb,
         spatial=_bbox(),
         temporal=None,
@@ -127,7 +130,7 @@ def test_auto_mode_falls_back_to_resize_when_tile_budget_exceeded():
     emb = _FakeTileEmbedder()
     x = np.arange(36, dtype=np.float32).reshape(1, 6, 6)
 
-    out = api._call_embedder_get_embedding_with_input_prep(
+    out = _call_embedder_get_embedding_with_input_prep(
         embedder=emb,
         spatial=_bbox(),
         temporal=None,
@@ -146,13 +149,13 @@ def test_auto_mode_falls_back_to_resize_when_tile_budget_exceeded():
 
 
 def test_cover_shift_tile_positions_avoid_padding_for_300_with_224():
-    ys, xs = api._tile_yx_starts(h=300, w=300, tile_size=224, stride=224)
+    ys, xs = _tile_yx_starts(h=300, w=300, tile_size=224, stride=224)
     assert ys == [0, 76]
     assert xs == [0, 76]
 
     emb = _FakeTileEmbedder()
     x = np.arange(300 * 300, dtype=np.float32).reshape(1, 300, 300)
-    out = api._call_embedder_get_embedding_with_input_prep(
+    out = _call_embedder_get_embedding_with_input_prep(
         embedder=emb,
         spatial=_bbox(),
         temporal=None,
