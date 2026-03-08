@@ -20,19 +20,19 @@ from .core.specs import (
 )
 from .embedders.catalog import MODEL_ALIASES, MODEL_SPECS
 from .tools.normalization import (
+    _resolve_embedding_api_backend,
     normalize_backend_name,
     normalize_device_name,
     normalize_model_name,
 )
 from .tools.model_defaults import default_sensor_for_model
-from .tools.output import normalize_embedding_output
 from .tools.runtime import (
+    _EmbeddingRequestContext,
     get_embedder_bundle_cached,
-    run_with_retry,
+    run_embedding_request,
     sensor_key,
 )
 from .tools.tiling import (
-    _call_embedder_get_embedding_with_input_prep,
     _resolve_input_prep_spec,
 )
 from .core.validation import assert_supported, validate_specs
@@ -67,9 +67,6 @@ class Model:
         output: OutputSpec = OutputSpec.pooled(),
         input_prep: Optional[InputPrepSpec | str] = "resize",
     ) -> None:
-        # Import here to share the backend resolution logic with api.py
-        from .api import _resolve_embedding_api_backend
-
         self._model_n = normalize_model_name(name)
         self._backend_n = _resolve_embedding_api_backend(
             self._model_n, normalize_backend_name(backend)
@@ -92,6 +89,16 @@ class Model:
             backend=self._backend_n,
             output=self._output,
             temporal=None,
+        )
+        self._ctx = _EmbeddingRequestContext(
+            model_n=self._model_n,
+            backend_n=self._backend_n,
+            device=self._device,
+            sensor_eff=self._sensor,
+            input_prep=self._input_prep,
+            input_prep_resolved=self._input_prep_resolved,
+            embedder=self._embedder,
+            lock=self._lock,
         )
 
     # ── embedding methods ──────────────────────────────────────────
@@ -117,7 +124,13 @@ class Model:
             Normalized embedding output matching this model's ``output`` spec.
         """
         validate_specs(spatial=spatial, temporal=temporal, output=self._output)
-        return self._run([spatial], temporal=temporal, sensor=self._sensor)[0]
+        return run_embedding_request(
+            spatials=[spatial],
+            temporal=temporal,
+            sensor=self._sensor,
+            output=self._output,
+            ctx=self._ctx,
+        )[0]
 
     def get_embeddings_batch(
         self,
@@ -148,7 +161,13 @@ class Model:
             raise ModelError("spatials must be a non-empty List[SpatialSpec].")
         for sp in spatials:
             validate_specs(spatial=sp, temporal=temporal, output=self._output)
-        return self._run(spatials, temporal=temporal, sensor=self._sensor)
+        return run_embedding_request(
+            spatials=spatials,
+            temporal=temporal,
+            sensor=self._sensor,
+            output=self._output,
+            ctx=self._ctx,
+        )
 
     def describe(self) -> Dict[str, Any]:
         """Return model capabilities from the underlying embedder.
@@ -185,102 +204,3 @@ class Model:
             model_ids.update(MODEL_ALIASES.keys())
         return sorted(model_ids)
 
-    # ── internal execution ─────────────────────────────────────────
-
-    def _run(
-        self,
-        spatials: List[SpatialSpec],
-        *,
-        temporal: Optional[TemporalSpec],
-        sensor: Optional[SensorSpec],
-    ) -> List[Embedding]:
-        """Execute embeddings, using API-side input fetch when appropriate."""
-        prefetched = self._maybe_fetch_inputs(spatials, temporal)
-        if prefetched is not None:
-            out: List[Embedding] = []
-            for spatial, raw in zip(spatials, prefetched):
-                with self._lock:
-                    emb = _call_embedder_get_embedding_with_input_prep(
-                        embedder=self._embedder,
-                        spatial=spatial,
-                        temporal=temporal,
-                        sensor=self._sensor,
-                        output=self._output,
-                        backend=self._backend_n,
-                        device=self._device,
-                        input_chw=raw,
-                        input_prep=self._input_prep,
-                    )
-                out.append(emb)
-            return out
-
-        if len(spatials) == 1:
-            with self._lock:
-                emb = self._embedder.get_embedding(
-                    spatial=spatials[0],
-                    temporal=temporal,
-                    sensor=sensor,
-                    output=self._output,
-                    backend=self._backend_n,
-                    device=self._device,
-                )
-            return [normalize_embedding_output(emb=emb, output=self._output)]
-
-        with self._lock:
-            embs = self._embedder.get_embeddings_batch(
-                spatials=spatials,
-                temporal=temporal,
-                sensor=sensor,
-                output=self._output,
-                backend=self._backend_n,
-                device=self._device,
-            )
-        return [normalize_embedding_output(emb=e, output=self._output) for e in embs]
-
-    def _maybe_fetch_inputs(
-        self,
-        spatials: List[SpatialSpec],
-        temporal: Optional[TemporalSpec],
-    ) -> Optional[List["np.ndarray"]]:
-        """Fetch API-side inputs when input_prep requires it."""
-        import numpy as np
-
-        from .api import _provider_factory_for_backend
-        from .tools.runtime import embedder_accepts_input_chw
-
-        use_api_side = (self._input_prep is not None) and (
-            self._input_prep_resolved.mode in {"tile", "auto"}
-        )
-        if not use_api_side:
-            return None
-
-        factory = _provider_factory_for_backend(self._backend_n)
-        if factory is None:
-            if self._input_prep_resolved.mode == "tile":
-                raise ModelError(
-                    "input_prep.mode='tile' requires a provider backend (e.g. gee)."
-                )
-            return None
-        if self._sensor is None:
-            if self._input_prep_resolved.mode == "tile":
-                raise ModelError("input_prep.mode='tile' requires a sensor spec.")
-            return None
-        if not embedder_accepts_input_chw(type(self._embedder)):
-            if self._input_prep_resolved.mode == "tile":
-                raise ModelError(
-                    f"Model {self._model_n} does not accept input_chw; cannot use input_prep.mode='tile'."
-                )
-            return None
-
-        from .providers.gee_utils import fetch_gee_patch_raw
-
-        provider = factory()
-        ensure_ready = getattr(provider, "ensure_ready", None)
-        if callable(ensure_ready):
-            run_with_retry(lambda: ensure_ready(), retries=0, backoff_s=0.0)
-        return [
-            fetch_gee_patch_raw(
-                provider, spatial=sp, temporal=temporal, sensor=self._sensor
-            )
-            for sp in spatials
-        ]
