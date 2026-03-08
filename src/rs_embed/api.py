@@ -22,39 +22,30 @@ Flow summary
 3. Execute single / batch embedding, or delegate batch export to
    :class:`BatchExporter`.
 
-Backward compatibility
-----------------------
-Some tests and downstream integrations monkeypatch symbols on ``rs_embed.api``.
-For batch export, those hook symbols are mirrored into pipeline module globals
-via ``_sync_export_pipeline_hooks`` so monkeypatch behaviour remains stable
-after the pipeline refactor.
 """
 
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
-import numpy as np
-
-from .providers.gee_utils import (
-    fetch_gee_patch_raw as _fetch_gee_patch_raw,
-    inspect_input_raw as _inspect_input_raw,
-)
 from .tools.normalization import (
     normalize_backend_name as _normalize_backend_name,
     normalize_device_name as _normalize_device_name,
     normalize_model_name as _normalize_model_name,
+    # Re-exported so `from rs_embed.api import ...` in tests/downstream still works.
+    _default_provider_backend_for_api,  # noqa: F401
+    _probe_model_describe,  # noqa: F401
+    _resolve_embedding_api_backend,
 )
 from .tools.checkpoint_utils import (
     is_incomplete_combined_manifest as _is_incomplete_combined_manifest,
 )
 from .tools.runtime import (
-    embedder_accepts_input_chw as _embedder_accepts_input_chw,
-    get_embedder_bundle_cached as _get_embedder_bundle_cached,
-    run_with_retry as _run_with_retry,
-    sensor_key as _sensor_key,
+    _EmbeddingRequestContext,
+    _prepare_embedding_request_context,
+    provider_factory_for_backend,
+    run_embedding_request as _run_embedding_request_shared,
 )
 from .core.validation import (
     assert_supported as _assert_supported,
@@ -67,16 +58,7 @@ from .tools.manifest import (
 from .tools.model_defaults import (
     default_sensor_for_model as _default_sensor_for_model,
 )
-from .tools.output import (
-    normalize_embedding_output as _normalize_embedding_output,
-)
 from .tools.progress import create_progress as _create_progress
-from .tools.tiling import (
-    _ResolvedInputPrepSpec,
-    _resolve_input_prep_spec,
-    _call_embedder_get_embedding_with_input_prep,
-    _tile_yx_starts,
-)
 from .core.embedding import Embedding
 from .core.errors import ModelError
 from .core.registry import get_embedder_cls
@@ -89,101 +71,6 @@ from .core.specs import (
 )
 from .core.types import ExportConfig, ExportLayout, ExportTarget, ModelConfig
 from .embedders.catalog import MODEL_ALIASES, MODEL_SPECS
-from .providers import ProviderBase, get_provider, has_provider, list_providers
-
-# Backward-compatibility hook: tests/downstream may monkeypatch api.GEEProvider.
-GEEProvider: Optional[Callable[..., ProviderBase]] = None
-
-
-# -----------------------------------------------------------------------------
-# -----------------------------------------------------------------------------
-# Internal: provider helpers
-# -----------------------------------------------------------------------------
-
-
-def _create_default_gee_provider() -> ProviderBase:
-    # If tests/downstream code set api.GEEProvider, use it directly.
-    cls = GEEProvider
-    if cls is None:
-        try:
-            from .providers import GEEProvider as _GEEProvider  # type: ignore
-
-            cls = _GEEProvider
-        except Exception:
-            pass
-
-    if cls is not None:
-        try:
-            return cls(auto_auth=True)
-        except TypeError:
-            return cls()
-
-    return get_provider("gee", auto_auth=True)
-
-
-def _provider_factory_for_backend(backend: str) -> Optional[Callable[[], ProviderBase]]:
-    b = _normalize_backend_name(backend)
-    if b == "auto":
-        b = _default_provider_backend_for_api()
-    if not has_provider(b):
-        return None
-    if b == "gee":
-        return _create_default_gee_provider
-    return lambda: get_provider(b)
-
-
-def _probe_model_describe(model_n: str) -> Dict[str, Any]:
-    """Best-effort model describe() probe used for API-level routing decisions."""
-    try:
-        cls = get_embedder_cls(model_n)
-        emb = cls()
-        desc = emb.describe() or {}
-        return desc if isinstance(desc, dict) else {}
-    except Exception:
-        return {}
-
-
-def _default_provider_backend_for_api() -> str:
-    providers = [str(p).strip().lower() for p in list_providers()]
-    if "gee" in providers:
-        return "gee"
-    if providers:
-        return providers[0]
-    return "gee"
-
-
-def _resolve_embedding_api_backend(model_n: str, backend_n: str) -> str:
-    """Normalize backend semantics for precomputed models."""
-    desc = _probe_model_describe(model_n)
-    if str(desc.get("type", "")).strip().lower() != "precomputed":
-        return backend_n
-
-    backends = desc.get("backend")
-    if not isinstance(backends, list):
-        return backend_n
-    allowed = [str(b).strip().lower() for b in backends if str(b).strip()]
-    if not allowed:
-        return backend_n
-
-    provider_allowed = ("provider" in allowed) or ("gee" in allowed)
-    if backend_n in allowed:
-        if backend_n == "auto" and provider_allowed:
-            return _default_provider_backend_for_api()
-        return backend_n
-    if backend_n == "local" and "auto" in allowed and not provider_allowed:
-        return "auto"
-    if has_provider(backend_n) and provider_allowed:
-        return backend_n
-
-    if backend_n in {"gee", "auto"}:
-        if "auto" in allowed:
-            return "auto"
-        if "local" in allowed:
-            return "local"
-        if provider_allowed:
-            return _default_provider_backend_for_api()
-
-    return backend_n
 
 
 # ---------------------------------------------------------------------------
@@ -245,44 +132,9 @@ def _resolve_export_batch_target(
     )
 
 
-def _sync_export_pipeline_hooks() -> None:
-    """Propagate api-level hook variables into refactored pipeline modules.
-
-    Tests and downstream users monkeypatch symbols on ``rs_embed.api``
-    (for example ``_inspect_input_raw`` or ``_create_progress``).
-    The pipeline refactor moved implementations into separate modules, so
-    we mirror those hooks back into pipeline module globals before running
-    batch export to preserve backward-compatible monkeypatch behavior.
-    """
-
-    from .pipelines import combined_flow as _combined_flow_mod
-    from .pipelines import exporter as _exporter_mod
-    from .pipelines import point_payload as _point_payload_mod
-    from .pipelines import prefetch as _prefetch_mod
-
-    _prefetch_mod.fetch_gee_patch_raw = _fetch_gee_patch_raw
-    _prefetch_mod.inspect_input_raw = _inspect_input_raw
-    _point_payload_mod.fetch_gee_patch_raw = _fetch_gee_patch_raw
-    _point_payload_mod.inspect_input_raw = _inspect_input_raw
-    _exporter_mod.create_progress = _create_progress
-    _combined_flow_mod.create_progress = _create_progress
-
-
 # ---------------------------------------------------------------------------
 # Internal: embedding request helpers (for get_embedding / get_embeddings_batch)
 # ---------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class _EmbeddingRequestContext:
-    model_n: str
-    backend_n: str
-    device: str
-    sensor_eff: Optional[SensorSpec]
-    input_prep: Optional[InputPrepSpec | str]
-    input_prep_resolved: _ResolvedInputPrepSpec
-    embedder: Any
-    lock: Any
 
 
 def _validate_spatials(
@@ -297,93 +149,6 @@ def _validate_spatials(
         _validate_specs(spatial=spatial, temporal=temporal, output=output)
 
 
-# Contract: normalizes all user-facing strings (model, backend, device, input_prep,
-# sensor) and returns a fully-resolved, frozen _EmbeddingRequestContext.  After this
-# call, all downstream code can assume canonical names and a ready embedder instance.
-def _prepare_embedding_request_context(
-    *,
-    model: str,
-    temporal: Optional[TemporalSpec],
-    sensor: Optional[SensorSpec],
-    output: OutputSpec,
-    backend: str,
-    device: str,
-    input_prep: Optional[InputPrepSpec | str],
-) -> _EmbeddingRequestContext:
-    model_n = _normalize_model_name(model)
-    backend_n = _resolve_embedding_api_backend(
-        model_n, _normalize_backend_name(backend)
-    )
-    device_n = _normalize_device_name(device)
-    input_prep_resolved = _resolve_input_prep_spec(input_prep)
-
-    sensor_eff = sensor
-    if input_prep_resolved.mode == "tile" and sensor_eff is None:
-        sensor_eff = _default_sensor_for_model(model_n)
-
-    sensor_k = _sensor_key(sensor_eff)
-    embedder, lock = _get_embedder_bundle_cached(model_n, backend_n, device_n, sensor_k)
-    _assert_supported(embedder, backend=backend_n, output=output, temporal=temporal)
-
-    return _EmbeddingRequestContext(
-        model_n=model_n,
-        backend_n=backend_n,
-        device=device_n,
-        sensor_eff=sensor_eff,
-        input_prep=input_prep,
-        input_prep_resolved=input_prep_resolved,
-        embedder=embedder,
-        lock=lock,
-    )
-
-
-def _maybe_fetch_api_side_inputs(
-    *,
-    spatials: List[SpatialSpec],
-    temporal: Optional[TemporalSpec],
-    ctx: _EmbeddingRequestContext,
-) -> Optional[List[np.ndarray]]:
-    use_api_side_input_prep = (ctx.input_prep is not None) and (
-        ctx.input_prep_resolved.mode in {"tile", "auto"}
-    )
-    if not use_api_side_input_prep:
-        return None
-
-    provider_factory = _provider_factory_for_backend(ctx.backend_n)
-    if provider_factory is None:
-        if ctx.input_prep_resolved.mode == "tile":
-            raise ModelError(
-                "input_prep.mode='tile' currently requires a provider backend (e.g. gee)."
-            )
-        return None
-    if ctx.sensor_eff is None:
-        if ctx.input_prep_resolved.mode == "tile":
-            raise ModelError(
-                "input_prep.mode='tile' requires a sensor for provider-backed on-the-fly models."
-            )
-        return None
-    if not _embedder_accepts_input_chw(type(ctx.embedder)):
-        if ctx.input_prep_resolved.mode == "tile":
-            raise ModelError(
-                f"Model {ctx.model_n} does not accept input_chw; cannot apply input_prep.mode='tile'."
-            )
-        return None
-
-    provider = provider_factory()
-    ensure_ready = getattr(provider, "ensure_ready", None)
-    if callable(ensure_ready):
-        _run_with_retry(lambda: ensure_ready(), retries=0, backoff_s=0.0)
-    return [
-        _fetch_gee_patch_raw(
-            provider, spatial=spatial, temporal=temporal, sensor=ctx.sensor_eff
-        )
-        for spatial in spatials
-    ]
-
-
-# Contract: given a resolved context + spatials, returns one Embedding per spatial.
-# May prefetch inputs API-side (tile/auto) or delegate directly to the embedder.
-# Output embeddings are already normalize_embedding_output'd — do NOT normalize again.
 def _run_embedding_request(
     *,
     spatials: List[SpatialSpec],
@@ -392,53 +157,13 @@ def _run_embedding_request(
     output: OutputSpec,
     ctx: _EmbeddingRequestContext,
 ) -> List[Embedding]:
-    prefetched_inputs = _maybe_fetch_api_side_inputs(
-        spatials=spatials, temporal=temporal, ctx=ctx
+    return _run_embedding_request_shared(
+        spatials=spatials,
+        temporal=temporal,
+        sensor=sensor,
+        output=output,
+        ctx=ctx,
     )
-    if prefetched_inputs is not None:
-        out: List[Embedding] = []
-        for spatial, raw in zip(spatials, prefetched_inputs):
-            with ctx.lock:
-                # _call_embedder_get_embedding_with_input_prep already applies
-                # normalize_embedding_output internally (via _call_embedder_get_embedding).
-                # Do NOT normalize again here — double-normalization corrupts
-                # grid_orientation_applied metadata for south-to-north models.
-                emb = _call_embedder_get_embedding_with_input_prep(
-                    embedder=ctx.embedder,
-                    spatial=spatial,
-                    temporal=temporal,
-                    sensor=ctx.sensor_eff,
-                    output=output,
-                    backend=ctx.backend_n,
-                    device=ctx.device,
-                    input_chw=raw,
-                    input_prep=ctx.input_prep,
-                )
-            out.append(emb)
-        return out
-
-    if len(spatials) == 1:
-        with ctx.lock:
-            emb = ctx.embedder.get_embedding(
-                spatial=spatials[0],
-                temporal=temporal,
-                sensor=sensor,
-                output=output,
-                backend=ctx.backend_n,
-                device=ctx.device,
-            )
-        return [_normalize_embedding_output(emb=emb, output=output)]
-
-    with ctx.lock:
-        embs = ctx.embedder.get_embeddings_batch(
-            spatials=spatials,
-            temporal=temporal,
-            sensor=sensor,
-            output=output,
-            backend=ctx.backend_n,
-            device=ctx.device,
-        )
-    return [_normalize_embedding_output(emb=emb, output=output) for emb in embs]
 
 
 # -----------------------------------------------------------------------------
@@ -496,6 +221,12 @@ def get_embedding(
         Target inference device.
     input_prep : InputPrepSpec or str or None
         Optional API-side input preprocessing policy.
+
+    Note on Batching
+    ----------------
+    ``chunk_size`` controls how many spatial points are held in memory/I/O
+    buffers at once. ``infer_batch_size`` controls how many inputs are sent
+    into model inference at once. They are independent controls.
 
     Returns
     -------
@@ -680,9 +411,11 @@ def export_batch(
     fail_on_bad_input : bool
         If ``True``, treat invalid inputs as hard failures.
     chunk_size : int
-        Spatial chunk size for scheduling work.
+        Number of spatial points processed per chunk for memory/I/O scheduling.
+        This controls how much data is held in prefetch and writer buffers.
     infer_batch_size : int or None
-        Optional explicit model inference batch size.
+        Optional explicit model inference micro-batch size used for model calls.
+        This controls compute batching and is independent from ``chunk_size``.
     num_workers : int
         Number of preprocessing/inference workers.
     continue_on_error : bool
@@ -811,8 +544,6 @@ def export_batch(
         input_prep=input_prep,
     )
 
-    _sync_export_pipeline_hooks()
-
     exporter = BatchExporter(
         spatials=spatials,
         temporal=temporal,
@@ -823,6 +554,7 @@ def export_batch(
         backend=backend_n,
         resolved_backend=resolved_backend,
         device=device_n,
-        provider_factory=_provider_factory_for_backend(backend_n),
+        provider_factory=provider_factory_for_backend(backend_n),
+        progress_factory=_create_progress,
     )
     return exporter.run()

@@ -23,7 +23,10 @@ from ..tools.checkpoint_utils import (
     restore_prefetch_checkpoint_cache,
     store_prefetch_checkpoint_arrays,
 )
-from ..tools.manifest import load_json_dict as _load_json_dict
+from ..tools.manifest import (
+    load_json_dict as _load_json_dict,
+    summarize_status,
+)
 from ..writers import get_extension, write_arrays
 from .runner import run_with_retry
 
@@ -275,12 +278,7 @@ class CheckpointManager:
     ) -> Tuple[str, Dict[str, int]]:
         n_failed = sum(1 for x in entries if x.get("status") == "failed")
         n_partial = sum(1 for x in entries if x.get("status") == "partial")
-        if n_failed == 0 and n_partial == 0:
-            status = "ok"
-        elif n_failed < len(entries):
-            status = "partial"
-        else:
-            status = "failed"
+        status = summarize_status(entries)
         return status, {
             "total_models": len(entries),
             "failed_models": n_failed,

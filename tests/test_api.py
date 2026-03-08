@@ -335,18 +335,18 @@ def test_assert_supported_broken_describe_raises_model_error():
 
 
 def test_sensor_key_none():
-    from rs_embed.api import _sensor_key
+    from rs_embed.tools.runtime import sensor_key
 
-    assert _sensor_key(None) == ("__none__",)
+    assert sensor_key(None) == ("__none__",)
 
 
 def test_sensor_key_deterministic_and_differs():
-    from rs_embed.api import _sensor_key
+    from rs_embed.tools.runtime import sensor_key
 
     s1 = SensorSpec(collection="A", bands=("B1",))
     s2 = SensorSpec(collection="B", bands=("B1",))
-    assert _sensor_key(s1) == _sensor_key(s1)
-    assert _sensor_key(s1) != _sensor_key(s2)
+    assert sensor_key(s1) == sensor_key(s1)
+    assert sensor_key(s1) != sensor_key(s2)
 
 
 def test_sensor_cache_key_deterministic_and_differs():
@@ -624,6 +624,7 @@ def test_run_embedding_request_prefetched_path_normalizes_once(monkeypatch):
     models.
     """
     import rs_embed.api as api
+    import rs_embed.tools.runtime as rt
     from rs_embed.core.embedding import Embedding
 
     class _SouthNorthGridEmbedder:
@@ -655,9 +656,9 @@ def test_run_embedding_request_prefetched_path_normalizes_once(monkeypatch):
     fake_input = np.zeros((3, 4, 4), dtype=np.float32)
 
     monkeypatch.setattr(
-        api,
-        "_maybe_fetch_api_side_inputs",
-        lambda *, spatials, temporal, ctx: [fake_input],
+        rt,
+        "fetch_api_side_inputs",
+        lambda *, spatials, temporal, **_: [fake_input],
     )
 
     emb = api.get_embedding(
@@ -787,7 +788,7 @@ def test_export_batch_backend_resolution_before_assert_supported(tmp_path, monke
 
     # Prevent real GEE initialization — the precomputed model uses backend="auto"
     # after remapping, so no provider is actually needed for inference.
-    monkeypatch.setattr(api, "_provider_factory_for_backend", lambda _b: None)
+    monkeypatch.setattr(api, "provider_factory_for_backend", lambda _b: None)
 
     # _MockPrecomputedLocalEmbedder declares backend=["local", "auto"]
     # User passes backend="gee" → _resolve_embedding_api_backend maps to "auto"

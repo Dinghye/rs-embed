@@ -1,6 +1,6 @@
-"""Tests for backend resolution routing in rs_embed.api.
+"""Tests for backend resolution routing in rs_embed.api/runtime.
 
-Exercises _resolve_embedding_api_backend, _provider_factory_for_backend,
+Exercises _resolve_embedding_api_backend, provider_factory_for_backend,
 and _default_provider_backend_for_api — the logic that maps high-level
 backend names to concrete provider/access paths, particularly for
 precomputed models.
@@ -11,16 +11,16 @@ from unittest.mock import patch
 
 from rs_embed.api import (
     _resolve_embedding_api_backend,
-    _provider_factory_for_backend,
     _default_provider_backend_for_api,
 )
+from rs_embed.tools.runtime import provider_factory_for_backend
 
 # ── _resolve_embedding_api_backend ────────────────────────────────────
 
 
 def _mock_describe(desc: dict):
     """Patch _probe_model_describe to return *desc* for any model."""
-    return patch("rs_embed.api._probe_model_describe", return_value=desc)
+    return patch("rs_embed.tools.normalization._probe_model_describe", return_value=desc)
 
 
 class TestResolveBackend:
@@ -42,7 +42,7 @@ class TestResolveBackend:
         """auto + provider in allowed → returns default provider backend."""
         with _mock_describe({"type": "precomputed", "backend": ["provider", "auto"]}):
             with patch(
-                "rs_embed.api._default_provider_backend_for_api", return_value="gee"
+                "rs_embed.tools.normalization._default_provider_backend_for_api", return_value="gee"
             ):
                 assert _resolve_embedding_api_backend("m", "auto") == "gee"
 
@@ -65,7 +65,7 @@ class TestResolveBackend:
         """Precomputed gee → provider backend when only provider is allowed."""
         with _mock_describe({"type": "precomputed", "backend": ["provider"]}):
             with patch(
-                "rs_embed.api._default_provider_backend_for_api", return_value="gee"
+                "rs_embed.tools.normalization._default_provider_backend_for_api", return_value="gee"
             ):
                 assert _resolve_embedding_api_backend("m", "gee") == "gee"
 
@@ -94,39 +94,44 @@ class TestResolveBackend:
             assert _resolve_embedding_api_backend("m", "auto") == "auto"
 
 
-# ── _provider_factory_for_backend ────────────────────────────────────
+# ── provider_factory_for_backend ─────────────────────────────────────
 
 
 class TestProviderFactory:
-    """Tests for _provider_factory_for_backend."""
+    """Tests for provider_factory_for_backend.
+
+    provider_factory_for_backend in tools.runtime uses
+    default_provider_backend_name() and has_provider() from their
+    canonical locations.
+    """
 
     def test_auto_delegates_to_default_provider(self):
-        """auto → uses _default_provider_backend_for_api, not hard-coded gee."""
+        """auto → uses default_provider_backend_name, not hard-coded gee."""
         with patch(
-            "rs_embed.api._default_provider_backend_for_api", return_value="gee"
+            "rs_embed.embedders.runtime_utils.default_provider_backend_name", return_value="gee"
         ):
-            with patch("rs_embed.api.has_provider", return_value=True):
-                factory = _provider_factory_for_backend("auto")
+            with patch("rs_embed.tools.runtime.has_provider", return_value=True):
+                factory = provider_factory_for_backend("auto")
                 assert factory is not None
 
     def test_auto_uses_non_gee_default(self):
         """auto → picks the first available provider when gee is absent."""
         with patch(
-            "rs_embed.api._default_provider_backend_for_api",
+            "rs_embed.embedders.runtime_utils.default_provider_backend_name",
             return_value="planetary_computer",
         ):
-            with patch("rs_embed.api.has_provider", return_value=True):
-                factory = _provider_factory_for_backend("auto")
+            with patch("rs_embed.tools.runtime.has_provider", return_value=True):
+                factory = provider_factory_for_backend("auto")
                 assert factory is not None
 
     def test_unknown_backend_returns_none(self):
-        with patch("rs_embed.api.has_provider", return_value=False):
-            assert _provider_factory_for_backend("nonexistent") is None
+        with patch("rs_embed.tools.runtime.has_provider", return_value=False):
+            assert provider_factory_for_backend("nonexistent") is None
 
     def test_gee_returns_monkeypatch_friendly_factory(self):
         """gee → returns the module-level _create_default_gee_provider."""
-        with patch("rs_embed.api.has_provider", return_value=True):
-            factory = _provider_factory_for_backend("gee")
+        with patch("rs_embed.tools.runtime.has_provider", return_value=True):
+            factory = provider_factory_for_backend("gee")
             assert factory is not None
 
 
@@ -134,16 +139,27 @@ class TestProviderFactory:
 
 
 class TestDefaultProviderBackend:
-    """Tests for _default_provider_backend_for_api."""
+    """Tests for _default_provider_backend_for_api.
+
+    _default_provider_backend_for_api delegates to
+    embedders.runtime_utils.default_provider_backend_name(), so patch there.
+    """
 
     def test_gee_available(self):
-        with patch("rs_embed.api.list_providers", return_value=["gee"]):
+        with patch(
+            "rs_embed.embedders.runtime_utils.default_provider_backend_name", return_value="gee"
+        ):
             assert _default_provider_backend_for_api() == "gee"
 
     def test_other_provider(self):
-        with patch("rs_embed.api.list_providers", return_value=["planetary_computer"]):
+        with patch(
+            "rs_embed.embedders.runtime_utils.default_provider_backend_name",
+            return_value="planetary_computer",
+        ):
             assert _default_provider_backend_for_api() == "planetary_computer"
 
     def test_no_providers_defaults_gee(self):
-        with patch("rs_embed.api.list_providers", return_value=[]):
+        with patch(
+            "rs_embed.embedders.runtime_utils.default_provider_backend_name", return_value=None
+        ):
             assert _default_provider_backend_for_api() == "gee"

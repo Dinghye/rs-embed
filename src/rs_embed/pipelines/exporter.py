@@ -22,15 +22,14 @@ from ..tools.serialization import (
 )
 from ..core.specs import OutputSpec, SensorSpec, SpatialSpec, TemporalSpec
 from ..core.types import ExportConfig, ExportLayout, ExportTarget, ModelConfig
-from .export_flow import (
-    build_one_point_payload,
-    write_one_payload,
-)
+from .point_payload import build_one_point_payload, write_one_payload
 from ..tools.manifest import (
     point_failure_manifest,
     point_resume_manifest,
+    summarize_status,
 )
-from ..tools.progress import create_progress
+from ..tools.progress import create_progress as _default_create_progress
+from ..providers import gee_utils as _gee_utils
 from ..writers import get_extension
 from .checkpoint import CheckpointManager
 from .inference import InferenceEngine
@@ -82,6 +81,9 @@ class BatchExporter:
         resolved_backend: Dict[str, str],
         device: str,
         provider_factory: Optional[Callable[[], Any]] = None,
+        fetch_fn: Optional[Callable[..., np.ndarray]] = None,
+        inspect_fn: Optional[Callable[..., Dict[str, Any]]] = None,
+        progress_factory: Optional[Callable[..., Any]] = None,
     ) -> None:
         self.spatials = spatials
         self.temporal = temporal
@@ -93,6 +95,9 @@ class BatchExporter:
         self.resolved_backend = resolved_backend
         self.device = device
         self.provider_factory = provider_factory
+        self.fetch_fn = fetch_fn or _gee_utils.fetch_gee_patch_raw
+        self.inspect_fn = inspect_fn or _gee_utils.inspect_input_raw
+        self.create_progress = progress_factory or _default_create_progress
 
         # Model name lists for convenience
         self.model_names = [mc.name for mc in models]
@@ -133,71 +138,20 @@ class BatchExporter:
         os.makedirs(out_dir, exist_ok=True)
 
         n = len(self.spatials)
-        progress = create_progress(
+        progress = self.create_progress(
             enabled=bool(cfg.show_progress), total=n, desc="export_batch", unit="point"
         )
 
-        # Provider setup
-        provider = self._init_provider()
-        prefetch = PrefetchManager(
-            provider=provider,
-            models=self.model_names,
-            resolved_sensor=self.resolved_sensor,
-            model_type=self.model_type,
-            config=cfg,
-        )
-        band_resolver = (
-            getattr(provider, "normalize_bands", None) if provider is not None else None
-        )
-        prefetch.plan(resolve_bands_fn=band_resolver)
-
-        need_prefetch = prefetch.enabled and bool(
-            cfg.save_inputs or cfg.save_embeddings
-        )
-        provider_enabled = prefetch.enabled
-
-        # Resume: skip already-exported points
-        manifests: List[Dict[str, Any]] = []
-        pending_idxs: List[int] = []
-        for i in range(n):
-            out_file = os.path.join(out_dir, f"{names[i]}{self.ext}")
-            if self.checkpoint.per_item_should_skip(out_file):
-                manifests.append(
-                    point_resume_manifest(
-                        point_index=i,
-                        spatial=self.spatials[i],
-                        temporal=self.temporal,
-                        output=self.output,
-                        backend=self.backend,
-                        device=self.device,
-                        out_file=out_file,
-                    )
-                )
-                progress.update(1)
-            else:
-                pending_idxs.append(i)
+        prefetch, provider_enabled = self._setup_prefetch()
+        need_prefetch = prefetch.enabled and bool(cfg.save_inputs or cfg.save_embeddings)
+        pending_idxs, manifests = self._build_pending_queue(progress=progress)
 
         if not pending_idxs:
             manifests.sort(key=lambda x: int(x.get("point_index", -1)))
+            progress.close()
             return manifests
 
-        # Model progress bars
-        model_progress: Dict[str, Any] = {}
-        if cfg.save_embeddings:
-            model_progress = {
-                m: create_progress(
-                    enabled=bool(cfg.show_progress),
-                    total=len(pending_idxs),
-                    desc=f"infer[{m}]",
-                    unit="point",
-                )
-                for m in self.model_names
-            }
-
-        def _on_model_done(model_name: str) -> None:
-            bar = model_progress.get(model_name)
-            if bar is not None:
-                bar.update(1)
+        model_progress, on_model_done = self._create_model_progress(total=len(pending_idxs))
 
         # Chunk pipeline
         csize = cfg.effective_chunk_size
@@ -242,7 +196,7 @@ class BatchExporter:
                         models=self.models,
                         prefetch_cache=prefetch.cache,
                         prefetch_errors=prefetch.errors,
-                        model_progress_cb=_on_model_done,
+                        model_progress_cb=on_model_done,
                     )
 
                 # Build + write each point
@@ -254,7 +208,7 @@ class BatchExporter:
                     use_batch=use_batch,
                     manifests=manifests,
                     progress=progress,
-                    model_progress_cb=_on_model_done if cfg.save_embeddings else None,
+                    model_progress_cb=on_model_done,
                 )
 
                 # Free chunk memory
@@ -295,19 +249,7 @@ class BatchExporter:
             )
         )
 
-        # Provider setup
-        provider = self._init_provider()
-        prefetch = PrefetchManager(
-            provider=provider,
-            models=self.model_names,
-            resolved_sensor=self.resolved_sensor,
-            model_type=self.model_type,
-            config=cfg,
-        )
-        band_resolver = (
-            getattr(provider, "normalize_bands", None) if provider is not None else None
-        )
-        prefetch.plan(resolve_bands_fn=band_resolver)
+        prefetch, _provider_enabled = self._setup_prefetch()
 
         # Restore prefetch cache from checkpoint
         restored = self.checkpoint.restore_prefetch_cache(manifest, arrays)
@@ -317,7 +259,7 @@ class BatchExporter:
         all_idxs = list(range(len(self.spatials)))
         tasks = prefetch.build_tasks(all_idxs, self.spatials)
 
-        progress = create_progress(
+        progress = self.create_progress(
             enabled=bool(cfg.show_progress),
             total=(len(tasks) + len(pending_models)),
             desc="export_batch[combined]",
@@ -325,13 +267,13 @@ class BatchExporter:
         )
 
         # Prefetch all inputs
-        if provider is not None and tasks:
+        if prefetch.provider is not None and tasks:
             prefetch.fetch_chunk(
                 all_idxs, self.spatials, self.temporal, progress=progress
             )
 
         # Store prefetch checkpoint
-        if provider is not None:
+        if prefetch.provider is not None:
             self.checkpoint.store_prefetch_arrays(
                 arrays=arrays,
                 manifest=manifest,
@@ -402,6 +344,7 @@ class BatchExporter:
             write_checkpoint_fn=_write_ckpt,
             progress=progress,
             inference_engine=self.inference,
+            progress_factory=self.create_progress,
         )
 
         # Drop prefetch checkpoint arrays before final write
@@ -436,6 +379,75 @@ class BatchExporter:
         )
         return provider
 
+    def _setup_prefetch(self) -> Tuple[PrefetchManager, bool]:
+        """Create and plan a PrefetchManager plus provider-enabled flag."""
+        provider = self._init_provider()
+        prefetch = PrefetchManager(
+            provider=provider,
+            models=self.model_names,
+            resolved_sensor=self.resolved_sensor,
+            model_type=self.model_type,
+            config=self.config,
+            fetch_fn=self.fetch_fn,
+            inspect_fn=self.inspect_fn,
+        )
+        band_resolver = (
+            getattr(provider, "normalize_bands", None) if provider is not None else None
+        )
+        prefetch.plan(resolve_bands_fn=band_resolver)
+        return prefetch, prefetch.enabled
+
+    def _build_pending_queue(self, *, progress: Any) -> Tuple[List[int], List[Dict[str, Any]]]:
+        """Split per-item indices into pending work and resume manifests."""
+        out_dir = self.target.out_dir
+        names = self.target.names
+        assert out_dir is not None and names is not None
+
+        pending_idxs: List[int] = []
+        manifests: List[Dict[str, Any]] = []
+        for i in range(len(self.spatials)):
+            out_file = os.path.join(out_dir, f"{names[i]}{self.ext}")
+            if self.checkpoint.per_item_should_skip(out_file):
+                manifests.append(
+                    point_resume_manifest(
+                        point_index=i,
+                        spatial=self.spatials[i],
+                        temporal=self.temporal,
+                        output=self.output,
+                        backend=self.backend,
+                        device=self.device,
+                        out_file=out_file,
+                    )
+                )
+                progress.update(1)
+            else:
+                pending_idxs.append(i)
+        return pending_idxs, manifests
+
+    def _create_model_progress(
+        self, total: int
+    ) -> Tuple[Dict[str, Any], Optional[Callable[[str], None]]]:
+        """Create per-model progress bars and callback if embedding export is enabled."""
+        if not self.config.save_embeddings:
+            return {}, None
+
+        model_progress = {
+            m: self.create_progress(
+                enabled=bool(self.config.show_progress),
+                total=total,
+                desc=f"infer[{m}]",
+                unit="point",
+            )
+            for m in self.model_names
+        }
+
+        def _on_model_done(model_name: str) -> None:
+            bar = model_progress.get(model_name)
+            if bar is not None:
+                bar.update(1)
+
+        return model_progress, _on_model_done
+
     def _prefetch_chunk(self, prefetch: PrefetchManager, idxs: List[int]) -> None:
         """Prefetch a chunk of inputs (for use in pipelined prefetch)."""
         prefetch.fetch_chunk(idxs, self.spatials, self.temporal)
@@ -448,6 +460,8 @@ class BatchExporter:
             resolved_sensor=self.resolved_sensor,
             model_type=self.model_type,
             config=self.config,
+            fetch_fn=self.fetch_fn,
+            inspect_fn=self.inspect_fn,
         )
         clone.sensor_by_key = src.sensor_by_key
         clone.fetch_sensor_by_key = src.fetch_sensor_by_key
@@ -511,6 +525,8 @@ class BatchExporter:
                         config=per_item_cfg,
                         provider_factory=self.provider_factory,
                         model_progress_cb=(None if use_batch else model_progress_cb),
+                        fetch_fn=self.fetch_fn,
+                        inspect_fn=self.inspect_fn,
                     )
                     if use_batch:
                         self._inject_precomputed_embeddings(
@@ -553,62 +569,94 @@ class BatchExporter:
                     )
                     write_futs.append((i, fut))
                 else:
-                    try:
-                        mani = write_one_payload(
-                            out_path=out_file,
-                            arrays=arrays,
-                            manifest=manifest,
-                            save_manifest=cfg.save_manifest,
-                            fmt=cfg.format,
-                            max_retries=cfg.max_retries,
-                            retry_backoff_s=cfg.retry_backoff_s,
-                        )
-                    except Exception as e:
-                        if not cfg.continue_on_error:
-                            raise
-                        mani = point_failure_manifest(
-                            point_index=i,
-                            spatial=self.spatials[i],
-                            temporal=self.temporal,
-                            output=self.output,
-                            backend=self.backend,
-                            device=self.device,
-                            stage="write",
-                            error=e,
-                        )
+                    mani = self._write_payload_sync(
+                        point_index=i,
+                        out_path=out_file,
+                        arrays=arrays,
+                        manifest=manifest,
+                    )
                     manifests.append(mani)
                     progress.update(1)
 
             # Collect async write results
             if writer_ex is not None:
                 try:
-                    fut_map = {fut: i for (i, fut) in write_futs}
-                    for fut in as_completed(fut_map):
-                        i = fut_map[fut]
-                        try:
-                            manifests.append(fut.result())
-                        except Exception as e:
-                            if not cfg.continue_on_error:
-                                raise
-                            manifests.append(
-                                point_failure_manifest(
-                                    point_index=i,
-                                    spatial=self.spatials[i],
-                                    temporal=self.temporal,
-                                    output=self.output,
-                                    backend=self.backend,
-                                    device=self.device,
-                                    stage="write",
-                                    error=e,
-                                )
-                            )
-                        finally:
-                            progress.update(1)
+                    self._collect_async_results(
+                        write_futs=write_futs,
+                        manifests=manifests,
+                        progress=progress,
+                    )
                 finally:
                     writer_ex.shutdown(wait=True)
         finally:
             if writer_ex is not None and not writer_ex._shutdown:
                 writer_ex.shutdown(wait=True)
+
+    def _write_payload_sync(
+        self,
+        *,
+        point_index: int,
+        out_path: str,
+        arrays: Dict[str, np.ndarray],
+        manifest: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Write one payload synchronously, converting write errors as configured."""
+        cfg = self.config
+        try:
+            return write_one_payload(
+                out_path=out_path,
+                arrays=arrays,
+                manifest=manifest,
+                save_manifest=cfg.save_manifest,
+                fmt=cfg.format,
+                max_retries=cfg.max_retries,
+                retry_backoff_s=cfg.retry_backoff_s,
+            )
+        except Exception as e:
+            if not cfg.continue_on_error:
+                raise
+            return point_failure_manifest(
+                point_index=point_index,
+                spatial=self.spatials[point_index],
+                temporal=self.temporal,
+                output=self.output,
+                backend=self.backend,
+                device=self.device,
+                stage="write",
+                error=e,
+            )
+
+    def _collect_async_results(
+        self,
+        *,
+        write_futs: List[Tuple[int, Any]],
+        manifests: List[Dict[str, Any]],
+        progress: Any,
+    ) -> None:
+        """Collect async write results and translate failures into manifests."""
+        cfg = self.config
+        fut_map = {fut: i for (i, fut) in write_futs}
+        for fut in as_completed(fut_map):
+            i = fut_map[fut]
+            try:
+                manifests.append(fut.result())
+            except Exception as e:
+                if not cfg.continue_on_error:
+                    raise
+                manifests.append(
+                    point_failure_manifest(
+                        point_index=i,
+                        spatial=self.spatials[i],
+                        temporal=self.temporal,
+                        output=self.output,
+                        backend=self.backend,
+                        device=self.device,
+                        stage="write",
+                        error=e,
+                    )
+                )
+            finally:
+                progress.update(1)
 
     # ── static helpers ─────────────────────────────────────────────
 
@@ -679,33 +727,13 @@ class BatchExporter:
         # Recompute summary
         all_models = manifest.get("models") or []
         n_failed = sum(
-            1 for x in all_models if isinstance(x, dict) and x.get("status") == "failed"
+            1
+            for x in all_models
+            if isinstance(x, dict) and str(x.get("status", "")).lower() == "failed"
         )
-        if not all_models:
-            manifest["status"] = "ok"
-            manifest["summary"] = {
-                "total_models": 0,
-                "failed_models": 0,
-                "ok_models": 0,
-            }
-        elif n_failed == 0:
-            manifest["status"] = "ok"
-            manifest["summary"] = {
-                "total_models": len(all_models),
-                "failed_models": 0,
-                "ok_models": len(all_models),
-            }
-        elif n_failed < len(all_models):
-            manifest["status"] = "partial"
-            manifest["summary"] = {
-                "total_models": len(all_models),
-                "failed_models": n_failed,
-                "ok_models": len(all_models) - n_failed,
-            }
-        else:
-            manifest["status"] = "failed"
-            manifest["summary"] = {
-                "total_models": len(all_models),
-                "failed_models": n_failed,
-                "ok_models": 0,
-            }
+        manifest["status"] = summarize_status(all_models)
+        manifest["summary"] = {
+            "total_models": len(all_models),
+            "failed_models": n_failed,
+            "ok_models": len(all_models) - n_failed,
+        }

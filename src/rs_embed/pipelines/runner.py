@@ -2,31 +2,12 @@
 
 from __future__ import annotations
 
-import time
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Dict, List, Optional, TypeVar
 
+from ..tools.runtime import run_with_retry
+
 _T = TypeVar("_T")
-
-
-def run_with_retry(
-    fn: Callable[[], _T],
-    *,
-    retries: int = 0,
-    backoff_s: float = 0.0,
-) -> _T:
-    """Run *fn* with bounded retries and optional exponential backoff."""
-    tries = max(0, int(retries))
-    backoff = max(0.0, float(backoff_s))
-    last_err: Optional[Exception] = None
-    for attempt in range(tries + 1):
-        try:
-            return fn()
-        except Exception as exc:
-            last_err = exc
-            if attempt < tries and backoff > 0:
-                time.sleep(backoff * (2**attempt))
-    raise last_err  # type: ignore[misc]
 
 
 class ParallelRunner:

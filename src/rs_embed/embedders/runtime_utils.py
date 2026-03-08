@@ -1,3 +1,5 @@
+"""Provider runtime helpers for backend choice, provider fetch, and device detection."""
+
 from __future__ import annotations
 
 import os

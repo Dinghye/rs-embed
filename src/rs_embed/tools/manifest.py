@@ -124,3 +124,23 @@ def point_failure_manifest(
         "temporal": _jsonable(temporal),
         "output": _jsonable(output),
     }
+
+
+def summarize_status(entries: List[Dict[str, Any]]) -> str:
+    """Summarize a list of model/status entries into ok/partial/failed."""
+    if not entries:
+        return "ok"
+    n_failed = sum(
+        1
+        for item in entries
+        if isinstance(item, dict) and str(item.get("status", "")).lower() == "failed"
+    )
+    has_partial = any(
+        isinstance(item, dict) and str(item.get("status", "")).lower() == "partial"
+        for item in entries
+    )
+    if n_failed == 0 and not has_partial:
+        return "ok"
+    if n_failed < len(entries):
+        return "partial"
+    return "failed"
