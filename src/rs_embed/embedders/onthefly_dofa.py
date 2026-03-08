@@ -1,4 +1,3 @@
-# src/rs_embed/embedders/onthefly_dofa.py
 # Implementation based on:
 # Neural Plasticity-Inspired Foundation Model for Observing the Earth Across Optical and SAR Modalities
 # arXiv 2024

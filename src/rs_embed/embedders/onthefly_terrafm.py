@@ -1,4 +1,3 @@
-# src/rs_embed/embedders/onthefly_terrafm.py
 # Implementation based on:
 # TerraFM: A Scalable Foundation Model for Unified Multisensor Earth Observation
 # ICLR 2026
