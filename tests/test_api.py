@@ -658,7 +658,7 @@ def test_run_embedding_request_prefetched_path_normalizes_once(monkeypatch):
     monkeypatch.setattr(
         rt,
         "fetch_api_side_inputs",
-        lambda *, spatials, temporal, ctx: [fake_input],
+        lambda *, spatials, temporal, **_: [fake_input],
     )
 
     emb = api.get_embedding(

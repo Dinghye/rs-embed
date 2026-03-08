@@ -43,13 +43,17 @@ from .tools.normalization import (
     normalize_backend_name as _normalize_backend_name,
     normalize_device_name as _normalize_device_name,
     normalize_model_name as _normalize_model_name,
+    # Re-exported so `from rs_embed.api import ...` in tests/downstream still works.
+    _default_provider_backend_for_api,
+    _probe_model_describe,
+    _resolve_embedding_api_backend,
 )
 from .tools.checkpoint_utils import (
     is_incomplete_combined_manifest as _is_incomplete_combined_manifest,
 )
 from .tools.runtime import (
     _EmbeddingRequestContext,
-    _prepare_embedding_request_context as _prepare_embedding_request_context_shared,
+    _prepare_embedding_request_context,
     run_embedding_request as _run_embedding_request_shared,
 )
 from .core.validation import (
@@ -76,95 +80,16 @@ from .core.specs import (
 )
 from .core.types import ExportConfig, ExportLayout, ExportTarget, ModelConfig
 from .embedders.catalog import MODEL_ALIASES, MODEL_SPECS
-from .providers import ProviderBase, get_provider, has_provider, list_providers
+from .providers import ProviderBase
 
 # Backward-compatibility hook: tests/downstream may monkeypatch api.GEEProvider.
 GEEProvider: Optional[Callable[..., ProviderBase]] = None
 
 
-def _create_default_gee_provider() -> ProviderBase:
-    # If tests/downstream code set api.GEEProvider, use it directly.
-    cls = GEEProvider
-    if cls is None:
-        try:
-            from .providers import GEEProvider as _GEEProvider  # type: ignore
-
-            cls = _GEEProvider
-        except Exception:
-            cls = None
-
-    if cls is not None:
-        try:
-            return cls(auto_auth=True)
-        except TypeError:
-            return cls()
-
-    return get_provider("gee", auto_auth=True)
-
-
 def _provider_factory_for_backend(backend: str) -> Optional[Callable[[], ProviderBase]]:
-    b = _normalize_backend_name(backend)
-    if b == "auto":
-        b = _default_provider_backend_for_api()
-    if not has_provider(b):
-        return None
-    if b == "gee":
-        return _create_default_gee_provider
-    return lambda: get_provider(b)
-
-
-def _probe_model_describe(model_n: str) -> Dict[str, Any]:
-    """Best-effort model describe() probe used for API-level routing decisions."""
-    try:
-        cls = get_embedder_cls(model_n)
-        emb = cls()
-        desc = emb.describe() or {}
-        return desc if isinstance(desc, dict) else {}
-    except Exception:
-        return {}
-
-
-def _default_provider_backend_for_api() -> str:
-    providers = [str(p).strip().lower() for p in list_providers()]
-    if "gee" in providers:
-        return "gee"
-    if providers:
-        return providers[0]
-    return "gee"
-
-
-def _resolve_embedding_api_backend(model_n: str, backend_n: str) -> str:
-    """Normalize backend semantics for precomputed models."""
-    desc = _probe_model_describe(model_n)
-    if str(desc.get("type", "")).strip().lower() != "precomputed":
-        return backend_n
-
-    backends = desc.get("backend")
-    if not isinstance(backends, list):
-        return backend_n
-    allowed = [str(b).strip().lower() for b in backends if str(b).strip()]
-    if not allowed:
-        return backend_n
-
-    provider_allowed = ("provider" in allowed) or ("gee" in allowed)
-    if backend_n in allowed:
-        if backend_n == "auto" and provider_allowed:
-            return _default_provider_backend_for_api()
-        return backend_n
-    if backend_n == "local" and "auto" in allowed and not provider_allowed:
-        return "auto"
-    if has_provider(backend_n) and provider_allowed:
-        return backend_n
-
-    if backend_n in {"gee", "auto"}:
-        if "auto" in allowed:
-            return "auto"
-        if "local" in allowed:
-            return "local"
-        if provider_allowed:
-            return _default_provider_backend_for_api()
-
-    return backend_n
+    """Thin delegate that threads the api.GEEProvider monkeypatch hook through."""
+    from .tools.runtime import provider_factory_for_backend
+    return provider_factory_for_backend(backend, gee_provider_cls=GEEProvider)
 
 
 # ---------------------------------------------------------------------------
@@ -264,27 +189,6 @@ def _validate_spatials(
         raise ModelError("spatials must be a non-empty List[SpatialSpec].")
     for spatial in spatials:
         _validate_specs(spatial=spatial, temporal=temporal, output=output)
-
-
-def _prepare_embedding_request_context(
-    *,
-    model: str,
-    temporal: Optional[TemporalSpec],
-    sensor: Optional[SensorSpec],
-    output: OutputSpec,
-    backend: str,
-    device: str,
-    input_prep: Optional[InputPrepSpec | str],
-) -> _EmbeddingRequestContext:
-    return _prepare_embedding_request_context_shared(
-        model=model,
-        temporal=temporal,
-        sensor=sensor,
-        output=output,
-        backend=backend,
-        device=device,
-        input_prep=input_prep,
-    )
 
 
 def _run_embedding_request(
