@@ -35,6 +35,11 @@ class EmbedderBase:
         -------
         dict[str, Any]
             Metadata describing supported backends, outputs, and temporal hints.
+
+        Raises
+        ------
+        NotImplementedError
+            Must be implemented by concrete embedder subclasses.
         """
         raise NotImplementedError
 
@@ -72,6 +77,11 @@ class EmbedderBase:
         -------
         Embedding
             Embedding payload and metadata.
+
+        Raises
+        ------
+        NotImplementedError
+            Must be implemented by concrete embedder subclasses.
         """
 
         raise NotImplementedError

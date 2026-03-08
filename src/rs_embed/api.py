@@ -502,6 +502,12 @@ def get_embedding(
     Embedding
         Normalized embedding output for the requested location.
 
+    Raises
+    ------
+    ModelError
+        If inputs/specs are invalid or requested model/backend configuration is
+        unsupported.
+
     Notes
     -----
     This function reuses a cached embedder instance when possible to avoid
@@ -562,6 +568,12 @@ def get_embeddings_batch(
     -------
     list[Embedding]
         Embeddings in the same order as ``spatials``.
+
+    Raises
+    ------
+    ModelError
+        If inputs/specs are invalid or requested model/backend configuration is
+        unsupported.
     """
     _validate_spatials(spatials=spatials, temporal=temporal, output=output)
     ctx = _prepare_embedding_request_context(

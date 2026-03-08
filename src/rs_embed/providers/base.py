@@ -13,7 +13,13 @@ class ProviderBase:
     name: str = "base"
 
     def ensure_ready(self) -> None:
-        """Initialize provider dependencies or authenticate remote services."""
+        """Initialize provider dependencies or authenticate remote services.
+
+        Raises
+        ------
+        NotImplementedError
+            Must be implemented by concrete provider subclasses.
+        """
 
         raise NotImplementedError
 
@@ -29,6 +35,11 @@ class ProviderBase:
         -------
         Any
             Provider-native geometry/region representation.
+
+        Raises
+        ------
+        NotImplementedError
+            Must be implemented by concrete provider subclasses.
         """
 
         raise NotImplementedError
@@ -55,6 +66,11 @@ class ProviderBase:
         -------
         Any
             Provider-native image/collection object.
+
+        Raises
+        ------
+        NotImplementedError
+            Must be implemented by concrete provider subclasses.
         """
 
         raise NotImplementedError
@@ -90,6 +106,11 @@ class ProviderBase:
         -------
         np.ndarray
             Array with shape ``[C,H,W]``.
+
+        Raises
+        ------
+        NotImplementedError
+            Must be implemented by concrete provider subclasses.
         """
 
         raise NotImplementedError
