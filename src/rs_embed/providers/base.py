@@ -8,12 +8,40 @@ from ..core.specs import SensorSpec, SpatialSpec, TemporalSpec
 
 
 class ProviderBase:
+    """Base interface for provider-specific data access implementations."""
+
     name: str = "base"
 
     def ensure_ready(self) -> None:
+        """Initialize provider dependencies or authenticate remote services.
+
+        Raises
+        ------
+        NotImplementedError
+            Must be implemented by concrete provider subclasses.
+        """
+
         raise NotImplementedError
 
     def get_region(self, spatial: SpatialSpec) -> Any:
+        """Convert a spatial spec into a provider-native region object.
+
+        Parameters
+        ----------
+        spatial : SpatialSpec
+            Spatial request definition.
+
+        Returns
+        -------
+        Any
+            Provider-native geometry/region representation.
+
+        Raises
+        ------
+        NotImplementedError
+            Must be implemented by concrete provider subclasses.
+        """
+
         raise NotImplementedError
 
     def build_image(
@@ -23,6 +51,28 @@ class ProviderBase:
         temporal: Optional[TemporalSpec],
         region: Optional[Any] = None,
     ) -> Any:
+        """Build a provider-native image object for a sensor/time request.
+
+        Parameters
+        ----------
+        sensor : SensorSpec
+            Sensor/collection and band configuration.
+        temporal : TemporalSpec or None
+            Optional temporal filter.
+        region : Any or None
+            Optional provider-native region constraint.
+
+        Returns
+        -------
+        Any
+            Provider-native image/collection object.
+
+        Raises
+        ------
+        NotImplementedError
+            Must be implemented by concrete provider subclasses.
+        """
+
         raise NotImplementedError
 
     def fetch_array_chw(
@@ -35,6 +85,34 @@ class ProviderBase:
         fill_value: float,
         collection: Optional[str] = None,
     ) -> np.ndarray:
+        """Fetch raster pixels as a ``[C,H,W]`` float array.
+
+        Parameters
+        ----------
+        image : Any
+            Provider-native image object.
+        bands : tuple[str, ...]
+            Band names and order to fetch.
+        region : Any
+            Provider-native region object.
+        scale_m : int
+            Pixel scale in meters.
+        fill_value : float
+            Fill value for missing pixels.
+        collection : str or None
+            Optional collection name for provider-specific behavior.
+
+        Returns
+        -------
+        np.ndarray
+            Array with shape ``[C,H,W]``.
+
+        Raises
+        ------
+        NotImplementedError
+            Must be implemented by concrete provider subclasses.
+        """
+
         raise NotImplementedError
 
     def normalize_bands(
@@ -43,7 +121,20 @@ class ProviderBase:
         collection: str,
         bands: Tuple[str, ...],
     ) -> Tuple[str, ...]:
-        """Best-effort band normalization for provider-specific aliases."""
+        """Normalize band aliases to provider-preferred names.
+
+        Parameters
+        ----------
+        collection : str
+            Collection identifier.
+        bands : tuple[str, ...]
+            User requested band names.
+
+        Returns
+        -------
+        tuple[str, ...]
+            Normalized band names in the same order.
+        """
         return tuple(str(b) for b in bands)
 
     def fetch_s1_vvvh_raw_chw(
@@ -57,6 +148,35 @@ class ProviderBase:
         composite: str = "median",
         fill_value: float = 0.0,
     ) -> np.ndarray:
+        """Fetch Sentinel-1 VV/VH patch as ``[C,H,W]``.
+
+        Parameters
+        ----------
+        spatial : SpatialSpec
+            Spatial request definition.
+        temporal : TemporalSpec
+            Temporal range/year request.
+        scale_m : int
+            Pixel scale in meters.
+        orbit : str or None
+            Optional orbit filter.
+        use_float_linear : bool
+            If ``True``, convert to linear float units when supported.
+        composite : str
+            Temporal compositing strategy.
+        fill_value : float
+            Fill value for missing pixels.
+
+        Returns
+        -------
+        np.ndarray
+            Array with shape ``[C,H,W]``.
+
+        Raises
+        ------
+        ProviderError
+            If this provider does not support Sentinel-1 VV/VH fetch operations.
+        """
         raise ProviderError(
             f"Provider '{self.name}' does not implement Sentinel-1 VV/VH fetch support."
         )
@@ -74,6 +194,39 @@ class ProviderBase:
         composite: str = "median",
         fill_value: float = 0.0,
     ) -> np.ndarray:
+        """Fetch multi-frame collection patch as ``[T,C,H,W]``.
+
+        Parameters
+        ----------
+        spatial : SpatialSpec
+            Spatial request definition.
+        temporal : TemporalSpec
+            Temporal range/year request.
+        collection : str
+            Collection identifier.
+        bands : Sequence[str]
+            Band names and order to fetch.
+        n_frames : int
+            Number of temporal frames to sample.
+        scale_m : int
+            Pixel scale in meters.
+        cloudy_pct : int or None
+            Optional cloud threshold.
+        composite : str
+            Temporal compositing strategy.
+        fill_value : float
+            Fill value for missing pixels.
+
+        Returns
+        -------
+        np.ndarray
+            Array with shape ``[T,C,H,W]``.
+
+        Raises
+        ------
+        ProviderError
+            If this provider does not support multi-frame collection fetch.
+        """
         raise ProviderError(
             f"Provider '{self.name}' does not implement multi-frame collection fetch support."
         )
@@ -88,6 +241,33 @@ class ProviderBase:
         fill_value: float = 0.0,
         composite: str = "median",
     ) -> Tuple[np.ndarray, Tuple[str, ...]]:
+        """Fetch a collection patch containing all available bands.
+
+        Parameters
+        ----------
+        spatial : SpatialSpec
+            Spatial request definition.
+        temporal : TemporalSpec or None
+            Optional temporal filter.
+        collection : str
+            Collection identifier.
+        scale_m : int
+            Pixel scale in meters.
+        fill_value : float
+            Fill value for missing pixels.
+        composite : str
+            Temporal compositing strategy.
+
+        Returns
+        -------
+        tuple[np.ndarray, tuple[str, ...]]
+            ``(array_chw, band_names)`` tuple.
+
+        Raises
+        ------
+        ProviderError
+            If the provider does not implement all-band collection patch fetch support.
+        """
         raise ProviderError(
             f"Provider '{self.name}' does not implement all-band collection patch fetch support."
         )
@@ -100,6 +280,29 @@ class ProviderBase:
         sensor: SensorSpec,
         to_float_image: bool = False,
     ) -> np.ndarray:
+        """Fetch a sensor patch and validate shape/channel count.
+
+        Parameters
+        ----------
+        spatial : SpatialSpec
+            Spatial request definition.
+        temporal : TemporalSpec or None
+            Optional temporal filter.
+        sensor : SensorSpec
+            Sensor/collection and expected band configuration.
+        to_float_image : bool
+            If ``True``, request float image conversion when available.
+
+        Returns
+        -------
+        np.ndarray
+            Sanitized float32 array with shape ``[C,H,W]``.
+
+        Raises
+        ------
+        ProviderError
+            If returned array is not CHW or channel count mismatches sensor bands.
+        """
         from ..providers.gee_utils import fetch_provider_patch_raw
 
         x = fetch_provider_patch_raw(

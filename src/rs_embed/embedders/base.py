@@ -9,6 +9,12 @@ from ..providers.base import ProviderBase
 
 
 class EmbedderBase:
+    """Base interface for all embedder implementations.
+
+    Subclasses implement model-specific inference while keeping a common call
+    signature used by higher-level API and pipeline code.
+    """
+
     model_name: str = "base"
     _allow_auto_backend: bool = True
 
@@ -23,7 +29,18 @@ class EmbedderBase:
         )
 
     def describe(self) -> Dict[str, Any]:
-        """Return model/product capabilities and requirements."""
+        """Return model capabilities and input/output requirements.
+
+        Returns
+        -------
+        dict[str, Any]
+            Metadata describing supported backends, outputs, and temporal hints.
+
+        Raises
+        ------
+        NotImplementedError
+            Must be implemented by concrete embedder subclasses.
+        """
         raise NotImplementedError
 
     def get_embedding(
@@ -37,6 +54,35 @@ class EmbedderBase:
         device: str = "auto",
         input_chw: Optional[np.ndarray] = None,
     ) -> Embedding:
+        """Compute a single embedding.
+
+        Parameters
+        ----------
+        spatial : SpatialSpec
+            Spatial request definition.
+        temporal : TemporalSpec or None
+            Optional temporal filter.
+        sensor : SensorSpec or None
+            Optional sensor override for provider-backed models.
+        output : OutputSpec
+            Requested output layout.
+        backend : str
+            Backend/provider selector.
+        device : str
+            Target inference device.
+        input_chw : np.ndarray or None
+            Optional prefetched CHW input to bypass provider fetch.
+
+        Returns
+        -------
+        Embedding
+            Embedding payload and metadata.
+
+        Raises
+        ------
+        NotImplementedError
+            Must be implemented by concrete embedder subclasses.
+        """
 
         raise NotImplementedError
 
@@ -53,6 +99,26 @@ class EmbedderBase:
         """Default batch implementation: loop over spatials.
 
         Embedders that can do true batching (e.g. torch models) should override.
+
+        Parameters
+        ----------
+        spatials : list[SpatialSpec]
+            Spatial requests to process.
+        temporal : TemporalSpec or None
+            Optional temporal filter applied to all inputs.
+        sensor : SensorSpec or None
+            Optional sensor override.
+        output : OutputSpec
+            Requested output layout.
+        backend : str
+            Backend/provider selector.
+        device : str
+            Target inference device.
+
+        Returns
+        -------
+        list[Embedding]
+            Embeddings in the same order as ``spatials``.
         """
         return [
             self.get_embedding(
@@ -82,6 +148,33 @@ class EmbedderBase:
         Default implementation keeps existing behavior by looping through
         get_embedding(..., input_chw=...).
         Embedders that can do true batched model forward should override.
+
+        Parameters
+        ----------
+        spatials : list[SpatialSpec]
+            Spatial requests aligned with ``input_chws``.
+        input_chws : list[np.ndarray]
+            Prefetched CHW arrays, one per spatial.
+        temporal : TemporalSpec or None
+            Optional temporal filter.
+        sensor : SensorSpec or None
+            Optional sensor override.
+        output : OutputSpec
+            Requested output layout.
+        backend : str
+            Backend/provider selector.
+        device : str
+            Target inference device.
+
+        Returns
+        -------
+        list[Embedding]
+            Embeddings in the same order as inputs.
+
+        Raises
+        ------
+        ValueError
+            If ``spatials`` and ``input_chws`` lengths differ.
         """
         if len(spatials) != len(input_chws):
             raise ValueError(

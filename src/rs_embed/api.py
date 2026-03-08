@@ -447,7 +447,18 @@ def _run_embedding_request(
 
 
 def list_models(*, include_aliases: bool = False) -> List[str]:
-    """Return the stable model catalog, independent of runtime lazy-load state."""
+    """Return the stable model catalog, independent of runtime lazy-load state.
+
+    Parameters
+    ----------
+    include_aliases : bool
+        If ``True``, include alias names in addition to canonical ids.
+
+    Returns
+    -------
+    list[str]
+        Sorted model names available in the catalog.
+    """
     model_ids = set(MODEL_SPECS.keys())
     if include_aliases:
         model_ids.update(MODEL_ALIASES.keys())
@@ -466,6 +477,38 @@ def get_embedding(
     input_prep: Optional[InputPrepSpec | str] = "resize",
 ) -> Embedding:
     """Compute a single embedding.
+
+    Parameters
+    ----------
+    model : str
+        Model identifier or alias.
+    spatial : SpatialSpec
+        Spatial location/extent to embed.
+    temporal : TemporalSpec or None
+        Optional temporal filter.
+    sensor : SensorSpec or None
+        Optional sensor override.
+    output : OutputSpec
+        Output representation policy.
+    backend : str
+        Backend/provider selector (for example ``"auto"`` or ``"gee"``).
+    device : str
+        Target inference device.
+    input_prep : InputPrepSpec or str or None
+        Optional API-side input preprocessing policy.
+
+    Returns
+    -------
+    Embedding
+        Normalized embedding output for the requested location.
+
+    Raises
+    ------
+    ModelError
+        If inputs/specs are invalid or requested model/backend configuration is
+        unsupported.
+    SpecError
+        If spatial or temporal specifications fail validation.
 
     Notes
     -----
@@ -502,7 +545,40 @@ def get_embeddings_batch(
     device: str = "auto",
     input_prep: Optional[InputPrepSpec | str] = "resize",
 ) -> List[Embedding]:
-    """Compute embeddings for multiple SpatialSpecs using a shared embedder instance."""
+    """Compute embeddings for multiple spatials using a shared embedder instance.
+
+    Parameters
+    ----------
+    model : str
+        Model identifier or alias.
+    spatials : list[SpatialSpec]
+        Spatial requests to embed.
+    temporal : TemporalSpec or None
+        Optional temporal filter.
+    sensor : SensorSpec or None
+        Optional sensor override.
+    output : OutputSpec
+        Output representation policy.
+    backend : str
+        Backend/provider selector.
+    device : str
+        Target inference device.
+    input_prep : InputPrepSpec or str or None
+        Optional API-side input preprocessing policy.
+
+    Returns
+    -------
+    list[Embedding]
+        Embeddings in the same order as ``spatials``.
+
+    Raises
+    ------
+    ModelError
+        If inputs/specs are invalid or requested model/backend configuration is
+        unsupported.
+    SpecError
+        If spatial or temporal specifications fail validation.
+    """
     _validate_spatials(spatials=spatials, temporal=temporal, output=output)
     ctx = _prepare_embedding_request_context(
         model=model,
@@ -563,6 +639,81 @@ def export_batch(
 
     This is the recommended high-level entrypoint for batch export.
     Delegates to :class:`~rs_embed.pipelines.exporter.BatchExporter`.
+
+    Parameters
+    ----------
+    spatials : list[SpatialSpec]
+        Spatial requests to export.
+    temporal : TemporalSpec or None
+        Optional temporal filter applied to all spatial requests.
+    models : list[str]
+        Model identifiers to run.
+    out : str or None
+        Convenience output path hint. Combined layout when file-like, per-item
+        layout when directory-like.
+    layout : str or None
+        Explicit layout override (``"combined"`` or ``"per_item"``).
+    out_dir : str or None
+        Directory path for per-item exports.
+    out_path : str or None
+        File path for combined exports.
+    names : list[str] or None
+        Optional names aligned with ``spatials`` for per-item outputs.
+    backend : str
+        Backend/provider selector.
+    device : str
+        Target inference device.
+    output : OutputSpec
+        Embedding output representation policy.
+    sensor : SensorSpec or None
+        Default sensor for all models unless overridden.
+    per_model_sensors : dict[str, SensorSpec] or None
+        Per-model sensor overrides keyed by model name.
+    format : str
+        Output serialization format.
+    save_inputs : bool
+        Whether to persist fetched/model input arrays.
+    save_embeddings : bool
+        Whether to persist embeddings.
+    save_manifest : bool
+        Whether to write export manifest metadata.
+    fail_on_bad_input : bool
+        If ``True``, treat invalid inputs as hard failures.
+    chunk_size : int
+        Spatial chunk size for scheduling work.
+    infer_batch_size : int or None
+        Optional explicit model inference batch size.
+    num_workers : int
+        Number of preprocessing/inference workers.
+    continue_on_error : bool
+        If ``True``, continue processing after per-item failures.
+    max_retries : int
+        Retry count for retryable operations.
+    retry_backoff_s : float
+        Backoff delay in seconds between retries.
+    async_write : bool
+        If ``True``, enable asynchronous output writing.
+    writer_workers : int
+        Number of writer workers when ``async_write`` is enabled.
+    resume : bool
+        If ``True``, attempt to resume from prior export state.
+    show_progress : bool
+        Whether to display progress bars.
+    input_prep : InputPrepSpec or str or None
+        Optional API-side input preprocessing policy.
+
+    Returns
+    -------
+    Any
+        Export result object returned by :class:`BatchExporter`.
+
+    Raises
+    ------
+    ModelError
+        If arguments are invalid or unsupported (for example empty inputs,
+        unsupported format, or incompatible model/backend settings).
+    SpecError
+        If spatial or temporal specifications fail validation.
     """
     from .pipelines.exporter import BatchExporter
 
