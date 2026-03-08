@@ -182,6 +182,16 @@ def _split_bbox_for_recursive_fetch(
     return (north, south, "y")
 
 
+def _flip_sample_tile_y(arr: np.ndarray) -> np.ndarray:
+    """Normalize a fetched tile to north-up row order once at the leaf fetch."""
+    a = np.asarray(arr, dtype=np.float32)
+    if a.ndim < 2:
+        raise ModelError(
+            f"Expected fetched tile with spatial last2 dims, got shape={a.shape}"
+        )
+    return np.flip(a, axis=a.ndim - 2).astype(np.float32, copy=False)
+
+
 def _fetch_provider_array_chw_with_bbox_fallback(
     provider: ProviderBase,
     *,
@@ -203,7 +213,7 @@ def _fetch_provider_array_chw_with_bbox_fallback(
             fill_value=float(fill_value),
             collection=collection,
         )
-        return np.asarray(arr, dtype=np.float32)
+        return _flip_sample_tile_y(np.asarray(arr, dtype=np.float32))#_flip_sample_tile_y(np.asarray(arr, dtype=np.float32))
     except Exception as e:
         if not (
             _looks_like_gee_sample_too_many_pixels(e)
@@ -263,7 +273,12 @@ def _stitch_bbox_split_arrays(
     scale_m: int,
     fill_value: float,
 ) -> np.ndarray:
-    """Stitch two bbox-split arrays along a spatial axis."""
+    """Stitch two bbox-split arrays along a spatial axis.
+
+    The recursive splitter returns children in spatial order:
+    - ``axis="x"``: west, east
+    - ``axis="y"``: north, south
+    """
     arr_a = np.asarray(arr_a, dtype=np.float32)
     arr_b = np.asarray(arr_b, dtype=np.float32)
     if arr_a.ndim < 2 or arr_b.ndim < 2:
@@ -285,10 +300,7 @@ def _stitch_bbox_split_arrays(
             f"Non-split spatial dim mismatch while stitching bbox tiles: {arr_a.shape} vs {arr_b.shape}"
         )
 
-    if axis == "y":
-        arr_a = np.flip(arr_a, axis=arr_a.ndim - 2)
-        arr_b = np.flip(arr_b, axis=arr_b.ndim - 2)
-    elif axis != "x":
+    if axis not in {"x", "y"}:
         raise ModelError(f"Invalid bbox fallback stitch axis={axis!r}")
 
     target_h, target_w = _bbox_span_pixels_estimate(spatial_bbox, scale_m=int(scale_m))

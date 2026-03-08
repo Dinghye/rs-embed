@@ -354,7 +354,7 @@ def show_s1_vvvh_from_inspect(
     p_high=98.0,
     figsize=(10, 4),
     print_stats=True,
-    flipud: bool = True,
+    flipud: bool = False,
 ):
     """Visualize Sentinel-1 VV/VH from inspect_gee_patch(..., return_array=True) output."""
     x_s1 = (inspect_out or {}).get("array_chw")
@@ -418,7 +418,7 @@ def plot_histogram_from_report(report: dict, band_index: int = 0, figsize=(6, 3)
 def show_quicklook_artifact(
     artifacts: dict,
     *,
-    flipud: bool = True,
+    flipud: bool = False,
     figsize=(5, 5),
     title: str = "quicklook_rgb",
 ):

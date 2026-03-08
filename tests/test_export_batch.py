@@ -14,6 +14,24 @@ def clean_registry():
     registry._REGISTRY.clear()
 
 
+@pytest.fixture(autouse=True)
+def disable_real_progress(monkeypatch):
+    import rs_embed.api as api
+
+    class _NoOpProgress:
+        def update(self, n: int = 1):
+            _ = n
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(
+        api,
+        "_create_progress",
+        lambda *, enabled, total, desc, unit="item": _NoOpProgress(),
+    )
+
+
 def test_export_batch_prefetch_dedup_across_models(tmp_path, monkeypatch):
     # Register two on-the-fly models that require input_chw to be provided.
     class DummyA:

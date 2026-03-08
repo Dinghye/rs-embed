@@ -1,7 +1,10 @@
 import numpy as np
 
 from rs_embed.core.specs import BBox, SensorSpec
-from rs_embed.providers.gee_utils import fetch_provider_patch_raw
+from rs_embed.providers.gee_utils import (
+    _stitch_bbox_split_arrays,
+    fetch_provider_patch_raw,
+)
 from rs_embed.providers.base import ProviderBase
 
 
@@ -35,10 +38,11 @@ class _FakeBBoxSplitProvider(ProviderBase):
         h, w, y0, x0 = self._dims_and_offsets(bbox)
         if h * w > self.max_pixels:
             raise RuntimeError(
-                "Image.sampleRectangle: Too many pixels in sample; must be <= 8. Got "
+                "Image.sampleRectangle: Too many pixels in sample; must be <= "
+                f"{self.max_pixels}. Got "
                 f"{h * w}."
             )
-        yy = np.arange(y0, y0 + h, dtype=np.float32)[:, None]
+        yy = np.arange(y0 + h - 1, y0 - 1, -1, dtype=np.float32)[:, None]
         xx = np.arange(x0, x0 + w, dtype=np.float32)[None, :]
         base = yy * 100.0 + xx
         out = np.stack([base + float(i) * 1000.0 for i in range(len(bands))], axis=0)
@@ -88,7 +92,8 @@ class _FakeBoundaryOverlapProvider(_FakeBBoxSplitProvider):
         h, w, y0, x0 = self._dims_and_offsets(bbox)
         if h * w > self.max_pixels:
             raise RuntimeError(
-                "Image.sampleRectangle: Too many pixels in sample; must be <= 8. Got "
+                "Image.sampleRectangle: Too many pixels in sample; must be <= "
+                f"{self.max_pixels}. Got "
                 f"{h * w}."
             )
 
@@ -100,7 +105,7 @@ class _FakeBoundaryOverlapProvider(_FakeBBoxSplitProvider):
             if x0 + w < self.full_w:
                 w += 1
 
-        yy = np.arange(y0, y0 + h, dtype=np.float32)[:, None]
+        yy = np.arange(y0 + h - 1, y0 - 1, -1, dtype=np.float32)[:, None]
         xx = np.arange(x0, x0 + w, dtype=np.float32)[None, :]
         base = yy * 100.0 + xx
         out = np.stack([base + float(i) * 1000.0 for i in range(len(bands))], axis=0)
@@ -108,7 +113,7 @@ class _FakeBoundaryOverlapProvider(_FakeBBoxSplitProvider):
 
 
 class _FakeVerticalSouthUpProvider(_FakeBBoxSplitProvider):
-    """Force y-splits and return each tile in local south->north row order."""
+    """Force y-splits on south-up tiles."""
 
     def __init__(self):
         super().__init__()
@@ -117,24 +122,19 @@ class _FakeVerticalSouthUpProvider(_FakeBBoxSplitProvider):
         self.full_w = 2
         self.max_pixels = 8  # 12 px full patch -> split; each half 6 px -> success
 
-    def fetch_array_chw(
-        self, *, image, bands, region, scale_m, fill_value, collection=None
-    ):  # noqa: ARG002
-        self.fetch_calls += 1
-        bbox = region
-        assert isinstance(bbox, BBox)
-        h, w, y0, x0 = self._dims_and_offsets(bbox)
-        if h * w > self.max_pixels:
-            raise RuntimeError(
-                "Image.sampleRectangle: Too many pixels in sample; must be <= 8. Got "
-                f"{h * w}."
-            )
-        # Local south-up: top row corresponds to the tile's southern edge.
-        yy = np.arange(y0 + h - 1, y0 - 1, -1, dtype=np.float32)[:, None]
-        xx = np.arange(x0, x0 + w, dtype=np.float32)[None, :]
-        base = yy * 100.0 + xx
-        out = np.stack([base + float(i) * 1000.0 for i in range(len(bands))], axis=0)
-        return out.astype(np.float32)
+
+class _FakeDeepVerticalSouthUpProvider(_FakeBBoxSplitProvider):
+    """Force multiple recursive y-splits on south-up tiles."""
+
+    def __init__(self):
+        super().__init__()
+        # Pick a bbox whose Web Mercator height estimates split cleanly as
+        # 16 -> 8 -> 4 rows at 75 km resolution, matching this fake provider's
+        # linear 16-row grid during recursive y-splits.
+        self.full_bbox = BBox(minlon=0.0, minlat=0.0, maxlon=0.5, maxlat=10.06)
+        self.full_h = 16
+        self.full_w = 1
+        self.max_pixels = 4  # 16 px full patch -> 8 -> 4, requiring 2 y-stitch levels
 
 
 def test_fetch_provider_patch_raw_recursively_splits_bbox_on_gee_pixel_limit():
@@ -161,6 +161,25 @@ def test_fetch_provider_patch_raw_recursively_splits_bbox_on_gee_pixel_limit():
     assert provider.fetch_calls >= 3
 
 
+def test_fetch_provider_patch_raw_flips_single_south_up_tile_before_return():
+    provider = _FakeBBoxSplitProvider()
+    sensor = SensorSpec(
+        collection="FAKE/COLL", bands=("B1",), scale_m=75000, fill_value=0.0
+    )
+    spatial = BBox(minlon=0.0, minlat=0.0, maxlon=2.0, maxlat=1.0)
+
+    arr = fetch_provider_patch_raw(
+        provider,
+        spatial=spatial,
+        temporal=None,
+        sensor=sensor,
+    )
+
+    expected = np.array([[[0, 1, 2], [100, 101, 102]]], dtype=np.float32)
+    assert arr.shape == expected.shape
+    np.testing.assert_allclose(arr, expected)
+
+
 def test_fetch_provider_patch_raw_trims_boundary_overlap_when_stitching():
     provider = _FakeBoundaryOverlapProvider()
     sensor = SensorSpec(
@@ -182,7 +201,7 @@ def test_fetch_provider_patch_raw_trims_boundary_overlap_when_stitching():
     np.testing.assert_allclose(arr, expected)
 
 
-def test_fetch_provider_patch_raw_flips_each_tile_before_y_stitch():
+def test_fetch_provider_patch_raw_flips_south_up_tiles_for_y_stitch():
     provider = _FakeVerticalSouthUpProvider()
     sensor = SensorSpec(
         collection="FAKE/COLL", bands=("B1",), scale_m=75000, fill_value=0.0
@@ -201,3 +220,51 @@ def test_fetch_provider_patch_raw_flips_each_tile_before_y_stitch():
     )
     assert arr.shape == expected.shape
     np.testing.assert_allclose(arr, expected)
+
+
+def test_fetch_provider_patch_raw_flips_south_up_tiles_across_recursive_y_stitch():
+    provider = _FakeDeepVerticalSouthUpProvider()
+    sensor = SensorSpec(
+        collection="FAKE/COLL", bands=("B1",), scale_m=75000, fill_value=0.0
+    )
+
+    arr = fetch_provider_patch_raw(
+        provider,
+        spatial=provider.full_bbox,
+        temporal=None,
+        sensor=sensor,
+    )
+
+    expected = np.arange(provider.full_h, dtype=np.float32).reshape(
+        1, provider.full_h, provider.full_w
+    ) * 100.0
+    assert arr.shape == expected.shape
+    np.testing.assert_allclose(arr, expected)
+
+
+def test_stitch_bbox_split_arrays_keeps_normalized_y_tiles_in_spatial_order():
+    provider = _FakeVerticalSouthUpProvider()
+    arr_a = np.array(
+        [[[0, 1], [100, 101], [200, 201]]],
+        dtype=np.float32,
+    )
+    arr_b = np.array(
+        [[[300, 301], [400, 401], [500, 501]]],
+        dtype=np.float32,
+    )
+
+    out = _stitch_bbox_split_arrays(
+        arr_a=arr_a,
+        arr_b=arr_b,
+        parent_spatial=provider.full_bbox,
+        axis="y",
+        scale_m=75000,
+        fill_value=0.0,
+    )
+
+    expected = np.array(
+        [[[0, 1], [100, 101], [200, 201], [300, 301], [400, 401], [500, 501]]],
+        dtype=np.float32,
+    )
+    assert out.shape == expected.shape
+    np.testing.assert_allclose(out, expected)
