@@ -1,12 +1,25 @@
-"""Public API for rs-embed: get_embedding, get_embeddings_batch, export_batch.
+"""Public API entry points for rs-embed.
 
-Orchestration flow
-------------------
-1. **Validation** – _validate_spatials checks spatial/temporal/output specs.
-2. **Context**    – _prepare_embedding_request_context resolves model, backend,
-   device, sensor, input-prep and returns a frozen _EmbeddingRequestContext.
-3. **Execution**  – _run_embedding_request (single/batch) or BatchExporter.run()
-   (chunked export with prefetch → infer → write pipeline).
+This module is the boundary between user-facing functions and the internal
+pipeline stack:
+
+- API layer: argument normalization and user-friendly defaults.
+- Pipeline layer: batch orchestration (prefetch -> inference -> write).
+- Tools/providers/embedders: low-level execution details.
+
+Flow summary
+------------
+1. Validate and normalize user inputs/specs.
+2. Resolve request context (model/backend/device/sensor/input prep).
+3. Execute single/batch embedding, or delegate batch export to
+    :class:`BatchExporter`.
+
+Backward compatibility
+----------------------
+Some tests and downstream integrations monkeypatch symbols on ``rs_embed.api``.
+For batch export, those hook symbols are mirrored into pipeline module globals
+via ``_sync_export_pipeline_hooks`` so monkeypatch behavior remains stable after
+the pipeline refactor.
 """
 
 from __future__ import annotations
