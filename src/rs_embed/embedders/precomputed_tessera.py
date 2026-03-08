@@ -284,6 +284,7 @@ class TesseraEmbedder(EmbedderBase):
         }
 
     def __init__(self) -> None:
+        super().__init__()
         # Cache GeoTessera instances per cache_dir to avoid repeated index scans.
         self._gt_cache: Dict[str, Any] = {}
 
@@ -316,6 +317,7 @@ class TesseraEmbedder(EmbedderBase):
         output: OutputSpec,
         backend: str,
         device: str = "auto",
+        input_chw: Optional[np.ndarray] = None,
     ) -> Embedding:
         backend_n = str(backend).strip().lower()
         if backend_n == "local":

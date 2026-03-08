@@ -102,6 +102,7 @@ class CopernicusEmbedder(EmbedderBase):
         }
 
     def __init__(self) -> None:
+        super().__init__()
         self._ds_cache: Dict[str, Any] = {}
 
     def _get_dataset(self, *, data_dir: str, download: bool):
@@ -133,6 +134,7 @@ class CopernicusEmbedder(EmbedderBase):
         output: OutputSpec,
         backend: str,
         device: str = "auto",
+        input_chw: Optional[np.ndarray] = None,
     ) -> Embedding:
 
         if temporal is None:
