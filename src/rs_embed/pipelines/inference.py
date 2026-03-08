@@ -1,8 +1,7 @@
-"""Inference engine: encapsulates embedder resolution, batch/single dispatch.
+"""Inference engine for export pipelines.
 
-Absorbs ``_infer_chunk_embeddings_for_per_item`` (api.py, 200 lines),
-``runtime_helpers.py`` (embedder caching, batch detection), and the
-``_ExportFlowOverrides`` pattern into a single stateful object.
+This module resolves embedders and executes model inference in either
+single-point or batch mode, with consistent retry/error shaping.
 """
 
 from __future__ import annotations
@@ -33,8 +32,8 @@ from .runner import run_with_retry
 class InferenceEngine:
     """Manages embedder lifecycle and dispatches single/batch inference.
 
-    Replaces the 200-line ``_infer_chunk_embeddings_for_per_item`` function
-    and the ``_ExportFlowOverrides`` dataclass.  All config lives on ``self``.
+    It centralizes inference policy (batch vs. single fallback), embedder
+    bundle reuse, and result normalization into :class:`TaskResult` records.
 
     Parameters
     ----------

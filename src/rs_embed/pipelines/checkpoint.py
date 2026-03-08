@@ -1,8 +1,7 @@
 """Checkpoint and manifest management for batch exports.
 
-Absorbs ``checkpoint_helpers.py`` and ``manifest_helpers.py`` into a
-stateful object that tracks resume state, manifest dicts, and
-checkpoint writes.
+This module encapsulates resume detection, manifest shaping, and checkpoint
+write/load operations for per-item and combined layouts.
 """
 
 from __future__ import annotations

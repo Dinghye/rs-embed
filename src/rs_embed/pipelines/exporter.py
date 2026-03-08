@@ -1,11 +1,9 @@
-"""BatchExporter: high-level orchestrator for batch embedding export.
+"""Batch export orchestrator.
 
-Composes :class:`InferenceEngine`, :class:`PrefetchManager`, and
-:class:`CheckpointManager` into a single stateful object that replaces
-the 400-line ``_export_batch_per_item`` (api.py) and 230-line
-``export_combined`` (export_flow_helpers.py) god-functions.
-
-All configuration lives on ``self`` — no 30-argument function calls.
+This module owns the top-level export lifecycle for both layouts:
+prefetch -> payload/inference -> write -> checkpoint/resume bookkeeping.
+It composes :class:`PrefetchManager`, :class:`InferenceEngine`, and
+:class:`CheckpointManager`, while keeping runtime state on ``self``.
 """
 
 from __future__ import annotations
@@ -43,8 +41,9 @@ from .runner import run_with_retry
 class BatchExporter:
     """Orchestrates batch embedding export (per-item or combined).
 
-    Replaces ``_export_batch_per_item`` and ``export_combined`` with a
-    single class whose state lives on ``self``.
+    The exporter delegates focused responsibilities to pipeline managers,
+    while retaining layout-level control flow and writer coordination.
+    All run-scoped state is stored on ``self``.
 
     Parameters
     ----------

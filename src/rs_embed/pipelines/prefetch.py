@@ -1,8 +1,7 @@
 """GEE input prefetch manager.
 
-Encapsulates the prefetch cache, error tracking, and threaded fetch logic
-that was previously scattered across ``_prefetch_chunk_inputs`` (api.py)
-and ``combined_flow_helpers.py``.  All cache state lives on ``self``.
+This module owns prefetch planning, threaded fetch execution, and cache/error
+tracking for provider-backed input tensors used during export.
 """
 
 from __future__ import annotations
