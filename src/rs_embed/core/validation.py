@@ -10,6 +10,23 @@ from ..providers import has_provider
 def validate_specs(
     *, spatial: SpatialSpec, temporal: Optional[TemporalSpec], output: OutputSpec
 ) -> None:
+    """Validate spatial/temporal/output specs before inference.
+
+    Parameters
+    ----------
+    spatial : SpatialSpec
+        Spatial request definition.
+    temporal : TemporalSpec or None
+        Optional temporal constraint.
+    output : OutputSpec
+        Output shape/pooling policy.
+
+    Raises
+    ------
+    ModelError
+        If any spec is malformed or contains unsupported values.
+    """
+
     if not hasattr(spatial, "validate"):
         raise ModelError(f"Invalid spatial spec type: {type(spatial)}")
     spatial.validate()  # type: ignore[call-arg]
@@ -32,6 +49,26 @@ def validate_specs(
 def assert_supported(
     embedder, *, backend: str, output: OutputSpec, temporal: Optional[TemporalSpec]
 ) -> None:
+    """Check whether an embedder supports the requested execution settings.
+
+    Parameters
+    ----------
+    embedder : Any
+        Embedder instance exposing ``describe()`` metadata.
+    backend : str
+        Requested backend (for example ``"auto"`` or ``"gee"``).
+    output : OutputSpec
+        Requested output mode/pooling configuration.
+    temporal : TemporalSpec or None
+        Optional temporal request to validate against model constraints.
+
+    Raises
+    ------
+    ModelError
+        If the embedder metadata cannot be read or does not support the
+        requested backend/output/temporal configuration.
+    """
+
     try:
         desc = embedder.describe() or {}
     except Exception as e:

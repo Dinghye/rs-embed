@@ -12,7 +12,18 @@ _REGISTRY_IMPORT_ERRORS: Dict[str, BaseException] = {}
 
 
 def register(name: str):
-    """Decorator to register an embedder class by name."""
+    """Create a decorator that registers an embedder class under ``name``.
+
+    Parameters
+    ----------
+    name : str
+        Model identifier or alias to register.
+
+    Returns
+    -------
+    Callable[[Type[Any]], Type[Any]]
+        Decorator that stores the class in the runtime model registry.
+    """
 
     def deco(cls: Type[Any]):
         model_id = canonical_model_id(name)
@@ -53,6 +64,24 @@ def _try_lazy_load_model(name: str) -> None:
 
 
 def get_embedder_cls(name: str) -> Type[Any]:
+    """Resolve and return the embedder class for ``name``.
+
+    Parameters
+    ----------
+    name : str
+        Model identifier or alias.
+
+    Returns
+    -------
+    Type[Any]
+        Embedder class registered for the canonical model id.
+
+    Raises
+    ------
+    ModelError
+        If the model is unknown or its module/class cannot be imported.
+    """
+
     k = canonical_model_id(name)
     if k not in _REGISTRY:
         _try_lazy_load_model(k)
@@ -80,5 +109,10 @@ def list_models():
 
     Note: only models that have been lazy-imported so far will appear here.
     Use rs_embed.api.list_models() for a stable catalog-backed list.
+
+    Returns
+    -------
+    list[str]
+        Canonical model ids currently present in the in-memory registry.
     """
     return sorted(_REGISTRY.keys())

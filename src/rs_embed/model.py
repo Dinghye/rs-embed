@@ -102,7 +102,20 @@ class Model:
         *,
         temporal: Optional[TemporalSpec] = None,
     ) -> Embedding:
-        """Compute a single embedding."""
+        """Compute one embedding with this model instance.
+
+        Parameters
+        ----------
+        spatial : SpatialSpec
+            Spatial location/extent to embed.
+        temporal : TemporalSpec or None
+            Optional temporal filter.
+
+        Returns
+        -------
+        Embedding
+            Normalized embedding output matching this model's ``output`` spec.
+        """
         validate_specs(spatial=spatial, temporal=temporal, output=self._output)
         return self._run([spatial], temporal=temporal, sensor=self._sensor)[0]
 
@@ -112,7 +125,25 @@ class Model:
         *,
         temporal: Optional[TemporalSpec] = None,
     ) -> List[Embedding]:
-        """Compute embeddings for multiple spatial locations."""
+        """Compute embeddings for multiple spatial locations.
+
+        Parameters
+        ----------
+        spatials : list[SpatialSpec]
+            Non-empty list of spatial requests.
+        temporal : TemporalSpec or None
+            Optional temporal filter applied to all requests.
+
+        Returns
+        -------
+        list[Embedding]
+            Embeddings in the same order as ``spatials``.
+
+        Raises
+        ------
+        ModelError
+            If ``spatials`` is empty or not a list.
+        """
         if not isinstance(spatials, list) or len(spatials) == 0:
             raise ModelError("spatials must be a non-empty List[SpatialSpec].")
         for sp in spatials:
@@ -120,7 +151,13 @@ class Model:
         return self._run(spatials, temporal=temporal, sensor=self._sensor)
 
     def describe(self) -> Dict[str, Any]:
-        """Return the model's self-description dict."""
+        """Return model capabilities from the underlying embedder.
+
+        Returns
+        -------
+        dict[str, Any]
+            Capability metadata. Returns ``{}`` if unavailable.
+        """
         try:
             desc = self._embedder.describe()
             return desc if isinstance(desc, dict) else {}
@@ -131,7 +168,18 @@ class Model:
 
     @staticmethod
     def list_models(*, include_aliases: bool = False) -> List[str]:
-        """Return the stable model catalog."""
+        """Return the stable model catalog.
+
+        Parameters
+        ----------
+        include_aliases : bool
+            If ``True``, include alias names in addition to canonical ids.
+
+        Returns
+        -------
+        list[str]
+            Sorted model names available in the catalog.
+        """
         model_ids = set(MODEL_SPECS.keys())
         if include_aliases:
             model_ids.update(MODEL_ALIASES.keys())
