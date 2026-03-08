@@ -17,35 +17,21 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import numpy as np
 
 from ..tools.serialization import (
-    embedding_to_numpy,
-    jsonable,
     sanitize_key,
-    sensor_cache_key,
     sha1,
     utc_ts,
 )
 from ..core.specs import OutputSpec, SensorSpec, SpatialSpec, TemporalSpec
 from ..core.types import ExportConfig, ExportLayout, ExportTarget, ModelConfig
-from ..tools.normalization import normalize_model_name
-from ..tools.checkpoint_utils import drop_model_arrays
 from .export_flow import (
     build_one_point_payload,
     write_one_payload,
 )
 from ..tools.manifest import (
-    combined_resume_manifest,
     point_failure_manifest,
     point_resume_manifest,
 )
-from ..tools.output import normalize_embedding_output
 from ..tools.progress import create_progress
-from ..tools.runtime import (
-    call_embedder_get_embedding,
-    get_embedder_bundle_cached,
-    sensor_key,
-    supports_batch_api,
-    supports_prefetched_batch_api,
-)
 from ..writers import get_extension
 from .checkpoint import CheckpointManager
 from .inference import InferenceEngine
@@ -374,18 +360,8 @@ class BatchExporter:
 
         # Run pending models
         from .combined_flow import (
-            CombinedModelDeps,
-            CombinedPrefetchDeps,
             get_or_fetch_input,
             run_pending_models,
-        )
-
-        prefetch_deps = CombinedPrefetchDeps(
-            run_with_retry=run_with_retry,
-            fetch_gee_patch_raw=_gee_fetch_raw(),
-            normalize_input_chw=_input_chw_norm(),
-            select_prefetched_channels=_channel_select(),
-            inspect_input_raw=_inspect_raw(),
         )
 
         def _get_or_fetch(i: int, skey: str, sspec: SensorSpec) -> np.ndarray:
@@ -402,7 +378,6 @@ class BatchExporter:
                 inputs_cache=prefetch.cache,
                 input_reports=prefetch.input_reports,
                 prefetch_errors=prefetch.errors,
-                deps=prefetch_deps,
             )
 
         def _write_ckpt(*, stage: str, final: bool = False) -> Dict[str, Any]:
@@ -414,25 +389,6 @@ class BatchExporter:
                 out_path=out_file,
                 json_path=json_path,
             )
-
-        def _drop(arrays_: Dict[str, np.ndarray], model_name: str) -> None:
-            drop_model_arrays(arrays_, model_name, sanitize_key=sanitize_key)
-
-        model_deps = CombinedModelDeps(
-            create_progress=create_progress,
-            drop_model_arrays=_drop,
-            jsonable=jsonable,
-            sensor_key=sensor_key,
-            normalize_model_name=normalize_model_name,
-            get_embedder_bundle_cached=get_embedder_bundle_cached,
-            sensor_cache_key=sensor_cache_key,
-            sanitize_key=sanitize_key,
-            run_with_retry=run_with_retry,
-            call_embedder_get_embedding=call_embedder_get_embedding,
-            supports_prefetched_batch_api=supports_prefetched_batch_api,
-            supports_batch_api=supports_batch_api,
-            embedding_to_numpy=embedding_to_numpy,
-        )
 
         manifest = run_pending_models(
             pending_models=pending_models,
@@ -460,7 +416,6 @@ class BatchExporter:
             get_or_fetch_input_fn=_get_or_fetch,
             write_checkpoint_fn=_write_ckpt,
             progress=progress,
-            deps=model_deps,
         )
 
         # Drop prefetch checkpoint arrays before final write
@@ -572,6 +527,7 @@ class BatchExporter:
                         continue_on_error=cfg.continue_on_error,
                         max_retries=cfg.max_retries,
                         retry_backoff_s=cfg.retry_backoff_s,
+                        provider_factory=self.provider_factory,
                         model_progress_cb=(
                             None if use_batch else model_progress_cb
                         ),
@@ -770,23 +726,3 @@ def _inject_precomputed_embeddings(
             "failed_models": n_failed,
             "ok_models": 0,
         }
-
-
-def _gee_fetch_raw() -> Callable[..., np.ndarray]:
-    from ..providers.gee_utils import fetch_gee_patch_raw
-    return fetch_gee_patch_raw
-
-
-def _input_chw_norm() -> Callable[..., np.ndarray]:
-    from ..tools.normalization import normalize_input_chw
-    return normalize_input_chw
-
-
-def _channel_select() -> Callable:
-    from ..providers.prefetch_plan import select_prefetched_channels
-    return select_prefetched_channels
-
-
-def _inspect_raw() -> Callable[..., Dict[str, Any]]:
-    from ..providers.gee_utils import inspect_input_raw
-    return inspect_input_raw

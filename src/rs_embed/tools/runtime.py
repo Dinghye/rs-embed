@@ -45,7 +45,7 @@ def _overrides_base_method(embedder: Any, method_name: str) -> bool:
     fn = getattr(type(embedder), method_name, None)
     if fn is None:
         return False
-    from ...embedders.base import EmbedderBase
+    from ..embedders.base import EmbedderBase
 
     return fn is not getattr(EmbedderBase, method_name, None)
 

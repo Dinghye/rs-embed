@@ -24,6 +24,7 @@ from ..tools.checkpoint_utils import (
     restore_prefetch_checkpoint_cache,
     store_prefetch_checkpoint_arrays,
 )
+from ..tools.manifest import load_json_dict as _load_json_dict
 from ..writers import get_extension, write_arrays
 from .runner import run_with_retry
 
@@ -282,17 +283,4 @@ class CheckpointManager:
         }
 
 
-# ── module-level helpers ───────────────────────────────────────────
 
-
-def _load_json_dict(path: str) -> Optional[Dict[str, Any]]:
-    if not os.path.exists(path):
-        return None
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            payload = json.load(f)
-        if isinstance(payload, dict):
-            return payload
-    except Exception:
-        return None
-    return None

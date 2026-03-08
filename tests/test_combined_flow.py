@@ -1,4 +1,4 @@
-"""Tests for rs_embed.internal.api.combined_flow_helpers — run_pending_models.
+"""Tests for rs_embed.pipelines.combined_flow — run_pending_models.
 
 These tests exercise the three-tier batch fallback:
   1. Batch with prefetched inputs (get_embeddings_batch_from_inputs)
@@ -17,10 +17,8 @@ import pytest
 
 from rs_embed.core.embedding import Embedding
 from rs_embed.core.specs import OutputSpec, PointBuffer, SensorSpec, TemporalSpec
-from rs_embed.pipelines.combined_flow import (
-    CombinedModelDeps,
-    run_pending_models,
-)
+from rs_embed.pipelines import combined_flow
+from rs_embed.pipelines.combined_flow import run_pending_models
 
 
 # ── Helpers ────────────────────────────────────────────────────────
@@ -36,32 +34,35 @@ class _NoOpProgress:
         pass
 
 
-def _make_deps(
+def _patch_deps(
+    monkeypatch,
     embedder: Any,
     lock: Any = None,
     supports_batch: bool = False,
     supports_prefetched_batch: bool = False,
-) -> CombinedModelDeps:
+):
     if lock is None:
         lock = RLock()
 
-    return CombinedModelDeps(
-        create_progress=lambda **kw: _NoOpProgress(),
-        drop_model_arrays=lambda arrays, m: None,
-        jsonable=lambda x: x,
-        sensor_key=lambda s: ("__none__",) if s is None else (s.collection,),
-        normalize_model_name=lambda m: m,
-        get_embedder_bundle_cached=lambda model, backend, device, sk: (embedder, lock),
-        sensor_cache_key=lambda s: s.collection if s else "__none__",
-        sanitize_key=lambda s: s.replace("/", "_").replace(" ", "_"),
-        run_with_retry=lambda fn, **kw: fn(),
-        call_embedder_get_embedding=lambda **kw: kw["embedder"].get_embedding(
+    monkeypatch.setattr(combined_flow, "create_progress", lambda **kw: _NoOpProgress())
+    monkeypatch.setattr(combined_flow, "drop_model_arrays", lambda arrays, m, sanitize_key=None: None)
+    monkeypatch.setattr(combined_flow, "jsonable", lambda x: x)
+    monkeypatch.setattr(combined_flow, "sensor_key", lambda s: ("__none__",) if s is None else (s.collection,))
+    monkeypatch.setattr(combined_flow, "normalize_model_name", lambda m: m)
+    monkeypatch.setattr(combined_flow, "get_embedder_bundle_cached", lambda model, backend, device, sk: (embedder, lock))
+    monkeypatch.setattr(combined_flow, "sensor_cache_key", lambda s: s.collection if s else "__none__")
+    monkeypatch.setattr(combined_flow, "sanitize_key", lambda s: s.replace("/", "_").replace(" ", "_"))
+    monkeypatch.setattr(combined_flow, "run_with_retry", lambda fn, **kw: fn())
+    monkeypatch.setattr(
+        combined_flow,
+        "call_embedder_get_embedding",
+        lambda **kw: kw["embedder"].get_embedding(
             **{k: v for k, v in kw.items() if k != "embedder"}
         ),
-        supports_prefetched_batch_api=lambda e: supports_prefetched_batch,
-        supports_batch_api=lambda e: supports_batch,
-        embedding_to_numpy=lambda e: np.asarray(e.data, dtype=np.float32),
     )
+    monkeypatch.setattr(combined_flow, "supports_prefetched_batch_api", lambda e: supports_prefetched_batch)
+    monkeypatch.setattr(combined_flow, "supports_batch_api", lambda e: supports_batch)
+    monkeypatch.setattr(combined_flow, "embedding_to_numpy", lambda e: np.asarray(e.data, dtype=np.float32))
 
 
 def _make_spatials(n: int) -> list:
@@ -72,7 +73,6 @@ def _base_kwargs(
     *,
     models: List[str],
     spatials: list,
-    deps: CombinedModelDeps,
     provider_enabled: bool = True,
     save_embeddings: bool = True,
     continue_on_error: bool = False,
@@ -104,7 +104,6 @@ def _base_kwargs(
         get_or_fetch_input_fn=lambda i, sk, ss: np.ones((3, 4, 4), dtype=np.float32),
         write_checkpoint_fn=lambda **kw: manifest,
         progress=_NoOpProgress(),
-        deps=deps,
     )
 
 
@@ -128,15 +127,15 @@ class _SingleEmbedder:
         return Embedding(data=np.array([1.0, 2.0], dtype=np.float32), meta={})
 
 
-def test_per_item_fallback():
+def test_per_item_fallback(monkeypatch):
     """When no batch API is available, per-item inference runs for each spatial."""
     _SingleEmbedder.calls = 0
     embedder = _SingleEmbedder()
     spatials = _make_spatials(3)
-    deps = _make_deps(embedder)
+    _patch_deps(monkeypatch, embedder)
 
     kw = _base_kwargs(
-        models=["m1"], spatials=spatials, deps=deps, provider_enabled=False
+        models=["m1"], spatials=spatials, provider_enabled=False
     )
     manifest = run_pending_models(**kw)
 
@@ -174,16 +173,16 @@ class _BatchEmbedder:
         ]
 
 
-def test_batch_no_input_succeeds():
+def test_batch_no_input_succeeds(monkeypatch):
     """When embedder supports batch API and no provider input needed, batch path is used."""
     _BatchEmbedder.batch_calls = 0
     _BatchEmbedder.single_calls = 0
     embedder = _BatchEmbedder()
     spatials = _make_spatials(4)
-    deps = _make_deps(embedder, supports_batch=True)
+    _patch_deps(monkeypatch, embedder, supports_batch=True)
 
     kw = _base_kwargs(
-        models=["m1"], spatials=spatials, deps=deps, provider_enabled=False
+        models=["m1"], spatials=spatials, provider_enabled=False
     )
     manifest = run_pending_models(**kw)
 
@@ -216,16 +215,16 @@ class _FailingBatchEmbedder:
         raise RuntimeError("batch OOM")
 
 
-def test_batch_fails_falls_back_to_single():
+def test_batch_fails_falls_back_to_single(monkeypatch):
     """When batch API fails, all items are processed via per-item fallback."""
     _FailingBatchEmbedder.batch_calls = 0
     _FailingBatchEmbedder.single_calls = 0
     embedder = _FailingBatchEmbedder()
     spatials = _make_spatials(3)
-    deps = _make_deps(embedder, supports_batch=True)
+    _patch_deps(monkeypatch, embedder, supports_batch=True)
 
     kw = _base_kwargs(
-        models=["m1"], spatials=spatials, deps=deps, provider_enabled=False
+        models=["m1"], spatials=spatials, provider_enabled=False
     )
     manifest = run_pending_models(**kw)
 
@@ -263,7 +262,7 @@ class _PrefetchedBatchEmbedder:
         ]
 
 
-def test_prefetched_batch_succeeds():
+def test_prefetched_batch_succeeds(monkeypatch):
     """When prefetched batch API is available and inputs are provided, it's used."""
     _PrefetchedBatchEmbedder.batch_calls = 0
     _PrefetchedBatchEmbedder.single_calls = 0
@@ -272,10 +271,10 @@ def test_prefetched_batch_succeeds():
         collection="C", bands=("B1",), scale_m=10, cloudy_pct=30, composite="median"
     )
     spatials = _make_spatials(3)
-    deps = _make_deps(embedder, supports_prefetched_batch=True)
+    _patch_deps(monkeypatch, embedder, supports_prefetched_batch=True)
 
     kw = _base_kwargs(
-        models=["m1"], spatials=spatials, deps=deps, provider_enabled=True
+        models=["m1"], spatials=spatials, provider_enabled=True
     )
     kw["resolved_sensor"] = {"m1": sensor}
     manifest = run_pending_models(**kw)
@@ -307,7 +306,7 @@ class _FailingPrefetchedBatchEmbedder:
         raise RuntimeError("prefetched batch failed")
 
 
-def test_prefetched_batch_fails_falls_back_to_single():
+def test_prefetched_batch_fails_falls_back_to_single(monkeypatch):
     _FailingPrefetchedBatchEmbedder.batch_calls = 0
     _FailingPrefetchedBatchEmbedder.single_calls = 0
     embedder = _FailingPrefetchedBatchEmbedder()
@@ -315,10 +314,10 @@ def test_prefetched_batch_fails_falls_back_to_single():
         collection="C", bands=("B1",), scale_m=10, cloudy_pct=30, composite="median"
     )
     spatials = _make_spatials(2)
-    deps = _make_deps(embedder, supports_prefetched_batch=True)
+    _patch_deps(monkeypatch, embedder, supports_prefetched_batch=True)
 
     kw = _base_kwargs(
-        models=["m1"], spatials=spatials, deps=deps, provider_enabled=True
+        models=["m1"], spatials=spatials, provider_enabled=True
     )
     kw["resolved_sensor"] = {"m1": sensor}
     manifest = run_pending_models(**kw)
@@ -349,16 +348,15 @@ class _PartialFailEmbedder:
         return Embedding(data=np.array([1.0], dtype=np.float32), meta={})
 
 
-def test_continue_on_error_records_partial_failures():
+def test_continue_on_error_records_partial_failures(monkeypatch):
     """With continue_on_error=True, partial failures are recorded but don't stop the run."""
     embedder = _PartialFailEmbedder()
     spatials = _make_spatials(3)
-    deps = _make_deps(embedder)
+    _patch_deps(monkeypatch, embedder)
 
     kw = _base_kwargs(
         models=["m1"],
         spatials=spatials,
-        deps=deps,
         provider_enabled=False,
         continue_on_error=True,
     )
@@ -369,16 +367,15 @@ def test_continue_on_error_records_partial_failures():
     assert 0 in m_entry["failed_indices"]
 
 
-def test_continue_on_error_false_raises():
+def test_continue_on_error_false_raises(monkeypatch):
     """With continue_on_error=False, first failure raises."""
     embedder = _PartialFailEmbedder()
     spatials = _make_spatials(3)
-    deps = _make_deps(embedder)
+    _patch_deps(monkeypatch, embedder)
 
     kw = _base_kwargs(
         models=["m1"],
         spatials=spatials,
-        deps=deps,
         provider_enabled=False,
         continue_on_error=False,
     )
@@ -399,15 +396,14 @@ class _AlwaysFailEmbedder:
         raise RuntimeError("always fail")
 
 
-def test_all_items_fail_marks_model_failed():
+def test_all_items_fail_marks_model_failed(monkeypatch):
     embedder = _AlwaysFailEmbedder()
     spatials = _make_spatials(2)
-    deps = _make_deps(embedder)
+    _patch_deps(monkeypatch, embedder)
 
     kw = _base_kwargs(
         models=["m1"],
         spatials=spatials,
-        deps=deps,
         provider_enabled=False,
         continue_on_error=True,
     )
@@ -423,17 +419,16 @@ def test_all_items_fail_marks_model_failed():
 # ══════════════════════════════════════════════════════════════════════
 
 
-def test_single_strategy_bypasses_batch():
+def test_single_strategy_bypasses_batch(monkeypatch):
     _BatchEmbedder.batch_calls = 0
     _BatchEmbedder.single_calls = 0
     embedder = _BatchEmbedder()
     spatials = _make_spatials(2)
-    deps = _make_deps(embedder, supports_batch=True)
+    _patch_deps(monkeypatch, embedder, supports_batch=True)
 
     kw = _base_kwargs(
         models=["m1"],
         spatials=spatials,
-        deps=deps,
         provider_enabled=False,
         inference_strategy="single",
     )
@@ -449,16 +444,15 @@ def test_single_strategy_bypasses_batch():
 # ══════════════════════════════════════════════════════════════════════
 
 
-def test_save_embeddings_false_skips_inference():
+def test_save_embeddings_false_skips_inference(monkeypatch):
     _SingleEmbedder.calls = 0
     embedder = _SingleEmbedder()
     spatials = _make_spatials(2)
-    deps = _make_deps(embedder)
+    _patch_deps(monkeypatch, embedder)
 
     kw = _base_kwargs(
         models=["m1"],
         spatials=spatials,
-        deps=deps,
         provider_enabled=False,
         save_embeddings=False,
     )

@@ -48,6 +48,12 @@ from .tools.model_defaults import (
 from .tools.output import (
     normalize_embedding_output as _normalize_embedding_output,
 )
+from .tools.tiling import (
+    _ResolvedInputPrepSpec,
+    _resolve_input_prep_spec,
+    _call_embedder_get_embedding_with_input_prep,
+    _tile_yx_starts,
+)
 from .core.embedding import Embedding
 from .core.errors import ModelError
 from .core.registry import get_embedder_cls
@@ -212,17 +218,6 @@ def _resolve_export_batch_target(
     if len(point_names) != n_spatials:
         raise ModelError("names must have the same length as spatials.")
     return ExportTarget(layout=ExportLayout.PER_ITEM, out_dir=out_dir, names=point_names)
-
-
-# ---------------------------------------------------------------------------
-# Tiling / input-prep
-# ---------------------------------------------------------------------------
-from .tools.tiling import (  # noqa: E402
-    _ResolvedInputPrepSpec,
-    _resolve_input_prep_spec,
-    _call_embedder_get_embedding_with_input_prep,
-    _tile_yx_starts,
-)
 
 
 # ---------------------------------------------------------------------------

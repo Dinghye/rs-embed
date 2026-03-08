@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -8,15 +7,25 @@ import numpy as np
 from ..core.embedding import Embedding
 from ..core.specs import OutputSpec, SensorSpec, SpatialSpec, TemporalSpec
 from ..tools.output import normalize_embedding_output
-
-
-@dataclass(frozen=True)
-class CombinedPrefetchDeps:
-    run_with_retry: Callable[..., Any]
-    fetch_gee_patch_raw: Callable[..., np.ndarray]
-    normalize_input_chw: Callable[..., np.ndarray]
-    select_prefetched_channels: Callable[[np.ndarray, Tuple[int, ...]], np.ndarray]
-    inspect_input_raw: Callable[..., Dict[str, Any]]
+from ..tools.runtime import (
+    call_embedder_get_embedding,
+    get_embedder_bundle_cached,
+    run_with_retry,
+    sensor_key,
+    supports_batch_api,
+    supports_prefetched_batch_api,
+)
+from ..tools.serialization import (
+    embedding_to_numpy,
+    jsonable,
+    sanitize_key,
+    sensor_cache_key,
+)
+from ..tools.normalization import normalize_input_chw, normalize_model_name
+from ..tools.checkpoint_utils import drop_model_arrays
+from ..tools.progress import create_progress
+from ..providers.gee_utils import fetch_gee_patch_raw, inspect_input_raw
+from ..providers.prefetch_plan import select_prefetched_channels
 
 
 def run_combined_prefetch_tasks(
@@ -38,7 +47,6 @@ def run_combined_prefetch_tasks(
     input_reports: Dict[Tuple[int, str], Dict[str, Any]],
     prefetch_errors: Dict[Tuple[int, str], str],
     progress: Any,
-    deps: CombinedPrefetchDeps,
 ) -> None:
     if not tasks:
         return
@@ -46,8 +54,8 @@ def run_combined_prefetch_tasks(
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
     def _fetch_one(i: int, skey: str, sspec: SensorSpec):
-        x = deps.run_with_retry(
-            lambda: deps.fetch_gee_patch_raw(
+        x = run_with_retry(
+            lambda: fetch_gee_patch_raw(
                 provider, spatial=spatials[i], temporal=temporal, sensor=sspec
             ),
             retries=max_retries,
@@ -71,14 +79,14 @@ def run_combined_prefetch_tasks(
             else:
                 for member_skey in fetch_members.get(skey, []):
                     member_idx = sensor_to_fetch[member_skey][1]
-                    x_member = deps.normalize_input_chw(
-                        deps.select_prefetched_channels(x, member_idx),
+                    x_member = normalize_input_chw(
+                        select_prefetched_channels(x, member_idx),
                         expected_channels=len(member_idx),
                         name=f"gee_input_{member_skey}",
                     )
                     if fail_on_bad_input:
                         sspec_member = sensor_by_key[member_skey]
-                        rep = deps.inspect_input_raw(
+                        rep = inspect_input_raw(
                             x_member,
                             sensor=sspec_member,
                             name=f"gee_input_{member_skey}",
@@ -113,7 +121,6 @@ def get_or_fetch_input(
     inputs_cache: Dict[Tuple[int, str], np.ndarray],
     input_reports: Dict[Tuple[int, str], Dict[str, Any]],
     prefetch_errors: Dict[Tuple[int, str], str],
-    deps: CombinedPrefetchDeps,
 ) -> np.ndarray:
     hit = inputs_cache.get((i, skey))
     if hit is not None:
@@ -127,14 +134,14 @@ def get_or_fetch_input(
         raise RuntimeError(
             f"Missing provider for input fetch: index={i}, sensor={skey}"
         )
-    x = deps.run_with_retry(
-        lambda: deps.fetch_gee_patch_raw(
+    x = run_with_retry(
+        lambda: fetch_gee_patch_raw(
             provider, spatial=spatials[i], temporal=temporal, sensor=sspec
         ),
         retries=max_retries,
         backoff_s=retry_backoff_s,
     )
-    rep = deps.inspect_input_raw(x, sensor=sspec, name=f"gee_input_{skey}")
+    rep = inspect_input_raw(x, sensor=sspec, name=f"gee_input_{skey}")
     if fail_on_bad_input and (not bool(rep.get("ok", True))):
         issues = (rep.get("report", {}) or {}).get("issues", [])
         raise RuntimeError(
@@ -143,23 +150,6 @@ def get_or_fetch_input(
     inputs_cache[(i, skey)] = x
     input_reports[(i, skey)] = rep
     return x
-
-
-@dataclass(frozen=True)
-class CombinedModelDeps:
-    create_progress: Callable[..., Any]
-    drop_model_arrays: Callable[[Dict[str, np.ndarray], str], None]
-    jsonable: Callable[[Any], Any]
-    sensor_key: Callable[[Optional[SensorSpec]], Tuple]
-    normalize_model_name: Callable[[str], str]
-    get_embedder_bundle_cached: Callable[[str, str, str, Tuple], Tuple[Any, Any]]
-    sensor_cache_key: Callable[[SensorSpec], str]
-    sanitize_key: Callable[[str], str]
-    run_with_retry: Callable[..., Any]
-    call_embedder_get_embedding: Callable[..., Embedding]
-    supports_prefetched_batch_api: Callable[[Any], bool]
-    supports_batch_api: Callable[[Any], bool]
-    embedding_to_numpy: Callable[[Embedding], np.ndarray]
 
 
 def run_pending_models(
@@ -189,12 +179,11 @@ def run_pending_models(
     get_or_fetch_input_fn: Callable[[int, str, SensorSpec], np.ndarray],
     write_checkpoint_fn: Callable[..., Dict[str, Any]],
     progress: Any,
-    deps: CombinedModelDeps,
 ) -> Dict[str, Any]:
     _resolved_backend = resolved_backend or {}
     for m in pending_models:
-        deps.drop_model_arrays(arrays, m)
-        infer_progress = deps.create_progress(
+        drop_model_arrays(arrays, m, sanitize_key=sanitize_key)
+        infer_progress = create_progress(
             enabled=bool(show_progress and save_embeddings),
             total=len(spatials),
             desc=f"infer[{m}]",
@@ -204,18 +193,18 @@ def run_pending_models(
         infer_progress_done = 0
         m_entry: Dict[str, Any] = {
             "model": m,
-            "sensor": deps.jsonable(resolved_sensor.get(m)),
+            "sensor": jsonable(resolved_sensor.get(m)),
             "status": "ok",
         }
         sspec = resolved_sensor.get(m)
         try:
-            sensor_k = deps.sensor_key(sspec)
+            sensor_k = sensor_key(sspec)
             m_backend = _resolved_backend.get(m, backend)
-            embedder, lock = deps.get_embedder_bundle_cached(
-                deps.normalize_model_name(m), m_backend, device, sensor_k
+            embedder, lock = get_embedder_bundle_cached(
+                normalize_model_name(m), m_backend, device, sensor_k
             )
             try:
-                m_entry["describe"] = deps.jsonable(embedder.describe())
+                m_entry["describe"] = jsonable(embedder.describe())
             except Exception as e:
                 m_entry["describe"] = {"error": repr(e)}
 
@@ -225,7 +214,7 @@ def run_pending_models(
                 and "precomputed" not in (model_type.get(m) or "")
             )
             skey = (
-                deps.sensor_cache_key(sspec)
+                sensor_cache_key(sspec)
                 if needs_provider_input and sspec is not None
                 else None
             )
@@ -257,7 +246,7 @@ def run_pending_models(
                     else:
                         try:
                             arr = np.stack(xs, axis=0)
-                            in_key = f"inputs_bchw__{deps.sanitize_key(m)}"
+                            in_key = f"inputs_bchw__{sanitize_key(m)}"
                             arrays[in_key] = arr
                             ref = {
                                 "npz_key": in_key,
@@ -275,7 +264,7 @@ def run_pending_models(
                                     x = get_or_fetch_input_fn(i, skey, sspec)
                                 except Exception:
                                     continue
-                                k = f"input_chw__{deps.sanitize_key(m)}__{i:05d}"
+                                k = f"input_chw__{sanitize_key(m)}__{i:05d}"
                                 arrays[k] = np.asarray(x, dtype=np.float32)
                                 keys.append(k)
                             ref = {"npz_keys": keys}
@@ -309,7 +298,7 @@ def run_pending_models(
                     if needs_provider_input and skey is not None and sspec is not None:
                         inp = get_or_fetch_input_fn(i, skey, sspec)
                     with lock:
-                        return deps.call_embedder_get_embedding(
+                        return call_embedder_get_embedding(
                             embedder=embedder,
                             spatial=spatials[i],
                             temporal=temporal,
@@ -323,7 +312,7 @@ def run_pending_models(
                 can_batch_prefetched = (
                     allow_batch
                     and prefer_batch
-                    and deps.supports_prefetched_batch_api(embedder)
+                    and supports_prefetched_batch_api(embedder)
                     and needs_provider_input
                     and skey is not None
                     and sspec is not None
@@ -331,7 +320,7 @@ def run_pending_models(
                 can_batch = (
                     allow_batch
                     and prefer_batch
-                    and deps.supports_batch_api(embedder)
+                    and supports_batch_api(embedder)
                     and not needs_provider_input
                 )
                 batch_attempted = False
@@ -377,7 +366,7 @@ def run_pending_models(
                                             )
                                         )
 
-                                batch_out = deps.run_with_retry(
+                                batch_out = run_with_retry(
                                     _infer_batch_prefetched,
                                     retries=max_retries,
                                     backoff_s=retry_backoff_s,
@@ -392,8 +381,8 @@ def run_pending_models(
                                         emb=emb, output=output
                                     )
                                     i = sub_indices[j]
-                                    embs_by_idx[i] = deps.embedding_to_numpy(emb)
-                                    metas_by_idx[i] = deps.jsonable(emb.meta)
+                                    embs_by_idx[i] = embedding_to_numpy(emb)
+                                    metas_by_idx[i] = jsonable(emb.meta)
                                     errors_by_idx.pop(i, None)
                                     _mark_infer_done(i)
 
@@ -425,7 +414,7 @@ def run_pending_models(
                                         device=device,
                                     )
 
-                            batch_out = deps.run_with_retry(
+                            batch_out = run_with_retry(
                                 _infer_batch,
                                 retries=max_retries,
                                 backoff_s=retry_backoff_s,
@@ -437,8 +426,8 @@ def run_pending_models(
                             for j, emb in enumerate(batch_out):
                                 emb = normalize_embedding_output(emb=emb, output=output)
                                 i = start + j
-                                embs_by_idx[i] = deps.embedding_to_numpy(emb)
-                                metas_by_idx[i] = deps.jsonable(emb.meta)
+                                embs_by_idx[i] = embedding_to_numpy(emb)
+                                metas_by_idx[i] = jsonable(emb.meta)
                                 errors_by_idx.pop(i, None)
                                 _mark_infer_done(i)
                         batch_succeeded = True
@@ -451,13 +440,13 @@ def run_pending_models(
                         if i in infer_done:
                             continue
                         try:
-                            emb = deps.run_with_retry(
+                            emb = run_with_retry(
                                 lambda i=i: _infer_one(i),
                                 retries=max_retries,
                                 backoff_s=retry_backoff_s,
                             )
-                            embs_by_idx[i] = deps.embedding_to_numpy(emb)
-                            metas_by_idx[i] = deps.jsonable(emb.meta)
+                            embs_by_idx[i] = embedding_to_numpy(emb)
+                            metas_by_idx[i] = jsonable(emb.meta)
                             errors_by_idx.pop(i, None)
                         except Exception as e:
                             if not continue_on_error:
@@ -471,7 +460,7 @@ def run_pending_models(
                     try:
                         e_arr = np.stack([embs_by_idx[i] for i in ok_indices], axis=0)  # type: ignore[list-item]
                         if len(ok_indices) == n:
-                            e_key = f"embeddings__{deps.sanitize_key(m)}"
+                            e_key = f"embeddings__{sanitize_key(m)}"
                             arrays[e_key] = e_arr
                             m_entry["embeddings"] = {
                                 "npz_key": e_key,
@@ -482,7 +471,7 @@ def run_pending_models(
                             keys = []
                             index_map = []
                             for j, i in enumerate(ok_indices):
-                                k = f"embedding__{deps.sanitize_key(m)}__{i:05d}"
+                                k = f"embedding__{sanitize_key(m)}__{i:05d}"
                                 arrays[k] = e_arr[j]
                                 keys.append(k)
                                 index_map.append(i)
@@ -494,7 +483,7 @@ def run_pending_models(
                         keys = []
                         index_map = []
                         for i in ok_indices:
-                            k = f"embedding__{deps.sanitize_key(m)}__{i:05d}"
+                            k = f"embedding__{sanitize_key(m)}__{i:05d}"
                             arrays[k] = embs_by_idx[i]  # type: ignore[index]
                             keys.append(k)
                             index_map.append(i)
@@ -532,7 +521,7 @@ def run_pending_models(
 
         manifest["models"].append(m_entry)
         manifest = write_checkpoint_fn(
-            stage=f"model:{deps.sanitize_key(m)}", final=False
+            stage=f"model:{sanitize_key(m)}", final=False
         )
 
     return manifest

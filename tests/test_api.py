@@ -547,12 +547,12 @@ def test_export_batch_infer_batch_size_is_independent_from_chunk_size(
 
     captured = {}
 
-    def _fake_export_combined_npz(**kwargs):
-        captured["chunk_size"] = kwargs["chunk_size"]
-        captured["infer_batch_size"] = kwargs["infer_batch_size"]
+    def _fake_run(self):
+        captured["chunk_size"] = self.config.chunk_size
+        captured["infer_batch_size"] = self.config.infer_batch_size
         return {"status": "ok"}
 
-    monkeypatch.setattr("rs_embed.api._export_combined_npz", _fake_export_combined_npz)
+    monkeypatch.setattr("rs_embed.pipelines.exporter.BatchExporter.run", _fake_run)
 
     result = export_batch(
         spatials=[_SPATIAL],
