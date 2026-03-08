@@ -516,7 +516,7 @@ class BatchExporter:
                         model_progress_cb=(None if use_batch else model_progress_cb),
                     )
                     if use_batch:
-                        _inject_precomputed_embeddings(
+                        self._inject_precomputed_embeddings(
                             point_index=i,
                             models=self.model_names,
                             arrays=arrays,
@@ -613,99 +613,98 @@ class BatchExporter:
             if writer_ex is not None and not writer_ex._shutdown:
                 writer_ex.shutdown(wait=True)
 
+    # ── static helpers ─────────────────────────────────────────────
 
-# ── module-level helpers ───────────────────────────────────────────
-
-
-def _inject_precomputed_embeddings(
-    *,
-    point_index: int,
-    models: List[str],
-    arrays: Dict[str, np.ndarray],
-    manifest: Dict[str, Any],
-    embed_results: Dict[Tuple[int, str], Any],
-) -> None:
-    """Inject pre-computed batch embeddings into a per-item payload."""
-    model_entries = manifest.get("models") or []
-    entry_by_model = {
-        str(entry.get("model")): entry
-        for entry in model_entries
-        if isinstance(entry, dict)
-    }
-    for m in models:
-        entry = entry_by_model.get(m)
-        if entry is None:
-            continue
-        rec = embed_results.get((point_index, m))
-        if rec is None:
-            continue
-        # TaskResult objects
-        from ..core.types import Status, TaskResult
-
-        if isinstance(rec, TaskResult):
-            if rec.status == Status.OK and rec.embedding is not None:
-                e_np = np.asarray(rec.embedding)
-                emb_key = f"embedding__{sanitize_key(m)}"
-                arrays[emb_key] = e_np
-                entry["embedding"] = {
-                    "npz_key": emb_key,
-                    "dtype": str(e_np.dtype),
-                    "shape": list(e_np.shape),
-                    "sha1": sha1(e_np),
-                }
-                entry["meta"] = rec.meta
-            else:
-                if entry.get("status") != "failed":
-                    entry["status"] = "failed"
-                    entry["error"] = rec.error
-                entry["embedding"] = None
-                entry["meta"] = None
-        # Legacy dict format
-        elif isinstance(rec, dict):
-            if rec.get("status") == "ok":
-                e_np = np.asarray(rec["embedding"])
-                emb_key = f"embedding__{sanitize_key(m)}"
-                arrays[emb_key] = e_np
-                entry["embedding"] = {
-                    "npz_key": emb_key,
-                    "dtype": str(e_np.dtype),
-                    "shape": list(e_np.shape),
-                    "sha1": sha1(e_np),
-                }
-                entry["meta"] = rec.get("meta")
-            else:
-                if entry.get("status") != "failed":
-                    entry["status"] = "failed"
-                    entry["error"] = rec.get("error")
-                entry["embedding"] = None
-                entry["meta"] = None
-
-    # Recompute summary
-    all_models = manifest.get("models") or []
-    n_failed = sum(
-        1 for x in all_models if isinstance(x, dict) and x.get("status") == "failed"
-    )
-    if not all_models:
-        manifest["status"] = "ok"
-        manifest["summary"] = {"total_models": 0, "failed_models": 0, "ok_models": 0}
-    elif n_failed == 0:
-        manifest["status"] = "ok"
-        manifest["summary"] = {
-            "total_models": len(all_models),
-            "failed_models": 0,
-            "ok_models": len(all_models),
+    @staticmethod
+    def _inject_precomputed_embeddings(
+        *,
+        point_index: int,
+        models: List[str],
+        arrays: Dict[str, np.ndarray],
+        manifest: Dict[str, Any],
+        embed_results: Dict[Tuple[int, str], Any],
+    ) -> None:
+        """Inject pre-computed batch embeddings into a per-item payload."""
+        model_entries = manifest.get("models") or []
+        entry_by_model = {
+            str(entry.get("model")): entry
+            for entry in model_entries
+            if isinstance(entry, dict)
         }
-    elif n_failed < len(all_models):
-        manifest["status"] = "partial"
-        manifest["summary"] = {
-            "total_models": len(all_models),
-            "failed_models": n_failed,
-            "ok_models": len(all_models) - n_failed,
-        }
-    else:
-        manifest["status"] = "failed"
-        manifest["summary"] = {
-            "total_models": len(all_models),
-            "failed_models": n_failed,
-            "ok_models": 0,
-        }
+        for m in models:
+            entry = entry_by_model.get(m)
+            if entry is None:
+                continue
+            rec = embed_results.get((point_index, m))
+            if rec is None:
+                continue
+            # TaskResult objects
+            from ..core.types import Status, TaskResult
+
+            if isinstance(rec, TaskResult):
+                if rec.status == Status.OK and rec.embedding is not None:
+                    e_np = np.asarray(rec.embedding)
+                    emb_key = f"embedding__{sanitize_key(m)}"
+                    arrays[emb_key] = e_np
+                    entry["embedding"] = {
+                        "npz_key": emb_key,
+                        "dtype": str(e_np.dtype),
+                        "shape": list(e_np.shape),
+                        "sha1": sha1(e_np),
+                    }
+                    entry["meta"] = rec.meta
+                else:
+                    if entry.get("status") != "failed":
+                        entry["status"] = "failed"
+                        entry["error"] = rec.error
+                    entry["embedding"] = None
+                    entry["meta"] = None
+            # Legacy dict format
+            elif isinstance(rec, dict):
+                if rec.get("status") == "ok":
+                    e_np = np.asarray(rec["embedding"])
+                    emb_key = f"embedding__{sanitize_key(m)}"
+                    arrays[emb_key] = e_np
+                    entry["embedding"] = {
+                        "npz_key": emb_key,
+                        "dtype": str(e_np.dtype),
+                        "shape": list(e_np.shape),
+                        "sha1": sha1(e_np),
+                    }
+                    entry["meta"] = rec.get("meta")
+                else:
+                    if entry.get("status") != "failed":
+                        entry["status"] = "failed"
+                        entry["error"] = rec.get("error")
+                    entry["embedding"] = None
+                    entry["meta"] = None
+
+        # Recompute summary
+        all_models = manifest.get("models") or []
+        n_failed = sum(
+            1 for x in all_models if isinstance(x, dict) and x.get("status") == "failed"
+        )
+        if not all_models:
+            manifest["status"] = "ok"
+            manifest["summary"] = {"total_models": 0, "failed_models": 0, "ok_models": 0}
+        elif n_failed == 0:
+            manifest["status"] = "ok"
+            manifest["summary"] = {
+                "total_models": len(all_models),
+                "failed_models": 0,
+                "ok_models": len(all_models),
+            }
+        elif n_failed < len(all_models):
+            manifest["status"] = "partial"
+            manifest["summary"] = {
+                "total_models": len(all_models),
+                "failed_models": n_failed,
+                "ok_models": len(all_models) - n_failed,
+            }
+        else:
+            manifest["status"] = "failed"
+            manifest["summary"] = {
+                "total_models": len(all_models),
+                "failed_models": n_failed,
+                "ok_models": 0,
+            }
