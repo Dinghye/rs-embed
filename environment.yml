@@ -60,5 +60,9 @@ dependencies:
       - hydra-core
       - pycocotools
 
+      # Development
+      - pytest
+      - pytest-cov
+
       # Jupyter widgets
       - ipywidgets
