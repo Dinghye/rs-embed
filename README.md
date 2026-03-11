@@ -30,6 +30,8 @@ emb = get_embedding("tessera", spatial=..., temporal=..., output=...)
 
 
 ## Install (temporary)
+
+> We are actively refining and improving the codebase, and we will officially release version 0.1.0 later this week. If you are testing rs-embed, please remember to pull the latest changes from our repo. 🎉
 ```bash
 # temporary
 git clone git@github.com:cybergis/rs-embed.git
