@@ -68,7 +68,7 @@ emb = get_embedding(
 You can also visualize the embedding as follows:
 
 ```python
-from examples.plot_utils import plot_embedding_pseudocolor
+from rs_embed import plot_embedding_pseudocolor
 
 plot_embedding_pseudocolor(
     emb,
