@@ -1,36 +1,29 @@
-## Current Limitations (v0.1.x)
+# Known Limitations
 
-This page summarizes user-facing limitations in the current implementation.
+This page lists the main user-facing constraints in the current `0.1.x` implementation.
 
-### 1) Spatial input CRS
+## API Boundary
 
 - `BBox` and `PointBuffer` currently require `crs="EPSG:4326"`.
-- Other CRS inputs are not accepted at the API boundary.
+- Other CRS inputs are not accepted at the public API boundary.
 
-### 2) Temporal behavior for on-the-fly models
+## Temporal Semantics
 
-- Most on-the-fly adapters treat `TemporalSpec.range(start, end)` as a window filter and build one composite image (`median` by default).
-- This is not an automatic single-scene selection by acquisition date.
+- Most on-the-fly adapters interpret `TemporalSpec.range(start, end)` as a filter window plus one composite image.
+- This is usually not an automatic single-scene selection by acquisition date.
+- Temporal support is model-specific: for example, `gse` requires `TemporalSpec.year(...)`, and `copernicus` is currently limited to year `2021`.
 
-### 3) Temporal constraints are model-specific
+## Output Semantics
 
-- `gse` currently requires `TemporalSpec.year(...)`.
-- `copernicus` currently supports only year `2021`.
-- Some precomputed models may ignore finer temporal granularity.
+- For many ViT-like models, `OutputSpec.grid()` is a token or patch grid, not guaranteed georeferenced raster space.
+- Treat `grid` as model-internal spatial structure unless the model page says otherwise.
 
-### 4) Grid output is not always georeferenced raster space
+## Dependencies
 
-- For ViT-like models, `OutputSpec.grid()` is often a token/patch grid `(D, H, W)`.
-- Treat it as model-internal spatial structure, not as guaranteed geo-aligned pixel coordinates.
+- Different providers and models require different optional packages such as `earthengine-api`, `torch`, `rshf`, and `torchgeo`.
+- Missing optional dependencies fail only when you use the corresponding backend or model path.
 
+## Known Edge Case
 
-### 5) Optional dependency surface is large
-
-- Different models/providers require extra packages (`earthengine-api`, `torch`, `rshf`, `torchgeo`, etc.).
-- Missing optional dependencies will fail at runtime for the corresponding model path.
-
-### 6) Known edge case: tessera tile boundary mosaic
-
-- Near some UTM-zone boundaries, fetched tiles may have different CRS/resolution and strict mosaic can fail.
-- If this occurs, try shifting ROI slightly or using a smaller ROI/window.
-
+- Near some Tessera UTM-zone boundaries, fetched tiles may have different CRS or resolution and strict mosaic can fail.
+- If this happens, try shifting the ROI slightly or using a smaller ROI or window.

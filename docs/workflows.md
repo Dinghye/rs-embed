@@ -1,52 +1,26 @@
 # Workflows
 
-This page is task-first: start from what you want to do, then use the smallest API surface that gets you there.
-
-For full signatures and edge cases, see [API Reference](api.md).
-
-=== ":material-map-marker-path: One ROI"
-
-    Use [`get_embedding(...)`](api_embedding.md#get_embedding) for the fastest path to a single embedding.
-
-=== ":material-dots-grid: Many ROIs (one model)"
-
-    Use [`get_embeddings_batch(...)`](api_embedding.md#get_embeddings_batch) when the model is fixed and you have many ROIs.
-
-=== ":material-database-export-outline: Dataset export"
-
-    Use [`export_batch(...)`](api_export.md#export_batch) for reproducible, resumable exports across many ROIs/models.
-
-=== ":material-image-search-outline: Debug inputs"
-
-    Use [`inspect_provider_patch(...)`](api_inspect.md#inspect_provider_patch) before blaming the model.
-
-!!! info "How to read this page"
-    Start from the task tab above, then scroll to the matching section for a runnable example and "Choose this when" guidance.
+This page is a recipe collection for common tasks after you already know the basic APIs.
+Use [Quickstart](quickstart.md) for the first-run path and [API](api.md) for exact signatures.
 
 ---
 
-## Single Embedding (Fastest Path)
+## One ROI Prototype
 
-Use `get_embedding(...)` when you want one ROI embedding now.
+Use `get_embedding(...)` when you want one ROI embedding now and want the smallest possible call.
 
 ```python
 from rs_embed import PointBuffer, TemporalSpec, OutputSpec, get_embedding
 
 emb = get_embedding(
-    "remoteclip",  # (1)!
-    spatial=PointBuffer(lon=121.5, lat=31.2, buffer_m=2048),  # (2)!
-    temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),  # (3)!
-    output=OutputSpec.pooled(),  # (4)!
+    "remoteclip",
+    spatial=PointBuffer(lon=121.5, lat=31.2, buffer_m=2048),
+    temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
+    output=OutputSpec.pooled(),
     backend="gee",
     device="auto",
 )
 ```
-1. Model ID (see [Model Overview](models.md) / [Advanced Model Reference](models_reference.md)).
-2. ROI centered at a point with a square buffer (meters).
-3. Date range is a window, not a guaranteed single scene.
-4. `pooled()` is the best default for comparison/classification workflows.
-
-Choose this when:
 
 - you are prototyping
 - you want to inspect metadata
@@ -54,7 +28,7 @@ Choose this when:
 
 ---
 
-## Batch Embeddings for One Model
+## Many ROIs, One Model
 
 Use `get_embeddings_batch(...)` when the model is fixed and you have multiple ROIs.
 
@@ -75,19 +49,16 @@ embs = get_embeddings_batch(
 )
 ```
 
-Choose this when:
-
 - same model, many points
 - you want simpler code than manual loops
 - you may benefit from embedder-level batch inference
 
 ---
 
-## Dataset Export (Recommended)
+## Build a Dataset Export
 
 Use `export_batch(...)` for reproducible data pipelines and downstream experiments.
-For new code, prefer `target=ExportTarget(...)` plus `config=ExportConfig(...)`
-so the same API pattern works for simple and advanced exports without growing the top-level signature.
+For new code, prefer `target=ExportTarget(...)` plus `config=ExportConfig(...)`.
 
 ```python
 from rs_embed import export_batch, ExportConfig, ExportTarget, PointBuffer, TemporalSpec
@@ -112,13 +83,6 @@ export_batch(
 - Mix multiple models in one export job when building benchmark datasets.
 - `per_item` keeps each ROI grouped together; useful for inspection and resume.
 - Move runtime knobs into `ExportConfig(...)` instead of adding more top-level keywords.
-
-Choose this when:
-
-- multiple models and/or many points
-- you need manifests for bookkeeping
-- you want resumable exports
-- you want to avoid duplicate input downloads
 
 ---
 
@@ -146,11 +110,6 @@ report = inspect_provider_patch(
 ### Backward-compatible alias
 
 - `inspect_gee_patch(...)` calls the same underlying inspection flow for GEE paths.
-
-### Export convenience wrapper (optional)
-
-- `export_npz(...)` is a single-ROI `.npz` convenience wrapper around `export_batch(...)`.
-- Prefer `export_batch(...)` in tutorials and pipelines so one API scales from one ROI to many ROIs.
 
 ---
 
@@ -193,9 +152,9 @@ Then use [Supported Models](models.md) to review model-specific preprocessing an
 
 ---
 
-## Choosing the Right Page
+## See Also
 
-- Need runnable setup steps: [Quickstart](quickstart.md)
-- Need mental model and semantics: [Concepts](concepts.md)
-- Need model capability matrix: [Model Overview](models.md)
-- Need exact function signatures/options: [API Reference](api.md)
+- [Quickstart](quickstart.md): first-run setup and the three core APIs
+- [Concepts](concepts.md): semantic meaning of temporal, output, backend, and sensor
+- [Models](models.md): model capability matrix and detail links
+- [API](api.md): exact signatures and parameter docs

@@ -1,34 +1,34 @@
-## Quick Start
+# Quickstart
 
-This page is for getting a first successful run quickly.
+This page is the shortest path from installation to a first successful run.
+It focuses on the three core APIs most users need:
 
-- New to `rs-embed`: follow this page top-to-bottom
-- Already installed: jump to [Run `examples/quickstart.py`](#run-examplesquickstartpy)
-- Need semantics first (`TemporalSpec`, `OutputSpec`): read [Core Concepts](concepts.md)
-- Need task-oriented patterns after setup: read [Common Workflows](workflows.md)
+- `get_embedding(...)`
+- `get_embeddings_batch(...)`
+- `export_batch(...)`
 
-Canonical model IDs now use short names (for example `remoteclip`, `prithvi`). Legacy IDs such as `remoteclip_s2rgb` still work as aliases.
+Use this page top-to-bottom once. After that:
 
-This page teaches the **recommended** entry points first (`get_embedding`, `get_embeddings_batch`, `export_batch`, `inspect_provider_patch`).
-Compatibility wrappers such as `export_npz(...)` and `inspect_gee_patch(...)` are documented later for older code and convenience.
+- go to [Models](models.md) to choose model IDs
+- go to [API](api.md) for exact signatures and edge cases
+- go to [Extending](extending.md) if you want to add a model
 
-For models with multiple input branches, these public embedding/export APIs also accept an optional `modality=...` argument.
-Only models that explicitly expose a given modality can use it; unsupported modality selections raise a `ModelError`.
+Canonical model IDs use short names such as `tessera`, `remoteclip`, and `prithvi`.
+Legacy aliases such as `remoteclip_s2rgb` still work, but new code should use the short names.
 
 ---
 
-## Install (temporary)
+## Install
 
 ```bash
 git clone https://github.com/Dinghye/rs-embed.git
-# or: git clone git@github.com:Dinghye/rs-embed.git
 cd rs-embed
 conda env create -f environment.yml
 conda activate rs-embed
 pip install -e .
 ```
 
-For on-the-fly model demos (GEE + torch wrappers), install optional dependencies if needed:
+If you want on-the-fly models backed by GEE and torch wrappers, install the optional extras too:
 
 ```bash
 pip install -e ".[gee,torch,models]"
@@ -36,50 +36,41 @@ pip install -e ".[gee,torch,models]"
 
 Examples notebook: `examples/playground.ipynb`
 
+---
 
-## Authenticate Google Earth Engine
+## Run the Example Script
 
-If you are using GEE for the first time, complete the authentication process with the following command.
-
-```bash
-earthengine authenticate
-```
-
-## Run `examples/quickstart.py`
-
-You can run the packaged quickstart script directly:
+The packaged example script is the fastest way to verify your environment.
 
 ```bash
-# show CLI options
 python examples/quickstart.py --help
 ```
 
-### Auto mode (default, precomputed)
+### Precomputed path (`backend="auto"`)
 
-Runs `tessera` examples for:
-- single embedding (`pooled` + `grid`)
-- batch embeddings (`get_embeddings_batch`)
-- optional export (`export_batch`)
+This path uses `tessera` and does not require GEE authentication.
 
 ```bash
 python examples/quickstart.py --mode auto
 python examples/quickstart.py --mode auto --run-export
 ```
 
-### GEE mode (on-the-fly)
+### On-the-fly path (`backend="gee"`)
 
-Runs `remoteclip` examples for:
-- `inspect_provider_patch` (recommended; `inspect_gee_patch` remains as a backward-compatible alias)
-- single embedding
-- batch embeddings
-- optional export
+Authenticate Earth Engine first if this is your first time:
+
+```bash
+earthengine authenticate
+```
+
+Then run the GEE demo:
 
 ```bash
 python examples/quickstart.py --mode gee --device auto
 python examples/quickstart.py --mode gee --run-export --out-dir examples/_outputs/quickstart
 ```
 
-### Run all demos
+### Run both
 
 ```bash
 python examples/quickstart.py --mode all
@@ -87,178 +78,123 @@ python examples/quickstart.py --mode all --run-export
 ```
 
 !!! tip
-    If you see `ModuleNotFoundError: No module named 'rs_embed'`, run from repository root after installation:
-    `pip install -e .`
+    If you see `ModuleNotFoundError: No module named 'rs_embed'`, run `pip install -e .` from the repository root.
 
+---
 
-### 1. Compute a single embedding
+## Minimal Mental Model
+
+Before looking at the APIs, keep these three ideas in mind:
+
+- `spatial`: where to extract from, usually `PointBuffer(...)` or `BBox(...)`
+- `temporal`: when to extract from, either `TemporalSpec.year(...)` or `TemporalSpec.range(...)`
+- `output`: what shape you want, usually `OutputSpec.pooled()` first
+
+Two details matter a lot:
+
+- `TemporalSpec.range(start, end)` is usually a time window for filtering and compositing, not a guarantee of one exact acquisition date.
+- `OutputSpec.grid()` is often a model patch/token grid, not always a georeferenced raster grid.
+
+If you want the full semantics, read [API: Specs and Data Structures](api_specs.md).
+
+---
+
+## The Three Core APIs
+
+### 1. One ROI: `get_embedding(...)`
+
+Use this when you want one embedding now.
 
 ```python
 from rs_embed import PointBuffer, TemporalSpec, OutputSpec, get_embedding
 
 emb = get_embedding(
-    "remoteclip",
-    spatial=PointBuffer(lon=121.5, lat=31.2, buffer_m=2048),
-    temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
+    "tessera",
+    spatial=PointBuffer(lon=121.5, lat=31.2, buffer_m=1024),
+    temporal=TemporalSpec.year(2024),
     output=OutputSpec.pooled(pooling="mean"),
-    backend="gee",
-    device="auto",
+    backend="auto",
 )
 
-vec = emb.data  # shape: (D,)
+vec = emb.data
 meta = emb.meta
 ```
 
-!!! note
-    `TemporalSpec.range(start, end)` is treated as a temporal window (half-open: `[start, end)`).
-    On GEE-backed on-the-fly paths, inputs are typically composites over that window (`median` by default), not an auto-selected single-day scene.
+Use `backend="auto"` unless you need to force a provider path such as `backend="gee"`.
 
-### 2. Batch compute embeddings for many points
+### 2. Many ROIs, one model: `get_embeddings_batch(...)`
+
+Use this when the model is fixed and you have multiple ROIs.
 
 ```python
-from rs_embed import PointBuffer, TemporalSpec, get_embeddings_batch
+from rs_embed import PointBuffer, TemporalSpec, OutputSpec, get_embeddings_batch
 
 spatials = [
-    PointBuffer(121.5, 31.2, 2048),
-    PointBuffer(120.5, 30.2, 2048),
+    PointBuffer(121.5, 31.2, 1024),
+    PointBuffer(120.5, 30.2, 1024),
 ]
 
 embs = get_embeddings_batch(
-    "remoteclip",
+    "tessera",
     spatials=spatials,
-    temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
-    backend="gee",
-    device="auto",
-)
-```
-
-### 2b. Switch modality on supported models
-
-```python
-from rs_embed import PointBuffer, TemporalSpec, OutputSpec, get_embedding
-
-emb = get_embedding(
-    "terrafm",
-    spatial=PointBuffer(121.5, 31.2, 2048),
-    temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
-    modality="s1",
+    temporal=TemporalSpec.year(2024),
     output=OutputSpec.pooled(),
-    backend="gee",
+    backend="auto",
 )
 ```
 
-Use `modality` only on models that document supported modality values in their model detail page.
+### 3. Dataset export: `export_batch(...)`
 
-### 3. Export at scale (recommended workflow)
-
-`export_batch` is the **core** export API. It supports:
-
-- arbitrary point / ROI lists
-- multiple models per ROI
-- saving inputs and embeddings
-- manifests for downstream bookkeeping
+Use this when you are building a dataset or benchmark and want files plus manifests.
 
 ```python
 from rs_embed import (
-    export_batch,
     ExportConfig,
     ExportTarget,
     PointBuffer,
     TemporalSpec,
+    export_batch,
 )
 
 spatials = [
-    PointBuffer(121.5, 31.2, 2048),
-    PointBuffer(120.5, 30.2, 2048),
+    PointBuffer(121.5, 31.2, 1024),
+    PointBuffer(120.5, 30.2, 1024),
 ]
 
 export_batch(
     spatials=spatials,
-    temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
-    models=["remoteclip", "prithvi"],
+    temporal=TemporalSpec.year(2024),
+    models=["tessera"],
     target=ExportTarget.per_item("exports", names=["p1", "p2"]),
-    backend="gee",
-    device="auto",
+    backend="auto",
     config=ExportConfig(
-        save_inputs=True,
+        save_inputs=False,
         save_embeddings=True,
-        chunk_size=32,
-        num_workers=8,
         resume=True,
         show_progress=True,
     ),
 )
 ```
 
-`target=ExportTarget(...)` plus `config=ExportConfig(...)` is the recommended export style for new code.
-Legacy `out + layout` and `out_dir` / `out_path` arguments remain supported for backward compatibility.
+For new code, `target=ExportTarget(...)` plus `config=ExportConfig(...)` is the recommended style.
 
-## Working with Providers / Backends
+---
 
-rs-embed supports pluggable backends. In most setups:
+## When You Need GEE or Model Debugging
 
-- `backend="auto"` is the recommended default.
-- `backend="gee"` is an explicit provider override for on-the-fly workflows.
+Use GEE-backed on-the-fly models when you want to fetch imagery and run model inference directly.
+Typical examples include `remoteclip`, `prithvi`, `terrafm`, and `terramind`.
 
-If the behavior of a model input looks wrong, inspect the raw patch first:
+If the model output looks wrong, inspect the fetched patch before changing model settings:
 
-- [`inspect_provider_patch`](api_inspect.md#inspect_provider_patch-recommended) (recommended, provider-agnostic)
-- [`inspect_gee_patch`](api_inspect.md#inspect_gee_patch) (backward-compatible alias)
+- [`inspect_provider_patch(...)`](api_inspect.md#inspect_provider_patch-recommended): recommended inspection API
+- [`inspect_gee_patch(...)`](api_inspect.md#inspect_gee_patch): compatibility alias
 
-!!! tip
-    For large exports, tune:
-    - `chunk_size`: how many ROIs per chunk (controls memory peak)
-    - `num_workers`: how many concurrent fetch workers (controls IO parallelism)
-    - `resume=True`: skip files already exported in previous runs
+---
 
+## What To Read Next
 
-## Export Formats
-
-`export_batch(config=ExportConfig(format=...))` is the recommended way to choose export format in new code.
-Legacy `export_batch(format=...)` remains supported.
-
-- Current formats: `npz`, `netcdf`
-- Planned: parquet / zarr / hdf5 (depending on your roadmap)
-
-For a single ROI `.npz`, you can still use `export_batch(...)` directly:
-
-```python
-from rs_embed import export_batch, ExportTarget, PointBuffer, TemporalSpec
-
-export_batch(
-    spatials=[PointBuffer(121.5, 31.2, 2048)],
-    temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
-    models=["remoteclip"],
-    target=ExportTarget.combined("exports/one_point"),  # writes exports/one_point.npz
-)
-```
-
-`export_npz(...)` remains available as a convenience wrapper for single-ROI exports and shares the same performance optimizations.
-
-!!! tip
-    If you are building a repeatable dataset pipeline (many points and/or many models), prefer `export_batch(...)` and treat `export_npz(...)` as an optional convenience alias.
-    See [Common Workflows](workflows.md) for the task-first export pattern.
-
-
-## Performance Notes
-
-
-### 1. Avoid repeated input downloads
-When you use:
-
-- `backend="gee"`
-- `save_inputs=True`
-- `save_embeddings=True`
-
-`export_batch` will **prefetch each input patch once** and reuse it for both:
-- saving the input patch
-- computing embeddings (via `input_chw`)
-
-### 2. IO parallelism vs inference safety
-`export_batch` currently uses two-level scheduling:
-- **IO level**: remote patch prefetch is parallelized (`num_workers`).
-- **Inference level**:
-  - model-to-model execution is serial (stability-first default),
-  - but each model can use batched inference over many points when batch APIs are available (such as `get_embeddings_batch` / `get_embeddings_batch_from_inputs`): in combined mode by default, and in per-item mode when running on GPU/accelerators.
-
-So rs-embed supports batch-level inference acceleration, while model-level scheduling remains serial by design.
+- [Models](models.md): choose the right model and check its input assumptions
+- [API](api.md): exact signatures for specs, embedding, export, and inspect
+- [Concepts](concepts.md): deeper explanation of temporal and output semantics
+- [Workflows](workflows.md): extra recipes for tiling, inspection, and fair comparison

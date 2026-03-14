@@ -1,25 +1,22 @@
 # Supported Models (Overview)
 
-This page is the **model selection entry point**.
-
+This page is the model selection entry point.
 Use it to answer one question quickly:
 
-- Which models should I shortlist for this task?
+- Which model IDs should I shortlist for this task?
 
-Once you have a shortlist:
+After you have a shortlist:
 
-- use [Supported Models (Advanced Reference)](models_reference.md) for side-by-side comparison
-- use the per-model detail pages linked below for exact contracts, examples, and caveats
+- use [Advanced Model Reference](models_reference.md) for side-by-side preprocessing and temporal details
+- open the linked detail page for the exact contract, caveats, and examples
 
 ---
 
-## How To Use This Page
+## How To Read This Page
 
-Recommended flow:
-
-1. Pick a shortlist from the overview tables below
-2. Validate temporal + input assumptions in [Advanced Reference](models_reference.md)
-3. Open the linked detail page for your final candidate before production or benchmarking
+1. Pick a shortlist from the quick chooser
+2. Scan the catalog table for input and temporal fit
+3. Open the detail page before benchmarking or production use
 
 Canonical model IDs use the short public names shown on this page, such as `remoteclip`, `prithvi`, `terrafm`, and `thor`.
 Some detail-page filenames still use older names for compatibility, but the canonical IDs above are the names users should copy into code.
@@ -80,31 +77,7 @@ Read the details in [Supported Models (Advanced Reference)](models_reference.md)
 
 ---
 
-## Adding Model Pages
+## More Detail
 
-This repo now includes a reusable template page for documenting each model consistently:
-
-- [Model Detail Template](model_detail_template.md)
-
-Recommended fields for each model page:
-
-- what the model expects (`input` contract, band order, temporal mode)
-- what rs-embed currently feeds (current adapter behavior)
-- preprocessing defaults and env knobs
-- output semantics (`pooled` vs `grid` details)
-- caveats for reproducibility / fair benchmarking
-
----
-
-## Source of Truth in Code
-
-Model registration source of truth:
-
-- `src/rs_embed/embedders/catalog.py` (`MODEL_SPECS`)
-
-Implementation details for each adapter live in:
-
-- `src/rs_embed/embedders/onthefly_*.py`
-- `src/rs_embed/embedders/precomputed_*.py`
-
-When docs and code disagree, check code first and update docs accordingly.
+- [Advanced Model Reference](models_reference.md): cross-model tables for preprocessing, temporal packaging, and env knobs
+- [Extending](extending.md): add a new model adapter and document it consistently

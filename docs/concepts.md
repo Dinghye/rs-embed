@@ -1,8 +1,7 @@
 # Core Concepts
 
-This page explains the core mental model of `rs-embed` before you dive into the full API reference.
-
-If you are new to the project, read this page first, then go to [Quick Start](quickstart.md).
+This page explains the semantic meaning of the main rs-embed abstractions.
+It is a supplement to [Quickstart](quickstart.md) and [API: Specs and Data Structures](api_specs.md), not a separate getting-started path.
 
 ---
 
@@ -19,6 +18,8 @@ In practice, most users work with:
 - `output`: what shape you want (`pooled` or `grid`)
 - `backend`: data access route (`auto` recommended; `gee` is a common explicit provider override)
 
+This page explains what those words mean in practice.
+
 ---
 
 ## Spatial Specs: What Area You Want
@@ -32,13 +33,13 @@ Current limitation:
 
 - API currently accepts only `crs="EPSG:4326"` for `BBox` / `PointBuffer`
 
-See: [API Reference](api.md) and [Limitations](limitations.md).
+For exact constructors and validation rules, see [API: Specs and Data Structures](api_specs.md).
 
 ---
 
 ## Temporal Specs: Window, Not Necessarily a Single Scene
 
-This is the most important concept for readability and correct usage.
+This is usually the most important semantic distinction to get right.
 
 ### `TemporalSpec.year(...)`
 
@@ -75,6 +76,11 @@ Use this for:
 - clustering
 - cross-model benchmarking (recommended default)
 
+Interpretation:
+
+- one ROI in, one embedding vector out
+- easiest output to compare across different model families
+
 ### `OutputSpec.grid()`
 
 Returns a spatial feature grid `(D, H, W)`.
@@ -87,6 +93,11 @@ Use this for:
 
 !!! note
     For ViT-like models, `grid` is often a token/patch grid, not guaranteed georeferenced raster pixels.
+
+Interpretation:
+
+- one ROI in, one spatial embedding field out
+- useful when spatial layout matters more than a single pooled descriptor
 
 ---
 
@@ -128,7 +139,8 @@ Use tiling when:
 - you care about preserving more spatial detail for large ROIs
 - model default resize would be too destructive
 
-See the tiled behavior details in [API Reference](api.md).
+This is a runtime policy choice, not a model identity choice.
+Use it when the same model needs different large-ROI handling in different workflows.
 
 ---
 
@@ -161,23 +173,9 @@ Examples:
 
 ---
 
-## Reproducibility Checklist (Recommended)
-
-When comparing models, keep these fixed first:
-
-1. Same `spatial` ROI definition
-2. Same `temporal` window
-3. Same `SensorSpec.composite` policy
-4. Same `OutputSpec` mode (usually `pooled`)
-5. Default model preprocessing unless you can exactly reproduce training pipelines
-
-The model-specific preprocessing knobs are summarized in [Supported Models](models.md).
-
----
-
 ## Where To Go Next
 
-- New user: [Quick Start](quickstart.md)
-- Task-oriented usage: [Common Workflows](workflows.md)
-- Model capabilities and preprocessing: [Supported Models](models.md)
-- Full signatures and parameters: [API Reference](api.md)
+- Need runnable examples: [Quickstart](quickstart.md)
+- Need task recipes: [Workflows](workflows.md)
+- Need model-specific assumptions: [Models](models.md)
+- Need exact type definitions: [API: Specs and Data Structures](api_specs.md)

@@ -45,45 +45,21 @@ extra_css:
   - stylesheets/extra.css
 
 not_in_nav: |
-  /models/dynamicvis.md
+  /concepts.md
+  /workflows.md
+  /models_reference.md
+  /limitations.md
+  /model_detail_template.md
+  /models/*.md
 
 nav:
   - Home: index.md
-  - Learn:
-    - Quickstart: quickstart.md
-    - Concepts: concepts.md
-  - Guides:
-    - Workflows: workflows.md
-    - Model Overview: models.md
-  - Reference:
-    - Advanced Model Reference: models_reference.md
-    - Model Details:
-      - Precomputed:
-        - gse: models/gse.md
-        - copernicus: models/copernicus.md
-        - tessera: models/tessera.md
-      - On-the-fly:
-        - remoteclip: models/remoteclip.md
-        - satmae: models/satmae.md
-        - satmaepp family: models/satmaepp.md
-        - scalemae: models/scalemae.md
-        - wildsat: models/wildsat.md
-        - prithvi: models/prithvi.md
-        - terramind: models/terramind.md
-        - dofa: models/dofa.md
-        - fomo: models/fomo.md
-        - thor: models/thor.md
-        - satvision: models/satvision.md
-        - terrafm: models/terrafm.md
-        - anysat: models/anysat.md
-        - galileo: models/galileo.md
-        - agrifm: models/agrifm.md
+  - Quickstart: quickstart.md
+  - Models: models.md
+  - API:
     - Overview: api.md
     - Specs & Data Structures: api_specs.md
     - Embedding API: api_embedding.md
     - Export API: api_export.md
     - Inspect API: api_inspect.md
-    - Limitations: limitations.md
-  - Development:
-    - Extending: extending.md
-    - Model Template: model_detail_template.md
+  - Extending: extending.md

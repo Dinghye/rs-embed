@@ -1,53 +1,18 @@
 # API Reference
 
-This is the API reference entry page.
-
-`rs-embed` API docs are split by topic for readability:
-
-- [API: Specs and Data Structures](api_specs.md)
-- [API: Embedding](api_embedding.md)
-- [API: Export](api_export.md)
-- [API: Inspect](api_inspect.md)
-
-If you are looking for task-oriented usage first:
-
-- [Quick Start](quickstart.md): fastest first run
-- [Common Workflows](workflows.md): task-first recipes
-- [Core Concepts](concepts.md): semantics for `TemporalSpec`, `OutputSpec`, and backends
+This section is the exact reference for the public API.
+If you want installation and first-run examples, start with [Quickstart](quickstart.md) instead.
 
 ---
 
-## Imports
+## Core Entry Points
 
-```python
-from rs_embed import (
-    # Specs
-    BBox, PointBuffer, TemporalSpec, SensorSpec, OutputSpec, InputPrepSpec,
-    # Export request objects
-    ExportTarget, ExportConfig, ExportModelRequest,
-    # Core APIs
-    get_embedding, get_embeddings_batch, export_batch, export_npz, list_models,
-    # Utilities
-    inspect_provider_patch,
-    inspect_gee_patch,
-)
-```
-
----
-
-## Recommended Starting Points
-
-For new code, most users only need these entry points:
+Most users only need these public functions:
 
 - `get_embedding(...)`
 - `get_embeddings_batch(...)`
 - `export_batch(...)`
 - `inspect_provider_patch(...)`
-
-Compatibility / convenience wrappers (still supported):
-
-- `export_npz(...)` -> wrapper around `export_batch(...)` for single-ROI `.npz`
-- `inspect_gee_patch(...)` -> wrapper around `inspect_provider_patch(...)`
 
 ---
 
@@ -61,9 +26,13 @@ Compatibility / convenience wrappers (still supported):
 | inspect raw provider patches before inference | [API: Inspect](api_inspect.md) |
 
 ---
-## Model Registry (Advanced)
+## Useful Extras
 
-If you need a stable model list in code, use the public catalog helper:
+- `export_npz(...)`: compatibility wrapper around `export_batch(...)` for single-ROI `.npz`
+- `inspect_gee_patch(...)`: compatibility wrapper around `inspect_provider_patch(...)`
+- `list_models()`: stable public model catalog helper
+
+If you need a stable model list in code:
 
 ```python
 from rs_embed import list_models
@@ -82,17 +51,6 @@ rs-embed raises several explicit exception types (all in `rs_embed.core.errors`)
 - `SpecError`: spec validation failure (invalid bbox, missing temporal fields, etc.)
 - `ProviderError`: provider/backend errors (e.g., GEE initialization or fetch failure)
 - `ModelError`: unknown model ID, unsupported parameters, unsupported export format, etc.
-
----
-
-## Optional Dependencies
-
-Different features require different optional dependencies:
-
-- `pip install "rs-embed[gee]"`: use the Earth Engine backend
-- `pip install "rs-embed[torch]"`: torch model inference
-- `pip install "rs-embed[models]"`: dependencies for some model wrappers (e.g., rshf)
-- `pip install "rs-embed[dev]"`: dev dependencies such as pytest
 
 ---
 

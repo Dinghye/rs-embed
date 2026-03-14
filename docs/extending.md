@@ -11,6 +11,20 @@ To add a new model, you typically do five things:
     - `get_embeddings_batch(...)` for true batched inference (no prefetched inputs)
     - `get_embeddings_batch_from_inputs(...)` for true batched inference with prefetched `input_chw`
 
+If you are also documenting the new model, use [Model Detail Template](model_detail_template.md) and keep the model page focused on:
+
+- expected inputs and band order
+- temporal behavior
+- preprocessing and env knobs
+- output semantics
+- caveats for fair comparison or reproducibility
+
+Source of truth in code:
+
+- model catalog: `src/rs_embed/embedders/catalog.py` (`MODEL_SPECS`)
+- on-the-fly implementations: `src/rs_embed/embedders/onthefly_*.py`
+- precomputed implementations: `src/rs_embed/embedders/precomputed_*.py`
+
 ---
 
 ## The Registry
