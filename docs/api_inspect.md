@@ -28,6 +28,33 @@ inspect_provider_patch(
 Provider-agnostic patch inspection utility (recommended entry point).
 Use this when you want the same inspection flow but with a non-GEE provider backend.
 
+**Example**
+
+```python
+from rs_embed import inspect_provider_patch, PointBuffer, TemporalSpec, SensorSpec
+
+report = inspect_provider_patch(
+    spatial=PointBuffer(121.5, 31.2, 2048),
+    temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
+    sensor=SensorSpec(
+        collection="COPERNICUS/S2_SR_HARMONIZED",
+        bands=("B4", "B3", "B2"),
+        scale_m=10,
+        cloudy_pct=30,
+        composite="median",
+        check_input=True,
+        check_save_dir="artifacts",
+    ),
+    backend="gee",
+    return_array=False,
+)
+```
+
+**Returns**
+
+- A JSON-serializable dict with `ok`, `report`, `sensor`, `temporal`, `backend`, and optional `artifacts` quicklook save paths.
+- If `return_array=True`, the result also includes `array_chw` (numpy array, not JSON-serializable).
+
 ---
 
 ## inspect_gee_patch { #inspect_gee_patch }

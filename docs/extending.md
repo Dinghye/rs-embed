@@ -236,7 +236,7 @@ def get_embeddings_batch(
     temporal=None,
     sensor=None,
     output=OutputSpec.pooled(),
-    backend="gee",
+    backend="auto",
     device="auto",
 ):
     # 1) fetch/preprocess inputs for all spatials
@@ -364,10 +364,17 @@ pytest -q
 
 ## Documenting the Model
 
-Update docs in one of these places:
+A complete model doc update touches three places:
 
-- `docs/models.md` (add model name and usage)
+1. **`docs/models.md`** — add a row to the catalog table (model ID, primary input, temporal style, outputs, notes, detail link)
 
+2. **`docs/models_reference.md`** — add rows/entries to all four cross-model tables:
+   - **Quick Comparison** table (architecture, input, preprocessing, output structure)
+   - **Temporal Handling** list — add to single-composite or multi-frame section as appropriate
+   - **Modality and Extra Inputs Matrix** — fill in all five columns
+   - **Preprocessing and Temporal Env Vars** table — list env keys that change model input construction
+
+3. **`docs/models/<your_model>.md`** — create a model detail page using [Model Detail Template](model_detail_template.md)
 
 ---
 
@@ -381,4 +388,6 @@ Before opening a PR / shipping the model:
 - [ ] override `get_embeddings_batch_from_inputs()` if your model can batch prefetched inputs
 - [ ] clear errors for missing optional dependencies
 - [ ] unit tests added (`pytest -q` passes)
-- [ ] minimal usage example in docs or notebook
+- [ ] `docs/models.md` catalog table updated
+- [ ] `docs/models_reference.md` all four tables updated
+- [ ] `docs/models/<your_model>.md` detail page created from template
