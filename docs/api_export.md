@@ -20,13 +20,15 @@ export_batch(
     spatials: List[SpatialSpec],
     temporal: Optional[TemporalSpec],
     models: List[str | ExportModelRequest],
-    target: ExportTarget,
-    config: ExportConfig,
+    target: ExportTarget | None = None,   # recommended: use ExportTarget.combined/per_item
+    config: ExportConfig | None = None,   # recommended: use ExportConfig(...)
     backend: str = "auto",
     device: str = "auto",
     output: OutputSpec = OutputSpec.pooled(),
     sensor: Optional[SensorSpec] = None,
     modality: Optional[str] = None,
+    input_prep: InputPrepSpec | str | None = "resize",
+    # ... legacy flat kwargs also accepted (out, out_dir, format, save_inputs, etc.)
 ) -> Any
 ```
 

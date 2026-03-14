@@ -7,12 +7,13 @@ If you want installation and first-run examples, start with [Quickstart](quickst
 
 ## Core Entry Points
 
-Most users only need these public functions:
+Most users only need these:
 
-- `get_embedding(...)`
-- `get_embeddings_batch(...)`
-- `export_batch(...)`
-- `inspect_provider_patch(...)`
+- `get_embedding(...)` — single-ROI embedding (function)
+- `get_embeddings_batch(...)` — batch embeddings (function)
+- `Model(name, ...)` — class-based API (set up once, embed many)
+- `export_batch(...)` — export embeddings to disk
+- `inspect_provider_patch(...)` — inspect raw provider patches
 
 ---
 
@@ -22,6 +23,7 @@ Most users only need these public functions:
 |---|---|
 | understand spatial/temporal/output specs | [API: Specs and Data Structures](api_specs.md) |
 | get one embedding or batch embeddings | [API: Embedding](api_embedding.md) |
+| use a stateful model instance across many calls | [API: Embedding](api_embedding.md) |
 | build export pipelines and datasets | [API: Export](api_export.md) |
 | inspect raw provider patches before inference | [API: Inspect](api_inspect.md) |
 

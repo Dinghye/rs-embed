@@ -45,7 +45,7 @@ get_embedding(
     output: OutputSpec = OutputSpec.pooled(),
     backend: str = "auto",
     device: str = "auto",
-    input_prep: InputPrepSpec | str = "resize",
+    input_prep: InputPrepSpec | str | None = "resize",
 ) -> Embedding
 ```
 
@@ -105,7 +105,7 @@ get_embeddings_batch(
     output: OutputSpec = OutputSpec.pooled(),
     backend: str = "auto",
     device: str = "auto",
-    input_prep: InputPrepSpec | str = "resize",
+    input_prep: InputPrepSpec | str | None = "resize",
 ) -> List[Embedding]
 ```
 
@@ -135,5 +135,108 @@ embs = get_embeddings_batch(
     temporal=TemporalSpec.range("2022-06-01", "2022-09-01"),
 )
 ```
+
+---
+
+## Model (class-based API) { #model }
+
+`Model` is the stateful, class-based alternative to the function API.
+Set it up once — model loading and backend resolution happen in `__init__` — then call
+`get_embedding` / `get_embeddings_batch` as many times as you need without repeating
+configuration on every call.
+
+```python
+Model(
+    name: str,
+    *,
+    backend: str = "auto",
+    device: str = "auto",
+    sensor: Optional[SensorSpec] = None,
+    modality: Optional[str] = None,
+    output: OutputSpec = OutputSpec.pooled(),
+    input_prep: InputPrepSpec | str | None = "resize",
+)
+```
+
+**Parameters** — same semantics as `get_embedding(...)`:
+
+- `name`: model ID (e.g. `"remoteclip"`, `"prithvi"`)
+- `backend`: `"auto"` / `"gee"` / provider name
+- `device`: `"auto"` / `"cpu"` / `"cuda"`
+- `sensor`: `SensorSpec` override for on-the-fly models; `None` for precomputed
+- `modality`: optional modality selector for models with multiple input branches
+- `output`: `OutputSpec.pooled()` (default) or `OutputSpec.grid(...)`
+- `input_prep`: `"resize"` (default), `"tile"`, `"auto"`, `InputPrepSpec(...)`, or `None`
+
+**Example**
+
+```python
+from rs_embed import Model, PointBuffer, TemporalSpec
+
+model = Model("remoteclip", backend="gee", device="auto")
+
+spatials = [
+    PointBuffer(121.5, 31.2, 2048),
+    PointBuffer(120.5, 30.2, 2048),
+]
+temporal = TemporalSpec.range("2022-06-01", "2022-09-01")
+
+# embed once
+emb = model.get_embedding(spatials[0], temporal=temporal)
+
+# embed many — embedder instance is reused
+embs = model.get_embeddings_batch(spatials, temporal=temporal)
+```
+
+---
+
+### `Model.get_embedding`
+
+```python
+model.get_embedding(
+    spatial: SpatialSpec,
+    *,
+    temporal: Optional[TemporalSpec] = None,
+) -> Embedding
+```
+
+Compute one embedding using this model instance.
+
+---
+
+### `Model.get_embeddings_batch`
+
+```python
+model.get_embeddings_batch(
+    spatials: list[SpatialSpec],
+    *,
+    temporal: Optional[TemporalSpec] = None,
+) -> list[Embedding]
+```
+
+Compute embeddings for multiple spatial locations. Same order as `spatials`.
+
+Raises `ModelError` if `spatials` is empty or not a list.
+
+---
+
+### `Model.describe`
+
+```python
+model.describe() -> dict[str, Any]
+```
+
+Return capability metadata from the underlying embedder (e.g. supported backends,
+default image size, output dimension). Returns `{}` if unavailable.
+
+---
+
+### `Model.list_models` (static)
+
+```python
+Model.list_models(*, include_aliases: bool = False) -> list[str]
+```
+
+Return the stable public model catalog. Equivalent to `rs_embed.list_models()`.
 
 ---
